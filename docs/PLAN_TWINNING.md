@@ -315,6 +315,41 @@ Oracle is the hardest — TNS protocol is proprietary and poorly documented. The
 
 ---
 
+## Beyond SQL: the generalized interface model
+
+The twin's core abstraction is not "a SQL database emulator." It's **an interface emulator**: speak the protocol the client expects, enforce the schema's constraints, store in memory. SQL wire protocols are one interface. There are others — and the architecture supports them without changing the factory, the convergence model, or the tournament.
+
+### Non-SQL twin types (future)
+
+| Interface | Protocol | What programs expect | Twin implementation | Complexity vs Postgres twin |
+|-----------|----------|---------------------|--------------------|-----------------------------|
+| **VSAM** | COBOL file I/O (`OPEN`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `START`, `CLOSE`) | Keyed or sequential access to fixed-format record files | In-memory keyed byte-array store (KSDS = HashMap, ESDS = Vec, RRDS = array) | **Simpler** — no SQL parsing, no query planning, ~3-4K LOC |
+| **IMS/DL/I** | Hierarchical navigation (`GU`, `GN`, `GNP`, `ISRT`, `REPL`, `DLET`) | Tree traversal over segments defined by a DBD | In-memory hierarchical store with segment types and PCBs | **Harder** — navigational semantics are subtle, ~5-8K LOC |
+| **Flat files** | Sequential I/O (`READ`/`WRITE` with copybook layout) | Fixed-length records in EBCDIC with packed decimal fields | In-memory byte stream with copybook-defined field offsets | **Simplest** — no indexing, no constraints, ~1-2K LOC |
+| **CICS** | Transaction dispatch (`EXEC CICS` commands) | Screen input → program → DB/file updates → screen output | Transaction router + CICS API surface emulation | **Hardest** — hundreds of commands; pragmatic path is mock top 50 or use Micro Focus commercially |
+
+Each twin type follows the same contract:
+- Speak the interface the program expects
+- Store data in memory (HashMap, tree, byte array — whatever fits)
+- Enforce constraints from the schema definition (DDL, DBD, copybook)
+- Support content-addressed snapshots
+- Report coverage
+
+The VSAM twin is the highest-value addition. COBOL batch programs that read VSAM datasets are ~30% of typical mainframe workloads, and the VSAM access pattern (keyed byte-array store) is simpler than SQL. A VSAM twin + GnuCOBOL (open-source COBOL compiler) enables off-mainframe batch job replay: compile the COBOL program, point its file I/O at the VSAM twin, run it, capture output, compare against known-good output from the mainframe.
+
+### Schema definitions by twin type
+
+| Twin type | Schema source | What it declares |
+|-----------|--------------|-----------------|
+| SQL (Postgres/MySQL/Oracle) | DDL file | Tables, columns, types, PK, FK, CHECK, UNIQUE, NOT NULL |
+| VSAM | COBOL copybook | Record layout: field offsets, lengths, PIC clauses (exact byte-level types) |
+| IMS | DBD (Database Description) | Segment hierarchy, field definitions, search fields |
+| Flat file | COBOL copybook | Same as VSAM — record layout at byte level |
+
+The copybook IS the schema for non-SQL twins. `PIC S9(7)V99 COMP-3` declares a signed 7.2 packed decimal at a specific byte offset — no ambiguity, no inference. Copybook parsing produces the schema, a conversion codec (EBCDIC/packed decimal to native types), and a `shape` definition, all from one artifact.
+
+---
+
 ## Usage examples
 
 ### Extractor development loop
