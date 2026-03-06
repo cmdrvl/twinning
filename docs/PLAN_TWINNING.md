@@ -1,21 +1,23 @@
 # twinning — In-Memory Database Twin
 
 ## One-line promise
-**Impersonate a database — speak the real wire protocol, enforce schema constraints, store everything in memory — so extraction code iterates in seconds, not hours.**
+**Impersonate a database — speak the real wire protocol, enforce schema constraints, store everything in memory — so extraction code iterates in seconds, not hours, and legacy migrations prove equivalence without touching production.**
 
 ---
 
 ## Problem
 
-You're building extractors that write to Postgres (or MySQL, or Oracle). Against real Postgres with 150M existing rows, each test takes minutes to hours. Schema changes require migrations. Constraint violations are buried in database logs. The feedback loop is too slow for agent-driven iteration.
+Two versions of the same problem:
 
-`twinning` compresses the feedback loop from days to seconds. It speaks the real wire protocol (Postgres v3, MySQL, eventually Oracle TNS), accepts the same SQL, enforces the same constraints, and stores everything in memory. Existing client code — SQLAlchemy, psycopg2, JDBC — connects to it and can't tell the difference, for the subset of SQL that extraction code actually uses.
+**Extractor development.** You're building extractors that write to Postgres (or MySQL, or Oracle). Against real Postgres with 150M existing rows, each test takes minutes to hours. Schema changes require migrations. Constraint violations are buried in database logs. The feedback loop is too slow for agent-driven iteration. The twin compresses the loop from days to seconds.
 
-It is not a database. It is a **fast, ephemeral, constraint-checked store that impersonates a database well enough for extraction code to develop and test against.** The fidelity target is the client SDK, not the full database engine. If the client can't tell the difference for the SQL subset that extraction code uses, the twin is good enough.
+**Legacy database migration.** You're retiring a 1000-table Oracle database. You need to prove that migrated data is correct — not just structurally valid, but *behaviorally equivalent*. The same queries that ran against Oracle for 20 years must return the same results against the migrated data. You can't run those queries against production during migration testing. The twin lets you replay them against an in-memory copy loaded with candidate data.
+
+Both use cases need the same thing: a fast, ephemeral, constraint-checked store that speaks the real wire protocol. Existing client code — SQLAlchemy, psycopg2, JDBC — connects to it and can't tell the difference, for the subset of SQL the use case requires.
 
 ### Core insight
 
-This is the Digital Twin Universe insight from StrongDM applied to databases instead of SaaS APIs. An agent iterates 20 times per hour instead of once per day. The twin speaks the real wire protocol; existing client code can't tell the difference.
+This is the Digital Twin Universe insight from StrongDM applied to databases instead of SaaS APIs. An agent iterates 20 times per hour instead of once per day. A migration team replays 12 months of production queries in minutes. The twin speaks the real wire protocol; existing client code can't tell the difference.
 
 ---
 
@@ -26,8 +28,9 @@ This is the Digital Twin Universe insight from StrongDM applied to databases ins
 - A replacement for the customer's production database (no application points at the twin)
 - A truth oracle (truth is determined by decode policy + gold set + evidence chain)
 - A concurrent multi-writer system (single writer per instance)
+- A query translator (it runs SQL verbatim — schema must match the client's expectations)
 
-No application points at the twin. The customer's web app, API, and reports continue to run against their production database. The twin exists only in the extractor development loop: agents write extraction code, test it against the twin (fast), prove it against the twin (constraints + verify rules + gold set), then deploy the proven code against real Postgres. The twin is a scorekeeper — it tells you whether your extractor works.
+No application points at the twin. The customer's web app, API, and reports continue to run against their production database. The twin exists in two loops: the extractor development loop (agents iterate fast) and the migration proof loop (replay historical queries, compare results).
 
 ---
 
@@ -78,38 +81,68 @@ twinning postgres --schema schema.sql --rules rules.json --port 5433 \
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                     twinning                             │
-│                                                          │
-│  ┌─────────────┐   ┌─────────────┐   ┌───────────────┐  │
-│  │ Wire Proto  │   │ SQL Parser  │   │ Coverage      │  │
-│  │ (pgwire)    │   │ (sqlparser) │   │ Scorer        │  │
-│  │             │   │             │   │               │  │
-│  │ Postgres v3 │   │ INSERT      │   │ row counts    │  │
-│  │ MySQL proto │   │ UPSERT      │   │ null rates    │  │
-│  │ Oracle TNS  │   │ SELECT      │   │ FK coverage   │  │
-│  │             │   │ CREATE TABLE│   │ verify rules  │  │
-│  └──────┬──────┘   └──────┬──────┘   └───────┬───────┘  │
-│         │                 │                   │          │
-│  ┌──────▼─────────────────▼───────────────────▼───────┐  │
-│  │              In-Memory Store                       │  │
-│  │                                                    │  │
-│  │  Table = HashMap<PrimaryKey, Row>                  │  │
-│  │        + Vec<Column> (metadata, types)             │  │
-│  │        + HashSet per UNIQUE constraint             │  │
-│  │        + FK references (PK lookup into other table)│  │
-│  │                                                    │  │
-│  │  Constraint checker (inline, per-row):             │  │
-│  │    NOT NULL · CHECK expr · UNIQUE · FK · type coerce│ │
-│  └────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
++----------------------------------------------------------+
+|                     twinning                               |
+|                                                            |
+|  +-------------+   +-------------+   +---------------+    |
+|  | Wire Proto  |   | SQL Parser  |   | Coverage      |    |
+|  | (pgwire)    |   | (sqlparser) |   | Scorer        |    |
+|  |             |   |             |   |               |    |
+|  | Postgres v3 |   | INSERT      |   | row counts    |    |
+|  | MySQL proto |   | UPSERT      |   | null rates    |    |
+|  | Oracle TNS  |   | SELECT      |   | FK coverage   |    |
+|  |             |   | CREATE TABLE|   | verify rules  |    |
+|  +------+------+   +------+------+   +-------+-------+    |
+|         |                 |                   |            |
+|  +------v-----------------v-------------------v---------+  |
+|  |              In-Memory Store                         |  |
+|  |                                                      |  |
+|  |  Table = HashMap<PrimaryKey, Row>                    |  |
+|  |        + Vec<Column> (metadata, types)               |  |
+|  |        + HashSet per UNIQUE constraint               |  |
+|  |        + FK references (PK lookup into other table)  |  |
+|  |                                                      |  |
+|  |  Constraint checker (inline, per-row):               |  |
+|  |    NOT NULL . CHECK expr . UNIQUE . FK . type coerce |  |
+|  +------------------------------------------------------+  |
++------------------------------------------------------------+
 ```
+
+---
+
+## The two-twin design (factory integration)
+
+In legacy migration mode, each data product gets **two** twin instances:
+
+**Twin A — Legacy schema.** Same tables, same columns, same relationships as the source database. Load the migrated data into the legacy schema structure. This twin accepts the same SQL that ran against production.
+
+**Twin B — Target schema.** The clean, purpose-built schema for the data product. Load the transformed data. This twin enforces the new data contracts.
+
+```bash
+# Twin A: Oracle schema for the loan performance slice
+twinning postgres --schema oracle-loan-tables.sql --port 5433
+
+# Twin B: New data product schema with verify rules
+twinning postgres --schema loan-perf-schema.sql --rules loan-perf-rules.json --port 5434
+```
+
+### Why two twins
+
+The query replay problem disappears. You don't need to rewrite `SELECT balance, status FROM loan_master WHERE deal_id = ?` into new-schema SQL. You replay it verbatim against Twin A, which has the same schema as the legacy database. If the result sets match, the data migration didn't lose or corrupt anything.
+
+Twin B proves a different thing: the new data product is correct on its own terms. Verify rules pass, benchmark scores meet the bar, assess says PROCEED.
+
+Two independent proofs:
+1. **Behavioral equivalence** — Twin A + replay: "the migrated data answers the same questions the legacy system did"
+2. **Target correctness** — Twin B + spine scoring: "the new data product satisfies its own contracts"
+
+The transformation logic between Twin A and Twin B is itself testable — load the same source data into both, export, run `compare`. Any difference is either an intentional schema change (documented) or a bug.
 
 ---
 
 ## SQL support
 
-The subset of SQL that extraction code uses:
+The subset of SQL that extraction code and legacy queries use:
 
 | SQL | Support | Notes |
 |-----|---------|-------|
@@ -137,6 +170,8 @@ The subset of SQL that extraction code uses:
 - Replication, roles, permissions, tablespaces, extensions
 - TOAST / large objects
 - Full system catalog (only schema definitions)
+
+**Note on replay:** Historical queries from the legacy system may use features in the "skips" list (JOINs, subqueries, CTEs). These are classified as SKIP in replay results — the twin reports what it can't handle rather than silently getting it wrong. As the twin's SQL support grows, the skip rate drops.
 
 ---
 
@@ -233,8 +268,8 @@ The twin has a built-in coverage scorer that runs `verify` rules against its in-
     "financials.dscr": 0.03
   },
   "fk_coverage": {
-    "loans.deal_id → deals.deal_id": 1.0,
-    "financials.property_id → properties.property_id": 0.97
+    "loans.deal_id -> deals.deal_id": 1.0,
+    "financials.property_id -> properties.property_id": 0.97
   }
 }
 ```
@@ -276,29 +311,21 @@ A snapshot is a content-addressed binary dump of the in-memory state (schema + a
 
 Postgres first because: pgwire crate is mature, SQLAlchemy/psycopg2 is the most common client in Python data engineering, and the target database for the CMBS use case is Postgres.
 
-Oracle is the hardest — TNS protocol is proprietary and poorly documented. The pragmatic path: if the production target is Oracle, validate the extraction logic against a Postgres twin (same SQL semantics for INSERT/UPSERT), then run a final conformance check against real Oracle.
+Oracle is the hardest — TNS protocol is proprietary and poorly documented. The pragmatic path for legacy migration: load Oracle's data into a Postgres twin with the same schema (translated DDL). Most Oracle SQL that extraction code uses is standard enough that Postgres handles it. Oracle-specific features (hierarchical queries, `CONNECT BY`, PL/SQL) are classified as SKIP in replay results.
 
 ---
 
 ## Usage examples
 
+### Extractor development loop
+
 ```bash
 # Start a Postgres twin on port 5433 with a schema file
 twinning postgres --schema schema.sql --port 5433
 
-# Start with verify rules for coverage scoring
-twinning postgres --schema schema.sql --rules rules.json --port 5433
-
 # One-shot: run extraction, get coverage report, exit
 twinning postgres --schema schema.sql --rules rules.json --port 5433 \
   --run "python extract.py" --report coverage.json
-
-# Save state for later
-twinning postgres --schema schema.sql --port 5433 \
-  --snapshot snapshots/2025-12-full.twin
-
-# Restore and continue from snapshot
-twinning postgres --restore snapshots/2025-12-full.twin --port 5433
 
 # Agent iteration loop (typical factory usage)
 # 1. Start fresh twin
@@ -306,12 +333,50 @@ twinning postgres --schema schema.sql --rules rules.json --port 5433 \
   --run "python extract_deal_42.py" --report deal_42_coverage.json
 # 2. Agent reads coverage report, fixes extractor, re-runs in seconds
 # 3. Repeat 20x per hour until coverage targets met
+```
 
-# Full twin validation (all extractors, all files)
-twinning postgres --schema schema.sql --rules rules.json --port 5433 \
-  --run "python run_all_extractors.py" \
-  --report full_coverage.json \
-  --snapshot snapshots/full-run.twin
+### Legacy migration proof
+
+```bash
+# Boot Twin A (Oracle schema) and Twin B (target schema) for loan performance mart
+twinning postgres --schema oracle-loan-tables.sql --port 5433 &
+twinning postgres --schema loan-perf-schema.sql --rules loan-perf-rules.json --port 5434 &
+
+# Load migrated data into Twin A
+psql -p 5433 -f load_oracle_slice.sql
+
+# Load transformed data into Twin B
+psql -p 5434 -f load_loan_perf_data.sql
+
+# Replay historical queries against Twin A (factory handles comparison)
+factory replay --queries scan-results/queries/risk-app.sql \
+  --oracle oracle://prod-readonly \
+  --twin localhost:5433 \
+  --output replay-results/
+
+# Score Twin B against spine
+benchmark loan_perf_export.csv --assertions gold.jsonl --key loan_id --json > benchmark.json
+verify loan_perf_export.csv --rules loan-perf-rules.json --json > verify.json
+assess benchmark.json verify.json --policy migration.v1 > decision.json
+
+# Seal evidence for both proofs
+pack seal replay-results/ benchmark.json verify.json decision.json \
+  --output evidence/loan-performance-mart/
+```
+
+### Tournament (multiple candidates)
+
+```bash
+# Score 3 assembly strategies for the same data product
+for strategy in oracle-direct doc-reparse hybrid; do
+  twinning postgres --schema loan-perf-schema.sql --rules loan-perf-rules.json --port 5433 \
+    --run "python assemble_${strategy}.py" \
+    --report "results/${strategy}_coverage.json" \
+    --snapshot "snapshots/${strategy}.twin"
+done
+
+# Compare: which strategy scored highest?
+# assess picks the winner based on policy
 ```
 
 ---
@@ -320,13 +385,15 @@ twinning postgres --schema schema.sql --rules rules.json --port 5433 \
 
 | Tool | Relationship |
 |------|-------------|
+| **factory** | Factory orchestrates twin pairs for migration proof. Twin A for replay, Twin B for target scoring. |
+| **decoding** | Decoding resolves claims into canonical mutations; the twin enforces constraints on those mutations |
 | **verify** | Twin runs `verify` rules against its in-memory state for coverage scoring |
 | **shape** | Twin's schema DDL is the structural contract; `shape` checks CSV inputs before they reach the twin |
 | **benchmark** | Gold set assertions can be checked against twin state (export to CSV, run `benchmark`) |
+| **compare** | Diffing Twin A export vs Oracle export proves data equivalence |
 | **assess** | Twin coverage report feeds `assess` for go/no-go decisions |
 | **pack** | Twin snapshots can be included in evidence packs |
 | **rvl** | Diffing twin states across time: export to CSV, run `rvl` |
-| **decoding** | Decoding resolves claims into canonical mutations; the twin enforces constraints on those mutations |
 
 ---
 
