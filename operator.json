@@ -1,0 +1,134 @@
+{
+  "schema_version": "operator.v0",
+  "name": "twinning",
+  "version": "0.1.0",
+  "description": "In-memory database twin bootstrap: parse DDL, prepare deterministic twin artifacts, and stage the Postgres-first runtime",
+  "repository": "https://github.com/cmdrvl/twinning",
+  "license": "MIT",
+  "agent_guide": "https://github.com/cmdrvl/.github/blob/main/profile/AGENT_PROMPT.md",
+  "invocation": {
+    "binary": "twinning",
+    "usage": [
+      "twinning <ENGINE> [OPTIONS]"
+    ],
+    "output_mode": "status",
+    "output_schema": "twinning.v0",
+    "json_flag": "--json"
+  },
+  "arguments": [
+    {
+      "name": "engine",
+      "type": "string",
+      "required": true,
+      "position": 0,
+      "description": "Database engine to impersonate: postgres, mysql, or oracle"
+    }
+  ],
+  "options": [
+    {
+      "name": "schema",
+      "flag": "--schema",
+      "type": "file_path",
+      "description": "SQL DDL file defining tables, constraints, and indexes"
+    },
+    {
+      "name": "rules",
+      "flag": "--rules",
+      "type": "file_path",
+      "description": "Verify-rule JSON manifest for later coverage scoring"
+    },
+    {
+      "name": "host",
+      "flag": "--host",
+      "type": "string",
+      "description": "Listen host (default 127.0.0.1)"
+    },
+    {
+      "name": "port",
+      "flag": "--port",
+      "type": "integer",
+      "description": "Listen port (default engine-specific)"
+    },
+    {
+      "name": "run",
+      "flag": "--run",
+      "type": "string",
+      "description": "Planned one-shot command execution mode. Currently refused explicitly."
+    },
+    {
+      "name": "report",
+      "flag": "--report",
+      "type": "file_path",
+      "description": "Write the readiness report as JSON"
+    },
+    {
+      "name": "snapshot",
+      "flag": "--snapshot",
+      "type": "file_path",
+      "description": "Write a deterministic bootstrap snapshot"
+    },
+    {
+      "name": "restore",
+      "flag": "--restore",
+      "type": "file_path",
+      "description": "Restore a prior bootstrap snapshot"
+    },
+    {
+      "name": "json",
+      "flag": "--json",
+      "type": "flag",
+      "description": "Emit JSON status messages"
+    },
+    {
+      "name": "describe",
+      "flag": "--describe",
+      "type": "flag",
+      "description": "Print the compiled operator manifest and exit 0"
+    }
+  ],
+  "exit_codes": {
+    "0": {
+      "meaning": "READY",
+      "domain": "positive"
+    },
+    "1": {
+      "meaning": "VIOLATIONS",
+      "domain": "negative"
+    },
+    "2": {
+      "meaning": "REFUSAL / CLI error",
+      "domain": "error"
+    }
+  },
+  "current_runtime_behavior": {
+    "engine_support": {
+      "postgres": "bootstrap-ready",
+      "mysql": "declared but refused",
+      "oracle": "declared but refused"
+    },
+    "implemented_surface": [
+      "DDL catalog parsing",
+      "rules manifest hashing",
+      "bootstrap report generation",
+      "snapshot write/restore with hash verification"
+    ],
+    "deferred_surface": [
+      "pgwire server",
+      "SQL execution",
+      "row materialization",
+      "live --run orchestration"
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "twinning.v0",
+      "kind": "status_report",
+      "description": "Bootstrap readiness report for the twin configuration"
+    },
+    {
+      "name": "twinning.snapshot.v0",
+      "kind": "snapshot",
+      "description": "Content-addressed bootstrap snapshot of the parsed twin catalog"
+    }
+  ]
+}
