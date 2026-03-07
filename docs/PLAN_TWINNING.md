@@ -492,6 +492,69 @@ Follows the same implementation standards as protocol tools: `#![forbid(unsafe_c
 
 ---
 
+## Phased implementation roadmap
+
+### Delivery doctrine
+
+- One wedge at a time. v1 is **Postgres tournament mode**, not "all interfaces."
+- Protocol fidelity comes before SQL breadth. If clients cannot connect cleanly, new SQL support is wasted work.
+- Backend abstraction comes before the second interface. Do not hard-code SQL-shaped storage into the kernel.
+- Tournament mode ships before replay/proof mode. Fast agent iteration is the first value.
+- Whole-corpus replay does not need to be memory-only. Use a heavier backend when the economics demand it.
+- VSAM is the first non-SQL target. Oracle TNS and CICS are explicitly deferred.
+
+### Phases
+
+| Phase | Goal | Deliverables | Hard gate to continue | Stop / redirect if |
+|------|------|--------------|------------------------|--------------------|
+| **0** | Bootstrap the artifact surface | CLI, DDL/catalog parsing, rules loading, deterministic report, snapshot hashing | Done in the current repo | n/a |
+| **1** | Make unmodified Postgres clients connect | Startup/auth handshake, parameter status, simple query path, `SET`/`BEGIN`/`COMMIT`/`ROLLBACK` ACKs, minimal session state, correct protocol/error framing | `psql`, `psycopg2`, and SQLAlchemy connect and pass a smoke suite without app-side hacks | If common clients cannot connect reliably through `pgwire` after a bounded spike, stop adding SQL features and reassess the protocol strategy |
+| **2** | Make the write path correct | `CREATE TABLE`, `INSERT`, `ON CONFLICT`, PK/UNIQUE/FK/NOT NULL/CHECK, type coercion, SQLSTATE mapping, deterministic snapshot/restore | Differential tests vs real Postgres pass for the declared write subset; extractor canaries can write unchanged | If error codes, coercion, or upsert behavior drift from Postgres in repeated canaries, stop and fix the kernel before adding reads |
+| **3** | Support the read subset extractors actually use | Basic `SELECT`, predicates, aggregates, basic `GROUP BY`, `UPDATE`, `DELETE`, minimal catalog stubs, explicit SKIP reporting for unsupported queries | Curated real extractor/query corpus passes at an agreed threshold with unsupported features classified explicitly, not silently mishandled | If unsupported-query rate stays high for the real corpus, narrow the supported subset and stop pretending the twin is broader than it is |
+| **4** | Make tournament mode swarm-safe | Backend trait, shared base snapshot, bounded-memory hot working set, per-agent copy-on-write overlay, lazy hydration, fast reset | Multiple agent twins can run concurrently without multi-GB footprints; reset/startup is cheap enough for tournament iteration | If per-agent twins still need large resident state, stop interface expansion and fix storage economics first |
+| **5** | Add replay / proof mode | Snapshot-backed or disk-backed backend, optional delegation to real Postgres for full-corpus replay, replay harness, result diffing, evidence outputs | Historical query replay works against the heavy backend with reproducible reports | If full replay only works in full-RAM mode, do not scale that design; redirect to a heavier backend |
+| **6** | Prove the interface-emulator model beyond SQL | VSAM adapter, copybook parser, keyed store semantics, GnuCOBOL harness, batch replay proof | At least one real COBOL/VSAM program runs against the twin unchanged for the supported operation subset | If VSAM requires special-case hacks that bypass the kernel abstraction, refactor the kernel before attempting IMS/CICS |
+
+### Test strategy
+
+The implementation lives or dies by the harnesses, not the prose.
+
+- **Client compatibility suite:** real `psql`, `psycopg2`, SQLAlchemy, and later `asyncpg`, running startup, session, transaction, and error-path canaries.
+- **Differential semantics suite:** the same DDL/DML/query corpus executed against real Postgres and the twin, with result and SQLSTATE comparison.
+- **Extractor canary suite:** a small set of real extractor scripts from factory use cases, run unchanged against the twin.
+- **Storage-economics suite:** startup time, reset time, overlay size, hot-working-set growth, and concurrent-twin memory budgets.
+- **Replay suite:** historical query corpora and expected result packs for heavy replay/proof mode.
+- **Snapshot suite:** restore fidelity, content-address determinism, and overlay isolation checks.
+
+### Initial success criteria
+
+`twinning` is credible when all of the following are true:
+
+- A Python extractor using `psycopg2` or SQLAlchemy can point at the twin and run unchanged for the declared subset.
+- Unsupported operations are explicit refusals or SKIPs, never silent wrong answers.
+- A per-agent tournament twin is cheap enough to spin up in a swarm without multi-GB resident cost.
+- Heavy replay can use a non-RAM-only backend without changing the protocol-facing contract.
+- The first non-SQL adapter can reuse the same kernel/backend shape instead of forcing a rewrite.
+
+### What does not block v1
+
+- 150M rows fitting in RAM
+- Oracle TNS support
+- CICS support
+- Full SQL compatibility
+- Multi-writer semantics
+- A universal replay backend for every interface
+
+### Go / no-go checkpoints
+
+- If the Postgres handshake is brittle, pause feature work and fix the protocol surface first.
+- If the write-path semantics differ from real Postgres on gold cases, do not move on to reads.
+- If tournament twins are not bounded-memory, do not move on to the next interface.
+- If whole-corpus replay pressures the architecture toward huge per-agent RAM footprints, switch to the heavy backend instead of compromising swarm mode.
+- If VSAM cannot reuse the kernel/backend abstraction, the abstraction is wrong.
+
+---
+
 ## Determinism
 
 Same schema + same operation stream + same base snapshot = same twin state. No randomness, no side effects beyond the selected backend semantics. Snapshots are content-addressed — same state produces the same hash.
