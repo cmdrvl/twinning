@@ -18,6 +18,7 @@ pub struct TwinReport {
     pub schema: SchemaReport,
     pub rules: Option<RulesReport>,
     pub catalog: CatalogReport,
+    pub storage: StorageReport,
     pub tables: BTreeMap<String, TableReport>,
     pub constraints: ConstraintCounters,
     pub verify_rules: VerifyRuleReport,
@@ -50,6 +51,14 @@ pub struct CatalogReport {
     pub column_count: usize,
     pub index_count: usize,
     pub constraint_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageReport {
+    pub tournament_mode: String,
+    pub replay_mode: String,
+    pub hot_working_set: String,
+    pub cold_state: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -144,6 +153,13 @@ impl TwinReport {
                 index_count: seed.catalog.index_count,
                 constraint_count: seed.catalog.constraint_count,
             },
+            storage: StorageReport {
+                tournament_mode: "bounded-memory hot working set with per-twin overlay".to_owned(),
+                replay_mode:
+                    "disk-backed, snapshot-backed, or delegated real-database backend".to_owned(),
+                hot_working_set: "memory".to_owned(),
+                cold_state: "shared snapshot or pluggable backing store".to_owned(),
+            },
             tables,
             constraints: ConstraintCounters {
                 not_null_violations: 0,
@@ -181,6 +197,10 @@ impl TwinReport {
                 self.schema.column_count,
                 self.schema.index_count,
                 self.schema.hash
+            ),
+            format!(
+                "storage: tournament={} | replay={}",
+                self.storage.tournament_mode, self.storage.replay_mode
             ),
         ];
 

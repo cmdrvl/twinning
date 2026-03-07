@@ -1,7 +1,7 @@
-# twinning — In-Memory Database Twin
+# twinning — Interface Twin
 
 ## One-line promise
-**Impersonate a database — speak the real wire protocol, enforce schema constraints, store everything in memory — so extraction code iterates in seconds, not hours, and legacy migrations prove equivalence without touching production.**
+**Impersonate an interface — speak the real protocol, enforce schema or record contracts, keep the hot working set in memory, and use pluggable state backends when full replay demands it — so extraction code iterates in seconds, not hours, and legacy migrations prove equivalence without touching production.**
 
 ---
 
@@ -11,9 +11,9 @@ Two versions of the same problem:
 
 **Extractor development.** You're building extractors that write to Postgres (or MySQL, or Oracle). Against real Postgres with 150M existing rows, each test takes minutes to hours. Schema changes require migrations. Constraint violations are buried in database logs. The feedback loop is too slow for agent-driven iteration. The twin compresses the loop from days to seconds.
 
-**Legacy database migration.** You're retiring a 1000-table Oracle database. You need to prove that migrated data is correct — not just structurally valid, but *behaviorally equivalent*. The same queries that ran against Oracle for 20 years must return the same results against the migrated data. You can't run those queries against production during migration testing. The twin lets you replay them against an in-memory copy loaded with candidate data.
+**Legacy database migration.** You're retiring a 1000-table Oracle database. You need to prove that migrated data is correct — not just structurally valid, but *behaviorally equivalent*. The same queries that ran against Oracle for 20 years must return the same results against the migrated data. You can't run those queries against production during migration testing. The twin lets you replay them against candidate state without pointing the legacy program at production.
 
-Both use cases need the same thing: a fast, ephemeral, constraint-checked store that speaks the real wire protocol. Existing client code — SQLAlchemy, psycopg2, JDBC — connects to it and can't tell the difference, for the subset of SQL the use case requires.
+Both use cases need the same thing: a fast, ephemeral, constraint-checked behavioral twin that speaks the real protocol. Existing client code — SQLAlchemy, psycopg2, JDBC, COBOL file I/O, IMS calls — connects to it and can't tell the difference for the subset the use case requires. The hot working set lives in memory for speed; the full corpus does not need to.
 
 ### Core insight
 
@@ -29,8 +29,17 @@ This is the Digital Twin Universe insight from StrongDM applied to databases ins
 - A truth oracle (truth is determined by decode policy + gold set + evidence chain)
 - A concurrent multi-writer system (single writer per instance)
 - A query translator (it runs SQL verbatim — schema must match the client's expectations)
+- A promise that every twin keeps the entire universe resident in RAM
 
 No application points at the twin. The customer's web app, API, and reports continue to run against their production database. The twin exists in two loops: the extractor development loop (agents iterate fast) and the migration proof loop (replay historical queries, compare results).
+
+### Storage boundary
+
+The requirement is **stateful**, not **memory-only**.
+
+The twin must keep enough behavioral state to answer the next operation correctly. For tournament mode, that means the hot working set plus protocol/session state live in memory. For replay/proof mode, the backing state can be disk-backed, snapshot-backed, or delegated to a real database while the twin still owns the protocol boundary and behavioral contract.
+
+Short version: **memory-resident behavior, not memory-resident universe**.
 
 ---
 
@@ -85,28 +94,42 @@ twinning postgres --schema schema.sql --rules rules.json --port 5433 \
 |                     twinning                               |
 |                                                            |
 |  +-------------+   +-------------+   +---------------+    |
-|  | Wire Proto  |   | SQL Parser  |   | Coverage      |    |
-|  | (pgwire)    |   | (sqlparser) |   | Scorer        |    |
-|  |             |   |             |   |               |    |
+|  | Protocol    |   | Operation   |   | Coverage      |    |
+|  | Adapter     |   | Parser /    |   | Scorer        |    |
+|  |             |   | Router      |   |               |    |
 |  | Postgres v3 |   | INSERT      |   | row counts    |    |
 |  | MySQL proto |   | UPSERT      |   | null rates    |    |
 |  | Oracle TNS  |   | SELECT      |   | FK coverage   |    |
-|  |             |   | CREATE TABLE|   | verify rules  |    |
+|  | VSAM / IMS  |   | READ/WRITE  |   | verify rules  |    |
 |  +------+------+   +------+------+   +-------+-------+    |
 |         |                 |                   |            |
 |  +------v-----------------v-------------------v---------+  |
-|  |              In-Memory Store                         |  |
+|  |              Behavioral Kernel                      |  |
 |  |                                                      |  |
-|  |  Table = HashMap<PrimaryKey, Row>                    |  |
-|  |        + Vec<Column> (metadata, types)               |  |
-|  |        + HashSet per UNIQUE constraint               |  |
-|  |        + FK references (PK lookup into other table)  |  |
+|  |  Interface semantics + constraint engine + replay    |  |
+|  |  state + cursor state + deterministic snapshots      |  |
 |  |                                                      |  |
-|  |  Constraint checker (inline, per-row):               |  |
-|  |    NOT NULL . CHECK expr . UNIQUE . FK . type coerce |  |
+|  |  State backends:                                     |  |
+|  |    - bounded-memory hot working set                  |  |
+|  |    - copy-on-write overlay per twin                  |  |
+|  |    - snapshot-backed / disk-backed replay backend    |  |
 |  +------------------------------------------------------+  |
 +------------------------------------------------------------+
 ```
+
+### Storage modes
+
+**Tournament mode.** This is the swarm mode. One agent, one cheap twin. The twin keeps protocol state, the hot working set, and a copy-on-write overlay in memory. It loads only the slice under test and can evict or reset aggressively. The target footprint is MBs to low hundreds of MBs, not GBs.
+
+**Replay / proof mode.** This is the heavy mode. The goal is full-corpus equivalence or broad historical query replay. The twin still owns the protocol boundary and replay semantics, but the backing state can be snapshot-backed, disk-backed, or a real Postgres instance with the translated schema. This mode is not one twin per agent.
+
+### Swarm economics
+
+If 40 agents each need a twin, the architecture cannot assume a multi-GB resident dataset per instance. The only economically sane model is:
+- shared base snapshot or backing store
+- per-agent bounded-memory overlay
+- lazy hydration of touched keys or ranges
+- rapid teardown and rebuild
 
 ---
 
@@ -161,7 +184,7 @@ The subset of SQL that extraction code and legacy queries use:
 ### What it skips
 
 - MVCC / transaction isolation (single writer per instance)
-- WAL / crash recovery (in-memory, ephemeral)
+- WAL / crash recovery (the twin is not the system of record)
 - Vacuum / dead tuples (upsert overwrites in the HashMap)
 - Cost-based query optimizer (simple scan/hash-lookup is sufficient)
 - JOINs across large tables (coverage queries don't need them; add later if needed)
@@ -219,21 +242,23 @@ Upsert is the primary write pattern. The twin must correctly identify the confli
 | SELECT ... WHERE col > X | Scan (no index) | ~10-50M rows/sec (memory bandwidth) |
 | FK check | Hash lookup into parent PK map | O(1) per row |
 
-### Full load throughput
+### Full load throughput (optional full-RAM profile)
 
 | Scale | Time | Notes |
 |-------|------|-------|
 | 200K rows (per-agent iteration) | <1 second | The iteration loop |
 | 10M rows (single deal, all tables) | 3-10 seconds | Per-deal validation |
-| 150M rows (full corpus, all tables) | 1-3 minutes | Full twin validation run |
+| 150M rows (full corpus, all tables) | 1-3 minutes | Optional full-RAM validation profile, not per-agent default |
 
-These numbers assume Rust HashMap with FxHash or similar fast hasher, pre-allocated capacity, and minimal allocation during insert. Memory usage: ~50-100 bytes per row typical (depends on column count and types), so 150M rows ~ 8-15 GB RAM. Fits in a single machine.
+These numbers assume Rust HashMap with FxHash or similar fast hasher, pre-allocated capacity, and minimal allocation during insert. Memory usage: ~50-100 bytes per row typical (depends on column count and types), so 150M rows ~ 8-15 GB RAM. That is an optional whole-corpus benchmark for a single heavyweight validation run, not the baseline tournament shape.
+
+For day-to-day swarm iteration, the expected shape is much smaller: per-deal, per-job, per-template, or per-partition slices with bounded-memory overlays. If you need whole-corpus replay, a disk-backed or real-Postgres backend is acceptable — the important boundary is protocol fidelity and behavioral equivalence, not proving everything can fit in RAM at once.
 
 ---
 
 ## Coverage scoring
 
-The twin has a built-in coverage scorer that runs `verify` rules against its in-memory state plus additional structural checks:
+The twin has a built-in coverage scorer that runs `verify` rules against its materialized state plus additional structural checks:
 
 ```json
 {
@@ -293,7 +318,7 @@ twinning postgres --schema schema.sql --port 5433 \
 twinning postgres --restore snapshots/2025-12-full.twin --port 5433
 ```
 
-A snapshot is a content-addressed binary dump of the in-memory state (schema + all table data + constraint metadata). Snapshots enable:
+A snapshot is a content-addressed dump of the twin state (schema + materialized data + constraint metadata + overlay state). Snapshots enable:
 - Fast twin recovery without replaying claim/mutation events
 - Diffing twin states across time periods (export to CSV, run `rvl`)
 - Evidence sealing (snapshot hash in evidence packs)
@@ -317,20 +342,21 @@ Oracle is the hardest — TNS protocol is proprietary and poorly documented. The
 
 ## Beyond SQL: the generalized interface model
 
-The twin's core abstraction is not "a SQL database emulator." It's **an interface emulator**: speak the protocol the client expects, enforce the schema's constraints, store in memory. SQL wire protocols are one interface. There are others — and the architecture supports them without changing the factory, the convergence model, or the tournament.
+The twin's core abstraction is not "a SQL database emulator." It's **an interface emulator**: speak the protocol the client expects, enforce the schema's constraints, and keep enough behavioral state to answer correctly. SQL wire protocols are one interface. There are others — and the architecture supports them without changing the factory, the convergence model, or the tournament.
 
 ### Non-SQL twin types (future)
 
 | Interface | Protocol | What programs expect | Twin implementation | Complexity vs Postgres twin |
 |-----------|----------|---------------------|--------------------|-----------------------------|
-| **VSAM** | COBOL file I/O (`OPEN`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `START`, `CLOSE`) | Keyed or sequential access to fixed-format record files | In-memory keyed byte-array store (KSDS = HashMap, ESDS = Vec, RRDS = array) | **Simpler** — no SQL parsing, no query planning, ~3-4K LOC |
-| **IMS/DL/I** | Hierarchical navigation (`GU`, `GN`, `GNP`, `ISRT`, `REPL`, `DLET`) | Tree traversal over segments defined by a DBD | In-memory hierarchical store with segment types and PCBs | **Harder** — navigational semantics are subtle, ~5-8K LOC |
-| **Flat files** | Sequential I/O (`READ`/`WRITE` with copybook layout) | Fixed-length records in EBCDIC with packed decimal fields | In-memory byte stream with copybook-defined field offsets | **Simplest** — no indexing, no constraints, ~1-2K LOC |
+| **VSAM** | COBOL file I/O (`OPEN`, `READ`, `WRITE`, `REWRITE`, `DELETE`, `START`, `CLOSE`) | Keyed or sequential access to fixed-format record files | Keyed byte-array store with hot pages in RAM and optional snapshot/disk backing | **Simpler** — no SQL parsing, no query planning, ~3-4K LOC |
+| **IMS/DL/I** | Hierarchical navigation (`GU`, `GN`, `GNP`, `ISRT`, `REPL`, `DLET`) | Tree traversal over segments defined by a DBD | Hierarchical store with hot segments in RAM and pluggable persistence | **Harder** — navigational semantics are subtle, ~5-8K LOC |
+| **Flat files** | Sequential I/O (`READ`/`WRITE` with copybook layout) | Fixed-length records in EBCDIC with packed decimal fields | Byte-stream twin with hot windows in memory and copybook-defined field offsets | **Simplest** — no indexing, no constraints, ~1-2K LOC |
 | **CICS** | Transaction dispatch (`EXEC CICS` commands) | Screen input → program → DB/file updates → screen output | Transaction router + CICS API surface emulation | **Hardest** — hundreds of commands; pragmatic path is mock top 50 or use Micro Focus commercially |
 
 Each twin type follows the same contract:
 - Speak the interface the program expects
-- Store data in memory (HashMap, tree, byte array — whatever fits)
+- Keep enough behavioral state to answer correctly
+- Keep the hot working set in memory; use snapshots, overlays, or heavier backends for the rest
 - Enforce constraints from the schema definition (DDL, DBD, copybook)
 - Support content-addressed snapshots
 - Report coverage
@@ -422,7 +448,7 @@ done
 |------|-------------|
 | **factory** | Factory orchestrates twin pairs for migration proof. Twin A for replay, Twin B for target scoring. |
 | **decoding** | Decoding resolves claims into canonical mutations; the twin enforces constraints on those mutations |
-| **verify** | Twin runs `verify` rules against its in-memory state for coverage scoring |
+| **verify** | Twin runs `verify` rules against its materialized state for coverage scoring |
 | **shape** | Twin's schema DDL is the structural contract; `shape` checks CSV inputs before they reach the twin |
 | **benchmark** | Gold set assertions can be checked against twin state (export to CSV, run `benchmark`) |
 | **compare** | Diffing Twin A export vs Oracle export proves data equivalence |
@@ -441,7 +467,9 @@ done
 | Wire protocol server | **pgwire** crate (Postgres v3) | ~500 (glue code) |
 | SQL parser + router | **sqlparser-rs** crate (Postgres dialect) | ~500 (route parsed AST to store) |
 | Schema catalog | Custom | ~1-2K |
-| In-memory store (HashMap per table) | Custom | ~2-3K |
+| State backend trait + overlay model | Custom | ~500-1K |
+| Bounded-memory in-memory backend | Custom | ~2-3K |
+| Replay / proof backend (disk-backed or real Postgres) | Custom / delegated | ~1-2K |
 | Constraint checker (NOT NULL, CHECK, UNIQUE, FK, types) | Custom | ~1-2K |
 | Upsert logic (ON CONFLICT) | Custom | ~500 |
 | Basic SELECT executor | Custom | ~2-3K |
@@ -466,4 +494,4 @@ Follows the same implementation standards as protocol tools: `#![forbid(unsafe_c
 
 ## Determinism
 
-Same schema + same SQL statements in same order = same twin state. No randomness, no side effects beyond the in-memory store. Snapshots are content-addressed — same state produces the same hash.
+Same schema + same operation stream + same base snapshot = same twin state. No randomness, no side effects beyond the selected backend semantics. Snapshots are content-addressed — same state produces the same hash.

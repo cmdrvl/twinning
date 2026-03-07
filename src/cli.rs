@@ -39,7 +39,7 @@ impl std::fmt::Display for Engine {
 #[command(
     name = "twinning",
     version,
-    about = "Prepare a Postgres-first in-memory database twin from schema assets"
+    about = "Prepare a Postgres-first interface twin from schema assets"
 )]
 pub struct Cli {
     #[arg(value_enum)]

@@ -2,7 +2,7 @@
   "schema_version": "operator.v0",
   "name": "twinning",
   "version": "0.1.0",
-  "description": "In-memory database twin bootstrap: parse DDL, prepare deterministic twin artifacts, and stage the Postgres-first runtime",
+  "description": "Interface twin bootstrap: parse DDL, prepare deterministic twin artifacts, and stage bounded-memory tournament twins plus heavier replay backends",
   "repository": "https://github.com/cmdrvl/twinning",
   "license": "MIT",
   "agent_guide": "https://github.com/cmdrvl/.github/blob/main/profile/AGENT_PROMPT.md",
@@ -110,12 +110,15 @@
       "DDL catalog parsing",
       "rules manifest hashing",
       "bootstrap report generation",
-      "snapshot write/restore with hash verification"
+      "snapshot write/restore with hash verification",
+      "storage-boundary reporting for tournament vs replay modes"
     ],
     "deferred_surface": [
       "pgwire server",
       "SQL execution",
       "row materialization",
+      "bounded-memory overlay backend",
+      "heavier replay/proof backends",
       "live --run orchestration"
     ]
   },

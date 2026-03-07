@@ -2,19 +2,20 @@
 
 <div align="center">
 
-**Postgres-first database twin bootstrap. Parse real DDL, normalize the catalog, and emit deterministic reports and snapshots before the live wire server lands.**
+**Postgres-first interface twin bootstrap. Parse real DDL, normalize the catalog, and emit deterministic reports and snapshots before the live wire server lands.**
 
 </div>
 
 ---
 
-`twinning` is the factory's speed layer: an in-memory, constraint-checked store that eventually speaks the real database wire protocol so extraction code can iterate in seconds instead of hours. The repo now has the real artifact surface and internal boundaries for that system:
+`twinning` is the factory's speed layer: a protocol-faithful twin that keeps the hot working set in memory for tournament iteration and leaves room for heavier replay/proof backends when the corpus gets large. The repo now has the real artifact surface and internal boundaries for that system:
 
 - Parse schema DDL with `sqlparser-rs`
 - Normalize tables, columns, keys, checks, foreign keys, and indexes into a deterministic catalog
 - Load rule manifests and hash all bootstrap inputs
 - Emit `twinning.v0` readiness reports and `twinning.snapshot.v0` snapshots
 - Refuse unimplemented live-server paths explicitly instead of pretending to be a database
+- Establish the bounded-memory tournament / heavier replay split in the artifact surface
 
 The wire protocol runtime is not implemented yet. This first cut is intentionally honest: it gives the factory a strong artifact contract and a clean Rust architecture now, without faking pgwire support.
 
@@ -65,13 +66,16 @@ Implemented now:
 - Deterministic catalog parsing for `CREATE TABLE` and `CREATE INDEX`
 - Snapshot hashing and verification
 - Report generation for the factory/orchestration layer
+- Storage-boundary reporting for tournament mode vs replay/proof mode
 
 Deferred:
 - pgwire listener
 - SQL execution engine
+- bounded-memory overlay backend
+- heavier replay/proof backends
 - row storage and constraint enforcement
 - `--run` live orchestration
-- rule evaluation against in-memory state
+- rule evaluation against materialized twin state
 
 ## Repository Plan
 
