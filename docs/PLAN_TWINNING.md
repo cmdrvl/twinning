@@ -498,22 +498,97 @@ Follows the same implementation standards as protocol tools: `#![forbid(unsafe_c
 
 - One wedge at a time. v1 is **Postgres tournament mode**, not "all interfaces."
 - Protocol fidelity comes before SQL breadth. If clients cannot connect cleanly, new SQL support is wasted work.
+- Capability growth must be explicit. Expand the supported subset by growing the canary corpus and manifest, never by vague claims.
 - Backend abstraction comes before the second interface. Do not hard-code SQL-shaped storage into the kernel.
 - Tournament mode ships before replay/proof mode. Fast agent iteration is the first value.
 - Whole-corpus replay does not need to be memory-only. Use a heavier backend when the economics demand it.
+- Heavy backends may delegate storage, but they must not change the protocol-facing contract.
 - VSAM is the first non-SQL target. Oracle TNS and CICS are explicitly deferred.
+
+### What "v1 working" means
+
+`twinning v1` means an unmodified Postgres client can connect to a tournament twin, restore or load a bounded base snapshot, execute the declared SQL subset, and receive either Postgres-matching results / SQLSTATEs or an explicit refusal.
+
+In scope for v1:
+
+- Postgres-only tournament mode
+- Startup/auth/session behavior required by `psql`, `psycopg2`, and SQLAlchemy Core
+- Simple query and minimal extended-query flow (`Parse`, `Bind`, `Describe`, `Execute`, `Sync`) for parameterized statements
+- Schema supplied by input DDL and/or restored snapshots rather than arbitrary runtime DDL
+- DML subset: `INSERT`, `INSERT ... ON CONFLICT`, `UPDATE`, `DELETE`
+- Read subset limited to the exact `SELECT` shapes exercised by the canary corpus
+- Shared base snapshot plus per-agent copy-on-write overlay with deterministic reset
+
+Not v1:
+
+- `COPY`, `LISTEN/NOTIFY`, replication, logical decoding, advisory locks
+- Broad catalog emulation or ORM reflection completeness
+- Arbitrary runtime DDL, stored procedures, triggers, or broad SQL compatibility claims
+- Oracle TNS, VSAM, IMS, or CICS adapters
+- Full-corpus replay in RAM
+
+### Kernel boundaries
+
+The repo stays honest only if the center is adapter-agnostic.
+
+| Layer | Responsibility | Must not know |
+|------|----------------|---------------|
+| **Protocol adapter** | Wire/session framing, auth, transaction lifecycle, mapping client messages into semantic requests | Row layout, snapshot format, backend residency policy |
+| **Operation IR** | Normalized operations such as session control, parameterized statements, point lookups, scans, mutations, and explicit refusals | Protocol frames, engine-specific storage details |
+| **Semantic kernel** | Type coercion, constraint checks, conflict handling, SQLSTATE mapping, read/write semantics | pgwire details, VSAM call shapes, storage-medium specifics |
+| **State backend** | Base snapshot access, uniqueness probes, scans, FK existence checks, overlay writes, deterministic reads | SQL text, client protocol, copybook or parser internals |
+| **Overlay / snapshot manager** | Restore, branch, reset, export, content hashing, isolation guarantees | Query parsing, protocol details |
+
+Every new interface must terminate at the same `Operation IR` and `Semantic kernel`. If an adapter needs to bypass those layers to work, the architecture is wrong.
 
 ### Phases
 
 | Phase | Goal | Deliverables | Hard gate to continue | Stop / redirect if |
 |------|------|--------------|------------------------|--------------------|
 | **0** | Bootstrap the artifact surface | CLI, DDL/catalog parsing, rules loading, deterministic report, snapshot hashing | Done in the current repo | n/a |
-| **1** | Make unmodified Postgres clients connect | Startup/auth handshake, parameter status, simple query path, `SET`/`BEGIN`/`COMMIT`/`ROLLBACK` ACKs, minimal session state, correct protocol/error framing | `psql`, `psycopg2`, and SQLAlchemy connect and pass a smoke suite without app-side hacks | If common clients cannot connect reliably through `pgwire` after a bounded spike, stop adding SQL features and reassess the protocol strategy |
-| **2** | Make the write path correct | `CREATE TABLE`, `INSERT`, `ON CONFLICT`, PK/UNIQUE/FK/NOT NULL/CHECK, type coercion, SQLSTATE mapping, deterministic snapshot/restore | Differential tests vs real Postgres pass for the declared write subset; extractor canaries can write unchanged | If error codes, coercion, or upsert behavior drift from Postgres in repeated canaries, stop and fix the kernel before adding reads |
-| **3** | Support the read subset extractors actually use | Basic `SELECT`, predicates, aggregates, basic `GROUP BY`, `UPDATE`, `DELETE`, minimal catalog stubs, explicit SKIP reporting for unsupported queries | Curated real extractor/query corpus passes at an agreed threshold with unsupported features classified explicitly, not silently mishandled | If unsupported-query rate stays high for the real corpus, narrow the supported subset and stop pretending the twin is broader than it is |
-| **4** | Make tournament mode swarm-safe | Backend trait, shared base snapshot, bounded-memory hot working set, per-agent copy-on-write overlay, lazy hydration, fast reset | Multiple agent twins can run concurrently without multi-GB footprints; reset/startup is cheap enough for tournament iteration | If per-agent twins still need large resident state, stop interface expansion and fix storage economics first |
-| **5** | Add replay / proof mode | Snapshot-backed or disk-backed backend, optional delegation to real Postgres for full-corpus replay, replay harness, result diffing, evidence outputs | Historical query replay works against the heavy backend with reproducible reports | If full replay only works in full-RAM mode, do not scale that design; redirect to a heavier backend |
+| **1** | Make common Postgres clients connect and execute a first parameterized round trip | Startup/auth handshake, backend key data, parameter status, simple query path, minimal extended-query path, `SET`/`BEGIN`/`COMMIT`/`ROLLBACK` ACKs, minimal session state, correct protocol/error framing | `psql` smoke, `psycopg2` parameterized smoke, and SQLAlchemy Core smoke all pass without app-side hacks | If common clients cannot complete the parameterized canaries through `pgwire` after a bounded spike, stop adding SQL features and reassess the protocol strategy |
+| **2** | Make the write path correct | `INSERT`, `ON CONFLICT`, PK/UNIQUE/FK/NOT NULL/CHECK, type coercion, SQLSTATE mapping, deterministic snapshot/restore, overlay-safe mutations | Differential tests vs real Postgres pass for the declared write subset with exact SQLSTATE parity; extractor canaries can write unchanged | If error codes, coercion, or upsert behavior drift from Postgres on repeated gold cases, stop and fix the kernel before adding reads |
+| **3** | Support the read subset extractors actually use | Declared `SELECT` subset, predicates, joins only if the canary corpus demands them, basic aggregates / `GROUP BY` only if demanded, `UPDATE`, `DELETE`, minimal catalog stubs, explicit SKIP reporting | The curated query corpus meets the acceptance budgets below, and unsupported features are classified explicitly rather than guessed | If unsupported-query rate stays high for the real corpus, narrow the supported subset and stop claiming broader compatibility |
+| **4** | Make tournament mode swarm-safe | Backend trait, shared base snapshot, bounded-memory hot working set, per-agent copy-on-write overlay, lazy hydration, fast reset, memory-budget reporting | Tournament twins meet the startup/reset/private-RSS budgets below on the reference canaries | If per-agent twins still need large resident state, stop interface expansion and fix storage economics first |
+| **5** | Add replay / proof mode | Snapshot-backed or disk-backed backend, optional delegation to real Postgres for full-corpus replay, replay harness, result diffing, evidence outputs | Historical query replay works against the heavy backend with reproducible reports and unchanged protocol-facing behavior | If full replay only works in full-RAM mode, do not scale that design; redirect to a heavier backend |
 | **6** | Prove the interface-emulator model beyond SQL | VSAM adapter, copybook parser, keyed store semantics, GnuCOBOL harness, batch replay proof | At least one real COBOL/VSAM program runs against the twin unchanged for the supported operation subset | If VSAM requires special-case hacks that bypass the kernel abstraction, refactor the kernel before attempting IMS/CICS |
+
+### Concrete acceptance budgets
+
+These are the default go / no-go budgets for v1 on a reference developer machine. They are not portability promises; they are implementation gates.
+
+| Metric | Target | Red line |
+|------|--------|----------|
+| Cold startup from schema | <= 1.0s | > 2.0s |
+| Warm restore from base snapshot | <= 2.0s | > 5.0s |
+| Reset to clean overlay | <= 200ms | > 500ms |
+| Idle private RSS per tournament twin | <= 128 MiB | > 256 MiB |
+| Private RSS under the reference canary workload | <= 256 MiB | > 512 MiB |
+| Gold write-corpus differential parity | 100% | Any silent mismatch |
+| Unsupported-statement handling | 100% explicit refusal or SKIP | Any silent partial semantics |
+| Snapshot determinism | 20/20 identical hashes for identical state | Any hash drift |
+
+### First canary corpus
+
+The first harnesses are not optional. They define the real subset.
+
+- `psql_smoke`: connect, authenticate, `SET application_name`, `BEGIN`, `SELECT`, `ROLLBACK`, restore-ready snapshot load
+- `psycopg2_params`: parameterized `INSERT`, `SELECT`, `ON CONFLICT`, and a known unique-violation SQLSTATE
+- `sqlalchemy_core`: engine connect, transaction begin/commit, parameterized execute, row fetch, no reflection requirement in v1
+- `extractor_canary`: one real factory extractor script, run unchanged against the twin
+- `heavy_backend_canary`: the same operation stream executed through the replay/proof backend to prove backend swap does not change observable behavior
+
+The rule is simple: no new feature claim lands without a canary or differential fixture that proves it.
+
+### Immediate work order
+
+The next sequence should match the current Beads queue:
+
+1. `bd-399`: build the compatibility and differential harness first; every later phase depends on it.
+2. `bd-1jd`: land the pgwire listener only far enough to satisfy the phase-1 canaries.
+3. `bd-372`: implement the row store and constraint executor to satisfy the phase-2 gold corpus.
+4. `bd-28r`: add bounded-memory overlays and the replay/proof backend boundary before widening the query surface or adding another interface.
+5. `bd-wij`: layer live rule evaluation and coverage scoring on top once semantics and storage behavior are trustworthy.
 
 ### Test strategy
 
@@ -530,15 +605,19 @@ The implementation lives or dies by the harnesses, not the prose.
 
 `twinning` is credible when all of the following are true:
 
-- A Python extractor using `psycopg2` or SQLAlchemy can point at the twin and run unchanged for the declared subset.
+- A Python extractor using `psycopg2` or SQLAlchemy Core can point at the twin and run unchanged for the declared subset.
 - Unsupported operations are explicit refusals or SKIPs, never silent wrong answers.
-- A per-agent tournament twin is cheap enough to spin up in a swarm without multi-GB resident cost.
+- A per-agent tournament twin stays inside the private-RSS and reset budgets defined above.
 - Heavy replay can use a non-RAM-only backend without changing the protocol-facing contract.
 - The first non-SQL adapter can reuse the same kernel/backend shape instead of forcing a rewrite.
 
 ### What does not block v1
 
 - 150M rows fitting in RAM
+- `COPY` support
+- `LISTEN/NOTIFY`
+- Prepared-statement caching sophistication beyond the minimal extended-query flow
+- SQLAlchemy reflection completeness
 - Oracle TNS support
 - CICS support
 - Full SQL compatibility
