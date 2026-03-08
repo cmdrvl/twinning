@@ -113,6 +113,50 @@ twinning postgres --schema schema.sql --verify schema.verify.json --port 5433 \
   --run "python extract.py" --report twin-report.json
 ```
 
+### Runtime lifecycle semantics
+
+The CLI contract is only stable if startup, shutdown, and report boundaries are
+explicit.
+
+Startup preflight order:
+
+1. Parse CLI and select exactly one bootstrap source (`--schema` or
+   `--restore`).
+2. Load the normalized catalog / restored snapshot and derive the bound runtime
+   config.
+3. If `--verify` is provided, load the compiled artifact and refuse immediately
+   if it contains any batch-only rule.
+4. Bind report / snapshot output targets.
+5. Only then start accepting pgwire connections.
+
+Interactive mode semantics:
+
+- The twin remains up until orderly shutdown (`SIGINT`, `SIGTERM`, or explicit
+  operator stop).
+- Unsupported statements are client-visible refusals / SQLSTATEs; they do not
+  terminate the twin process.
+- If `--report` is set, `twinning` emits exactly one final report on orderly
+  shutdown over the final committed state.
+- If `--snapshot` is set, `twinning` emits exactly one final snapshot at the
+  same boundary.
+- Exit code is determined only when the process exits: `0` clean, `1` verify
+  violations in the final report, `2` bootstrap/refusal failure.
+
+`--run` mode semantics:
+
+- `twinning` starts the twin, launches the child command, waits for it to exit,
+  freezes the final committed state, runs verify if configured, writes the
+  report/snapshot outputs, and then exits.
+- Child-command failure does not create a second exit-code taxonomy for
+  `twinning`; it is reported in the final artifact metadata, while `twinning`
+  still exits via the `0` / `1` / `2` domain contract above.
+
+Visibility rules:
+
+- Verification and snapshotting see only committed twin state.
+- Rolled-back mutations, transient session variables, live sockets, and
+  prepared-statement caches are outside the report/snapshot semantic surface.
+
 ---
 
 ## Architecture
@@ -210,6 +254,36 @@ either:
 This is the only stable way to stop the SQL surface from drifting into
 wish-casting.
 
+### Canary manifest artifact
+
+The manifest itself must be a checked-in artifact, not an implicit test folder.
+
+Recommended location:
+
+- `canaries/manifest.v0.json`
+
+Recommended schema:
+
+| Field | Meaning |
+|------|---------|
+| `version` | Manifest version, e.g. `twinning.canary-manifest.v0` |
+| `engine` | `postgres` for v0 |
+| `canaries[]` | Named compatibility claims |
+| `canaries[].id` | Stable canary ID such as `psql_smoke` |
+| `canaries[].client` | Client family: `psql`, `psycopg2`, `sqlalchemy_core`, `factory_extractor` |
+| `canaries[].session_shapes[]` | Required startup/session behaviors |
+| `canaries[].write_shapes[]` | Required mutation shapes |
+| `canaries[].read_shapes[]` | Required read/query shapes |
+| `canaries[].required_sqlstates[]` | SQLSTATEs the canary depends on |
+| `canaries[].unsupported_policy` | `refusal` or `skip` for shapes outside the declared subset |
+
+Claim rule:
+
+- If a session or SQL shape is not named in the manifest, v0 does not claim to
+  support it.
+- The manifest, fixtures, and harness names must line up one-to-one.
+- A compatibility claim is valid only if the corresponding canary passes.
+
 ---
 
 ## What it must get right
@@ -245,6 +319,9 @@ Upsert is the primary write pattern. The twin must correctly identify the confli
 ---
 
 ## Performance
+
+The throughput table below is explanatory only. The real implementation contract
+is the acceptance-budget table later in this document.
 
 | Operation | Mechanism | Throughput |
 |-----------|-----------|------------|
@@ -301,6 +378,36 @@ For v0, `twinning` should execute `verify` through the embedded library surface,
 not by exporting state and shelling out to batch `verify`. If a provided
 constraint artifact contains batch-only rules, live `twinning` must refuse them
 explicitly instead of silently degrading into a second execution path.
+
+### Verify execution contract
+
+`twinning` needs one exact bridge into `verify`.
+
+Execution timing:
+
+- In `--run` mode, verify runs once after the child command exits and before the
+  final report/snapshot is written.
+- In interactive mode, verify runs once at the final report boundary during
+  orderly shutdown.
+- v0 does not run verify after every statement or transaction.
+
+Binding surface:
+
+- Every materialized table is exposed to embedded `verify` as a named relation
+  using the canonical catalog name `schema.table` with `public` explicit.
+- The compiled verify artifact used with `twinning` v0 must bind directly to
+  those canonical relation names.
+- `twinning` does not invent a second alias or file-binding layer for verify.
+
+Outcome rules:
+
+- The attached verify payload in a twin report must be a valid
+  `verify.report.v1` artifact or an embedded-equivalent structure with the same
+  semantics.
+- If the artifact contains any batch-only rule, `twinning` refuses the run
+  before accepting live traffic.
+- If no verify artifact is supplied, the twin report omits the attached verify
+  section rather than fabricating a PASS.
 
 Example combined report:
 
@@ -368,6 +475,32 @@ A snapshot is a content-addressed dump of the twin state (schema + materialized 
 - Fast twin recovery without replaying claim/mutation events
 - Diffing twin states across time periods (export to CSV, run `rvl`)
 - Evidence sealing (snapshot hash in evidence packs)
+
+### Snapshot contract
+
+The snapshot contract must be explicit enough to support the determinism claim.
+
+A live `twinning.snapshot.v0` hash surface must include:
+
+- snapshot format version
+- engine and twin mode
+- schema hash and normalized catalog identity
+- base snapshot hash if the current twin was restored from one
+- verify artifact hash if one is attached
+- committed relation contents, or a deterministic overlay delta sufficient to
+  reconstruct them
+- deterministic row counts per relation
+
+A live `twinning.snapshot.v0` hash surface must exclude:
+
+- wall-clock timestamps
+- active connection IDs
+- transient session variables
+- prepared-statement cache contents
+- warnings, logs, witness receipts, or operator-facing display strings
+
+If timestamps or debug metadata are present in the serialized snapshot, they
+must live outside the content-addressed hash surface.
 
 ---
 
@@ -459,6 +592,31 @@ done
 | Error code mapping (SQLSTATE) | Custom | ~300 |
 | **Total** | | **~10-15K lines of Rust** |
 
+### Swarm-safe module map
+
+The runtime work should converge on a file layout that lets multiple agents work
+without constant collisions.
+
+Recommended module ownership:
+
+| Path | Responsibility |
+|------|----------------|
+| `src/cli.rs` | Clap surface only |
+| `src/runtime.rs` | Process lifecycle, startup/shutdown, signal handling, report/snapshot boundaries |
+| `src/protocol/postgres/{mod,startup,simple_query,extended_query,error}.rs` | pgwire adapter and protocol framing |
+| `src/ir.rs` | `Operation IR` definitions and normalization invariants |
+| `src/kernel/{mod,coerce,write,read,sqlstate}.rs` | Semantic kernel |
+| `src/backend/{mod,base,memory,overlay}.rs` | Base snapshot access and tournament backend behavior |
+| `src/verify_bridge.rs` | Embedded verify binding and attachment logic |
+| `src/snapshot.rs` | Snapshot serialization, hashing, restore |
+| `src/report.rs` | Twin report schema and rendering |
+| `tests/canaries/*.rs` | Client compatibility harnesses |
+| `tests/differential/*.rs` | Real-Postgres parity harnesses |
+| `tests/storage/*.rs` | Memory/reset/startup budget checks |
+
+The exact filenames can differ slightly, but v0 work should preserve this
+separation of concerns.
+
 ### Candidate crates
 
 | Need | Crate | Notes |
@@ -507,7 +665,7 @@ Follows the same implementation standards as protocol tools: `#![forbid(unsafe_c
 - Tournament mode ships before replay/proof mode. Fast agent iteration is the first value.
 - Whole-corpus replay does not need to be memory-only. Use a heavier backend when the economics demand it.
 - Heavy backends may delegate storage, but they must not change the protocol-facing contract.
-- VSAM is the first non-SQL target. Oracle TNS and CICS are explicitly deferred.
+- Expansion beyond Postgres tournament mode is tracked in the futures doc, not in this execution plan.
 
 ### What "v1 working" means
 
@@ -545,6 +703,28 @@ The repo stays honest only if the center is adapter-agnostic.
 
 Every new interface must terminate at the same `Operation IR` and `Semantic kernel`. If an adapter needs to bypass those layers to work, the architecture is wrong.
 
+### Operation IR contract
+
+The IR can no longer stay implicit. v0 needs one normalized operation surface
+between pgwire parsing and kernel execution.
+
+| IR op | Required fields | Meaning |
+|------|------------------|---------|
+| `SessionOp` | `session_id`, `op`, `tracked_params` | Session lifecycle and acknowledged settings such as `BEGIN`, `COMMIT`, `ROLLBACK`, and tracked `SET` operations |
+| `PrepareOp` | `session_id`, `statement_id`, `sql_hash`, `param_types` | Minimal extended-query preparation state for parameterized execution |
+| `MutationOp` | `session_id`, `table`, `kind`, `columns`, `rows`, `conflict_target`, `predicate`, `returning` | Normalized write operation for `INSERT`, `UPSERT`, `UPDATE`, and `DELETE` |
+| `ReadOp` | `session_id`, `table`, `shape`, `projection`, `predicate`, `aggregate`, `group_by`, `limit` | Normalized read operation for the canary-defined `SELECT` subset |
+| `RefusalOp` | `scope`, `code`, `detail` | Explicit unsupported-shape or invalid-operation refusal before backend execution |
+
+IR invariants:
+
+- All table and column references are resolved against the normalized catalog
+  before backend execution.
+- The IR contains no protocol frames, socket state, or backend residency hints.
+- Unsupported syntax becomes `RefusalOp` before the backend sees it.
+- Equivalent supported SQL shapes normalize to the same IR shape regardless of
+  client library.
+
 ### Phases
 
 | Phase | Goal | Deliverables | Hard gate to continue | Stop / redirect if |
@@ -554,8 +734,10 @@ Every new interface must terminate at the same `Operation IR` and `Semantic kern
 | **2** | Make the write path correct | `INSERT`, `ON CONFLICT`, PK/UNIQUE/FK/NOT NULL/CHECK, type coercion, SQLSTATE mapping, deterministic snapshot/restore, overlay-safe mutations | Differential tests vs real Postgres pass for the declared write subset with exact SQLSTATE parity; extractor canaries can write unchanged | If error codes, coercion, or upsert behavior drift from Postgres on repeated gold cases, stop and fix the kernel before adding reads |
 | **3** | Support the read subset extractors actually use | Declared `SELECT` subset, predicates, joins only if the canary corpus demands them, basic aggregates / `GROUP BY` only if demanded, `UPDATE`, `DELETE`, minimal catalog stubs, explicit SKIP reporting | The curated query corpus meets the acceptance budgets below, and unsupported features are classified explicitly rather than guessed | If unsupported-query rate stays high for the real corpus, narrow the supported subset and stop claiming broader compatibility |
 | **4** | Make tournament mode swarm-safe | Backend trait, shared base snapshot, bounded-memory hot working set, per-agent copy-on-write overlay, lazy hydration, fast reset, memory-budget reporting | Tournament twins meet the startup/reset/private-RSS budgets below on the reference canaries | If per-agent twins still need large resident state, stop interface expansion and fix storage economics first |
-| **5** | Add replay / proof mode | Snapshot-backed or disk-backed backend, optional delegation to real Postgres for full-corpus replay, replay harness, result diffing, evidence outputs | Historical query replay works against the heavy backend with reproducible reports and unchanged protocol-facing behavior | If full replay only works in full-RAM mode, do not scale that design; redirect to a heavier backend |
-| **6** | Prove the interface-emulator model beyond SQL | VSAM adapter, copybook parser, keyed store semantics, GnuCOBOL harness, batch replay proof | At least one real COBOL/VSAM program runs against the twin unchanged for the supported operation subset | If VSAM requires special-case hacks that bypass the kernel abstraction, refactor the kernel before attempting IMS/CICS |
+
+Replay/proof mode and non-SQL expansion continue in
+[PLAN_TWINNING_FUTURES.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING_FUTURES.md)
+once the v0 center above is real.
 
 ### Concrete acceptance budgets
 
@@ -580,8 +762,6 @@ The first harnesses are not optional. They define the real subset.
 - `psycopg2_params`: parameterized `INSERT`, `SELECT`, `ON CONFLICT`, and a known unique-violation SQLSTATE
 - `sqlalchemy_core`: engine connect, transaction begin/commit, parameterized execute, row fetch, no reflection requirement in v1
 - `extractor_canary`: one real factory extractor script, run unchanged against the twin
-- `heavy_backend_canary`: the same operation stream executed through the replay/proof backend to prove backend swap does not change observable behavior
-
 The rule is simple: no new feature claim lands without a canary or differential fixture that proves it.
 
 ### Immediate work order
@@ -589,10 +769,11 @@ The rule is simple: no new feature claim lands without a canary or differential 
 The next sequence should match the current Beads queue:
 
 1. `bd-399`: build the compatibility and differential harness first; every later phase depends on it.
-2. `bd-1jd`: land the pgwire listener only far enough to satisfy the phase-1 canaries.
-3. `bd-372`: implement the row store and constraint executor to satisfy the phase-2 gold corpus.
-4. `bd-28r`: add bounded-memory overlays and the replay/proof backend boundary before widening the query surface or adding another interface.
-5. `bd-wij`: layer embedded `verify` execution and raw twin metrics reporting on top once semantics and storage behavior are trustworthy.
+2. `bd-cry`: define the shared Operation IR before the protocol adapter and kernel drift into incompatible local shapes.
+3. `bd-1jd`: land the pgwire listener only far enough to satisfy the phase-1 canaries.
+4. `bd-372`: implement the row store and constraint executor to satisfy the phase-2 gold corpus.
+5. `bd-28r`: add bounded-memory overlays and the replay/proof backend boundary before widening the query surface or adding another interface.
+6. `bd-wij`: layer embedded `verify` execution and raw twin metrics reporting on top once semantics and storage behavior are trustworthy.
 
 ### Test strategy
 
@@ -602,7 +783,6 @@ The implementation lives or dies by the harnesses, not the prose.
 - **Differential semantics suite:** the same DDL/DML/query corpus executed against real Postgres and the twin, with result and SQLSTATE comparison.
 - **Extractor canary suite:** a small set of real extractor scripts from factory use cases, run unchanged against the twin.
 - **Storage-economics suite:** startup time, reset time, overlay size, hot-working-set growth, and concurrent-twin memory budgets.
-- **Replay suite:** historical query corpora and expected result packs for heavy replay/proof mode.
 - **Snapshot suite:** restore fidelity, content-address determinism, and overlay isolation checks.
 
 ### Initial success criteria
@@ -612,8 +792,7 @@ The implementation lives or dies by the harnesses, not the prose.
 - A Python extractor using `psycopg2` or SQLAlchemy Core can point at the twin and run unchanged for the declared subset.
 - Unsupported operations are explicit refusals or SKIPs, never silent wrong answers.
 - A per-agent tournament twin stays inside the private-RSS and reset budgets defined above.
-- Heavy replay can use a non-RAM-only backend without changing the protocol-facing contract.
-- The first non-SQL adapter can reuse the same kernel/backend shape instead of forcing a rewrite.
+- The implementation can later grow into replay/proof and non-SQL modes without rewriting the kernel boundary.
 
 ### What does not block v1
 
@@ -633,8 +812,7 @@ The implementation lives or dies by the harnesses, not the prose.
 - If the Postgres handshake is brittle, pause feature work and fix the protocol surface first.
 - If the write-path semantics differ from real Postgres on gold cases, do not move on to reads.
 - If tournament twins are not bounded-memory, do not move on to the next interface.
-- If whole-corpus replay pressures the architecture toward huge per-agent RAM footprints, switch to the heavy backend instead of compromising swarm mode.
-- If VSAM cannot reuse the kernel/backend abstraction, the abstraction is wrong.
+- Future replay/proof and non-SQL expansion should reuse the same kernel boundary instead of reopening the v0 center.
 
 ---
 
