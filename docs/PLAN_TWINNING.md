@@ -157,6 +157,31 @@ Visibility rules:
 - Rolled-back mutations, transient session variables, live sockets, and
   prepared-statement caches are outside the report/snapshot semantic surface.
 
+### Unsupported-shape mapping
+
+The twin needs one explicit mapping from "unsupported" to user-visible
+behavior.
+
+| Situation | Surface | Outcome |
+|------|---------|---------|
+| Invalid bootstrap input, malformed snapshot, batch-only verify artifact in live mode | process/bootstrap | process-level `REFUSAL`, exit `2`, no live traffic accepted |
+| Unsupported pgwire/session behavior before a statement can execute | client protocol | protocol error / SQLSTATE, twin stays up |
+| Unsupported SQL shape from a live client after startup | client protocol | protocol error / SQLSTATE, twin stays up |
+| Unsupported historical query shape in replay/proof evaluation | harness/reporting | `SKIP` in corpus/reporting outputs, not a live-process refusal |
+
+Rules:
+
+- `SKIP` is not a live pgwire concept in v0. It exists only in corpus-level
+  replay/proof or compatibility reporting.
+- Live client traffic receives protocol-visible failure, never silent partial
+  semantics and never a process-wide refusal after startup.
+- Process-level `REFUSAL` is reserved for bootstrap/configuration boundaries.
+
+Recommended SQLSTATE for unsupported live features:
+
+- `0A000` (`feature_not_supported`) unless the canary contract explicitly
+  requires a narrower Postgres code.
+
 ---
 
 ## Architecture
@@ -284,6 +309,17 @@ Claim rule:
 - The manifest, fixtures, and harness names must line up one-to-one.
 - A compatibility claim is valid only if the corresponding canary passes.
 
+Controlled vocabulary for v0:
+
+| Field | Allowed values in v0 |
+|------|-----------------------|
+| `session_shapes[]` | `startup_auth_v3`, `parameter_status_baseline`, `set_application_name`, `tx_begin`, `tx_commit`, `tx_rollback`, `simple_query`, `extended_query_parse_bind_execute_sync` |
+| `write_shapes[]` | `insert_values`, `insert_returning`, `upsert_pk`, `upsert_unique`, `update_by_predicate`, `delete_by_predicate` |
+| `read_shapes[]` | `select_by_pk`, `select_filtered_scan`, `select_is_null`, `select_in_list`, `select_between`, `aggregate_count`, `aggregate_basic_group_by` |
+
+If a future canary needs a new shape token, the manifest schema must be extended
+explicitly rather than inventing ad hoc shape names in fixtures.
+
 ---
 
 ## What it must get right
@@ -315,6 +351,29 @@ Upsert is the primary write pattern. The twin must correctly identify the confli
 ### NULL semantics
 
 `WHERE column = NULL` returns no rows (must use `IS NULL`). Three-valued logic in boolean expressions. Agents occasionally get this wrong — the twin must behave like Postgres so the bug surfaces during testing, not production.
+
+### Session and single-writer semantics
+
+V0 is single-writer, not single-session.
+
+Rules:
+
+- Multiple concurrent sessions may connect.
+- Multiple read-only sessions may execute concurrently against the last committed
+  state.
+- At most one session may hold the mutable write transaction at a time.
+- Uncommitted writes are visible only to the owning session.
+- Other sessions see last committed state only; v0 does not expose dirty reads.
+- `ROLLBACK` discards the owning session's uncommitted changes completely.
+- Auto-commit writes are treated as single-statement write transactions.
+
+Admission behavior:
+
+- If a second session attempts to enter a write transaction while another write
+  transaction is active, the twin returns a protocol-visible error and leaves
+  both sessions alive.
+- Recommended SQLSTATE for this v0 writer-admission failure: `55P03`
+  (`lock_not_available`).
 
 ---
 
@@ -409,11 +468,63 @@ Outcome rules:
 - If no verify artifact is supplied, the twin report omits the attached verify
   section rather than fabricating a PASS.
 
+### Twin report contract
+
+The report can no longer be example-only. v0 needs one explicit artifact shape.
+
+Artifact identity:
+
+- current artifact ID: `twinning.v0`
+
+Required top-level fields:
+
+| Field | Meaning |
+|------|---------|
+| `version` | Report artifact ID |
+| `outcome` | `READY`, `PASS`, `FAIL`, or `REFUSAL` at the twin-report boundary |
+| `mode` | `bootstrap`, `interactive`, or `run_once` |
+| `engine` | `postgres` in v0 |
+| `schema` | normalized schema identity and hash |
+| `tables` | per-table structural/runtime metrics |
+| `constraints` | twin-native constraint counters |
+| `snapshot` | final snapshot metadata if written or restored |
+
+Optional top-level fields:
+
+| Field | Present when |
+|------|---------------|
+| `verify_artifact` | `--verify` was supplied |
+| `verify` | embedded `verify.report.v1` is attached |
+| `run` | `--run` was used |
+| `null_rates` | metrics collection included null-rate output |
+| `fk_coverage` | metrics collection included FK-coverage output |
+| `warnings` | non-fatal operator warnings exist |
+
+`run` object contract:
+
+| Field | Meaning |
+|------|---------|
+| `command` | exact child command string |
+| `exit_code` | child exit code if it exited normally |
+| `signal` | terminating signal if applicable |
+| `timed_out` | whether twinning terminated the child for timeout |
+
+Report rules:
+
+- The report must not include wall-clock timestamps or unbounded stdout/stderr
+  blobs from the child command.
+- If `--run` is not used, the `run` object is omitted entirely.
+- If `--verify` is not used, both `verify_artifact` and `verify` are omitted.
+- The embedded `verify` payload preserves `verify.report.v1` field semantics and
+  ordering; `twinning` may wrap it, but not reinterpret it.
+
 Example combined report:
 
 ```json
 {
   "version": "twinning.v0",
+  "outcome": "FAIL",
+  "mode": "run_once",
   "engine": "postgres",
   "schema": "cmbs.v1",
   "tables": {
@@ -440,6 +551,12 @@ Example combined report:
       "passed_rules": 12,
       "failed_rules": 2
     }
+  },
+  "run": {
+    "command": "python extract.py",
+    "exit_code": 0,
+    "signal": null,
+    "timed_out": false
   },
   "null_rates": {
     "financials.noi": 0.02,
@@ -487,8 +604,7 @@ A live `twinning.snapshot.v0` hash surface must include:
 - schema hash and normalized catalog identity
 - base snapshot hash if the current twin was restored from one
 - verify artifact hash if one is attached
-- committed relation contents, or a deterministic overlay delta sufficient to
-  reconstruct them
+- committed relation contents serialized in one canonical representation
 - deterministic row counts per relation
 
 A live `twinning.snapshot.v0` hash surface must exclude:
@@ -501,6 +617,17 @@ A live `twinning.snapshot.v0` hash surface must exclude:
 
 If timestamps or debug metadata are present in the serialized snapshot, they
 must live outside the content-addressed hash surface.
+
+Canonical representation rule for v0:
+
+- v0 snapshots hash full committed relation contents, not overlay deltas.
+- Relations serialize in lexicographic `schema.table` order.
+- Rows serialize in primary-key order when a PK exists; otherwise by full row
+  tuple order over the normalized column list.
+- Column order is always the normalized catalog column order.
+
+Overlay-delta snapshots are a later optimization, not a second valid v0
+encoding.
 
 ---
 
@@ -724,6 +851,36 @@ IR invariants:
 - Unsupported syntax becomes `RefusalOp` before the backend sees it.
 - Equivalent supported SQL shapes normalize to the same IR shape regardless of
   client library.
+
+Controlled IR vocab for v0:
+
+| Field | Allowed values in v0 |
+|------|-----------------------|
+| `SessionOp.op` | `set_param`, `begin`, `commit`, `rollback`, `sync` |
+| `MutationOp.kind` | `insert`, `upsert`, `update`, `delete` |
+| `ReadOp.shape` | `point_lookup`, `filtered_scan`, `aggregate_scan` |
+| `ReadOp.aggregate` | `none`, `count`, `sum`, `avg`, `min`, `max` |
+
+`predicate` normalization for v0:
+
+- conjunction / disjunction over column comparisons only
+- operators limited to `eq`, `neq`, `lt`, `lte`, `gt`, `gte`, `is_null`,
+  `in_list`, and `between`
+- no arbitrary expression trees beyond the canary-defined subset
+
+### Kernel result contract
+
+The adapter also needs one normalized result surface back from the kernel.
+
+| Result kind | Required fields | Meaning |
+|------------|------------------|---------|
+| `AckResult` | `tag`, `rows_affected` | Session or mutation acknowledgement |
+| `ReadResult` | `columns`, `rows` | Deterministic rowset for the normalized read |
+| `MutationResult` | `tag`, `rows_affected`, `returning_rows` | Write result for DML and `RETURNING` |
+| `RefusalResult` | `code`, `message`, `sqlstate`, `detail` | Live protocol-visible failure |
+
+The pgwire adapter maps only these normalized results into protocol frames. It
+must not re-interpret backend state directly.
 
 ### Phases
 
