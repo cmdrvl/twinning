@@ -102,6 +102,7 @@ Implementation note:
 ## Repository Plan
 
 - Plan: [docs/PLAN_TWINNING.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING.md)
+- Futures: [docs/PLAN_TWINNING_FUTURES.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING_FUTURES.md)
 - Factory master plan: [PLAN_FACTORY.md](/Users/zac/Source/cmdrvl/cmdrvl-context/docs/09-plans/epistemic-spine/PLAN_FACTORY.md)
 
 ## Quality Gate
