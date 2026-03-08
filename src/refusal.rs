@@ -146,10 +146,13 @@ pub fn schema_parse(path: &Path, message: impl Into<String>) -> RefusalEnvelope 
     )
 }
 
-pub fn rules_parse(path: &Path, message: impl Into<String>) -> RefusalEnvelope {
+pub fn verify_artifact_parse(path: &Path, message: impl Into<String>) -> RefusalEnvelope {
     RefusalEnvelope::new(
-        "E_RULES_PARSE",
-        format!("Rules manifest bootstrap failed for `{}`.", path.display()),
+        "E_VERIFY_ARTIFACT_PARSE",
+        format!(
+            "Compiled verify artifact bootstrap failed for `{}`.",
+            path.display()
+        ),
         json!({ "path": path.display().to_string(), "error": message.into() }),
         None,
     )

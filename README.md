@@ -30,7 +30,7 @@ exists now so the twin contract is explicit before the wire/runtime work lands.
 twinning postgres --schema schema.sql --json
 
 # Write the bootstrap report and an empty deterministic snapshot
-twinning postgres --schema schema.sql --rules schema.verify.json \
+twinning postgres --schema schema.sql --verify schema.verify.json \
   --report out/bootstrap.json \
   --snapshot out/bootstrap.twin \
   --json
@@ -45,7 +45,7 @@ twinning postgres --restore out/bootstrap.twin --json
 
 Options:
 - `--schema <FILE>`: SQL DDL file defining tables, constraints, and indexes
-- `--rules <FILE>`: compiled verify constraint artifact (`verify.constraint.v1`)
+- `--verify <FILE>`: compiled verify constraint artifact (`verify.constraint.v1`)
 - `--host <HOST>`: bind host (default `127.0.0.1`)
 - `--port <PORT>`: bind port (default `5432`)
 - `--run <COMMAND>`: planned live one-shot mode; currently refused
@@ -72,6 +72,7 @@ Implemented now:
 - Snapshot hashing and verification
 - Report generation for the factory/orchestration layer
 - Storage-boundary reporting for tournament mode vs replay/proof mode
+- Verify-artifact loading and bootstrap attachment metadata
 
 Deferred:
 - pgwire listener
@@ -81,6 +82,15 @@ Deferred:
 - row storage and constraint enforcement
 - `--run` live orchestration
 - compiled-verify evaluation against materialized twin state
+
+Boundary note:
+- `twinning` owns runtime/session behavior, snapshots, and raw twin-native
+  metrics.
+- `verify` owns constraint semantics and `verify.report.v1`.
+- `benchmark` owns gold-set correctness scoring.
+- `assess` owns proceed/escalate/block policy decisions.
+- The live twin should call embedded `verify`, not export state and shell out to
+  batch `verify`.
 
 Implementation note:
 - `asupersync` is a plausible runtime substrate for the live protocol shell

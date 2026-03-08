@@ -16,12 +16,12 @@ pub struct TwinReport {
     pub port: u16,
     pub wire_protocol: String,
     pub schema: SchemaReport,
-    pub rules: Option<RulesReport>,
+    pub verify_artifact: Option<VerifyArtifactReport>,
     pub catalog: CatalogReport,
     pub storage: StorageReport,
     pub tables: BTreeMap<String, TableReport>,
     pub constraints: ConstraintCounters,
-    pub verify_rules: VerifyRuleReport,
+    pub verify: VerifyExecutionReport,
     pub snapshot: SnapshotReport,
     pub warnings: Vec<String>,
     pub next_step: String,
@@ -38,7 +38,7 @@ pub struct SchemaReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RulesReport {
+pub struct VerifyArtifactReport {
     pub source: String,
     pub hash: String,
     pub loaded: usize,
@@ -80,7 +80,7 @@ pub struct ConstraintCounters {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerifyRuleReport {
+pub struct VerifyExecutionReport {
     pub loaded: usize,
     pub evaluated: usize,
     pub pass: usize,
@@ -107,7 +107,7 @@ pub struct TwinReportSeed<'a> {
     pub host: &'a str,
     pub port: u16,
     pub schema: SchemaReport,
-    pub rules: Option<RulesReport>,
+    pub verify_artifact: Option<VerifyArtifactReport>,
     pub catalog: &'a Catalog,
     pub snapshot: SnapshotReport,
     pub warnings: Vec<String>,
@@ -134,7 +134,10 @@ impl TwinReport {
             })
             .collect();
 
-        let loaded_rules = seed.rules.as_ref().map_or(0, |rules| rules.loaded);
+        let loaded_rules = seed
+            .verify_artifact
+            .as_ref()
+            .map_or(0, |artifact| artifact.loaded);
 
         Self {
             version: REPORT_VERSION.to_owned(),
@@ -145,7 +148,7 @@ impl TwinReport {
             port: seed.port,
             wire_protocol: "planned.pgwire".to_owned(),
             schema: seed.schema,
-            rules: seed.rules,
+            verify_artifact: seed.verify_artifact,
             catalog: CatalogReport {
                 dialect: seed.catalog.dialect.clone(),
                 table_count: seed.catalog.table_count,
@@ -167,7 +170,7 @@ impl TwinReport {
                 check_violations: 0,
                 unique_violations: 0,
             },
-            verify_rules: VerifyRuleReport {
+            verify: VerifyExecutionReport {
                 loaded: loaded_rules,
                 evaluated: 0,
                 pass: 0,
@@ -204,10 +207,10 @@ impl TwinReport {
             ),
         ];
 
-        if let Some(rules) = &self.rules {
+        if let Some(verify_artifact) = &self.verify_artifact {
             lines.push(format!(
-                "rules: {} ({} loaded, hash {})",
-                rules.source, rules.loaded, rules.hash
+                "verify: {} ({} loaded, hash {})",
+                verify_artifact.source, verify_artifact.loaded, verify_artifact.hash
             ));
         }
 

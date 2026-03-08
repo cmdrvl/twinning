@@ -4,7 +4,9 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{catalog::Catalog, cli::Engine, refusal, refusal::RefusalResult, report::RulesReport};
+use crate::{
+    catalog::Catalog, cli::Engine, refusal, refusal::RefusalResult, report::VerifyArtifactReport,
+};
 
 pub const SNAPSHOT_VERSION: &str = "twinning.snapshot.v0";
 
@@ -17,7 +19,7 @@ pub struct TwinSnapshot {
     pub mode: String,
     pub schema_source: String,
     pub schema_hash: String,
-    pub rules: Option<RulesReport>,
+    pub verify_artifact: Option<VerifyArtifactReport>,
     pub catalog: Catalog,
     pub table_rows: BTreeMap<String, u64>,
 }
@@ -27,7 +29,7 @@ impl TwinSnapshot {
         engine: Engine,
         schema_source: String,
         schema_hash: String,
-        rules: Option<RulesReport>,
+        verify_artifact: Option<VerifyArtifactReport>,
         catalog: Catalog,
     ) -> RefusalResult<Self> {
         let table_rows = catalog
@@ -44,7 +46,7 @@ impl TwinSnapshot {
             mode: "catalog_only".to_owned(),
             schema_source,
             schema_hash,
-            rules,
+            verify_artifact,
             catalog,
             table_rows,
         };

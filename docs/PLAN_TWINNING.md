@@ -79,7 +79,7 @@ twinning postgres [OPTIONS]
 
 Options:
   --schema <FILE>        SQL DDL file defining tables, constraints, indexes
-  --rules <FILE>         Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation
+  --verify <FILE>        Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation
   --port <PORT>          Listen port (default: 5432)
   --host <HOST>          Listen address (default: 127.0.0.1)
   --run <COMMAND>        Run command against the twin, then report and exit
@@ -91,7 +91,7 @@ Options:
 
 ### Exit codes
 
-`0` clean (all rules pass, or no rules provided) | `1` violations (rules provided, some failed) | `2` refusal
+`0` clean (all verify checks pass, or no verify artifact is provided) | `1` violations (verify artifact provided, some checks failed) | `2` refusal
 
 ### Usage modes
 
@@ -103,13 +103,14 @@ twinning postgres --schema schema.sql --port 5433
 **With twin-side validation:** Start with compiled verify constraints and emit a
 validation / metrics report.
 ```bash
-twinning postgres --schema schema.sql --rules schema.verify.json --port 5433
+twinning postgres --schema schema.sql --verify schema.verify.json --port 5433
 ```
 
-**One-shot:** Start, run extraction, get coverage report, exit.
+**One-shot:** Start, run extraction, get a twin report plus attached verify
+results, then exit.
 ```bash
-twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
-  --run "python extract.py" --report coverage.json
+twinning postgres --schema schema.sql --verify schema.verify.json --port 5433 \
+  --run "python extract.py" --report twin-report.json
 ```
 
 ---
@@ -127,7 +128,8 @@ twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
 |  | Postgres v3 |   | INSERT      |   | row counts    |    |
 |  | (future     |   | UPSERT      |   | null rates    |    |
 |  | adapters)   |   | SELECT      |   | FK coverage   |    |
-|  |             |   | READ/WRITE  |   | verify output |    |
+|  |             |   | READ/WRITE  |   | attached      |    |
+|  |             |   |             |   | verify report |    |
 |  +------+------+   +------+------+   +-------+-------+    |
 |         |                 |                   |            |
 |  +------v-----------------v-------------------v---------+  |
@@ -160,71 +162,60 @@ If 40 agents each need a twin, the architecture cannot assume a multi-GB residen
 
 ---
 
-## The two-twin design (factory integration)
+## Later mode: twin-pair migration proof
 
-In legacy migration mode, each data product gets **two** twin instances:
+Twin-pair migration proof is real, but it is not the v0 center.
 
-**Twin A — Legacy schema.** Same tables, same columns, same relationships as the source database. Load the migrated data into the legacy schema structure. This twin accepts the same SQL that ran against production.
+The first stable `twinning` primitive is one Postgres tournament twin for
+extractor iteration. Legacy migration proof becomes a later mode built on the
+same kernel and snapshot contract.
 
-**Twin B — Target schema.** The clean, purpose-built schema for the data product. Load the transformed data. This twin enforces the new data contracts.
+In that later mode, each data product may use two twins:
 
-```bash
-# Twin A: Oracle schema for the loan performance slice
-twinning postgres --schema oracle-loan-tables.sql --port 5433
+- **Twin A — Legacy schema.** Same tables, columns, and relationships as the
+  source database so historical queries can replay verbatim.
+- **Twin B — Target schema.** The clean target schema, with attached
+  `verify`/`benchmark`/`assess` outputs proving the new product on its own
+  terms.
 
-# Twin B: New data product schema with compiled verify constraints
-twinning postgres --schema loan-perf-schema.sql --rules loan-perf.verify.json --port 5434
-```
-
-### Why two twins
-
-The query replay problem disappears. You don't need to rewrite `SELECT balance, status FROM loan_master WHERE deal_id = ?` into new-schema SQL. You replay it verbatim against Twin A, which has the same schema as the legacy database. If the result sets match, the data migration didn't lose or corrupt anything.
-
-Twin B proves a different thing: the new data product is correct on its own terms. Verify rules pass, benchmark scores meet the bar, assess says PROCEED.
-
-Two independent proofs:
-1. **Behavioral equivalence** — Twin A + replay: "the migrated data answers the same questions the legacy system did"
-2. **Target correctness** — Twin B + spine scoring: "the new data product satisfies its own contracts"
-
-The transformation logic between Twin A and Twin B is itself testable: load the
-same source data into both, export normalized result packs, and diff them in
-the replay harness. Any difference is either an intentional schema change
-(documented) or a bug.
+That later mode is intentionally deferred because it pulls in replay harnesses,
+result diffing, and broader factory evidence flows that are not required to
+stabilize the v0 tournament boundary.
 
 ---
 
-## SQL support
+## Client canary subset
 
-The subset of SQL that extraction code and legacy queries use:
+The supported SQL and session behavior are defined only by the canary corpus and
+its manifest. Prose summaries are explanatory; they are not the source of
+truth.
 
-| SQL | Support | Notes |
-|-----|---------|-------|
-| `CREATE TABLE` | Full DDL | columns, types, PK, UNIQUE, NOT NULL, CHECK, FK, DEFAULT |
-| `INSERT INTO` | Full | single-row and multi-row, RETURNING |
-| `INSERT ... ON CONFLICT DO UPDATE` | Full | composite keys, SET clause |
-| `INSERT ... ON CONFLICT DO NOTHING` | Full | |
-| `SELECT ... WHERE` | Basic | equality, comparison, AND/OR, IS NULL, IN, BETWEEN |
-| `SELECT COUNT/SUM/AVG/MIN/MAX` | Full | aggregate queries for coverage scoring |
-| `SELECT ... GROUP BY` | Basic | single-level grouping |
-| `UPDATE ... WHERE` | Basic | for correction workflows |
-| `DELETE ... WHERE` | Basic | for cleanup workflows |
-| `BEGIN/COMMIT/ROLLBACK` | Acknowledged | single-writer, no real isolation needed — ACK and proceed |
-| `SET` / session variables | Acknowledged | SQLAlchemy sends these on connect — ACK and ignore |
+For v0, the normative canaries are:
 
-### What it skips
+- `psql_smoke`
+- `psycopg2_params`
+- `sqlalchemy_core`
+- `extractor_canary`
 
-- MVCC / transaction isolation (single writer per instance)
-- WAL / crash recovery (the twin is not the system of record)
-- Vacuum / dead tuples (upsert overwrites in the HashMap)
-- Cost-based query optimizer (simple scan/hash-lookup is sufficient)
-- JOINs across large tables (coverage queries don't need them; add later if needed)
-- Window functions, CTEs, recursive queries, subqueries
-- LISTEN/NOTIFY, advisory locks, cursors, prepared statements beyond basic
-- Replication, roles, permissions, tablespaces, extensions
-- TOAST / large objects
-- Full system catalog (only schema definitions)
+The v0 subset should therefore be described in terms of those canaries:
 
-**Note on replay:** Historical queries from the legacy system may use features in the "skips" list (JOINs, subqueries, CTEs). These are classified as SKIP in replay results — the twin reports what it can't handle rather than silently getting it wrong. As the twin's SQL support grows, the skip rate drops.
+- startup, auth, and the parameter-status/session flow those clients require
+- `SET`, `BEGIN`, `COMMIT`, and `ROLLBACK` behavior required to keep those
+  clients alive
+- write shapes exercised by the canaries: `INSERT`, `INSERT ... ON CONFLICT`,
+  and the exact coercion / SQLSTATE behavior those writes rely on
+- read shapes exercised by the canaries: point lookups, simple predicates, and
+  only the aggregates or grouping shapes explicitly present in the manifest
+
+Anything outside the canary-defined subset is not "partially supported." It is
+either:
+
+- explicitly refused
+- classified as SKIP in replay/proof mode
+- or deferred until a new canary proves it
+
+This is the only stable way to stop the SQL surface from drifting into
+wish-casting.
 
 ---
 
@@ -286,20 +277,37 @@ For day-to-day swarm iteration, the expected shape is much smaller: per-deal, pe
 
 ---
 
-## Validation and coverage reporting
+## Validation and twin reporting
 
 The twin should not invent its own rule language.
 
-It consumes a compiled `verify.constraint.v1` artifact (currently surfaced in
-the CLI as `--rules`) and reports two families of signals:
+It consumes a compiled `verify.constraint.v1` artifact through `--verify` and
+reports two families of signals:
 
 - twin-native structural metrics such as row counts, null rates, FK coverage,
   and snapshot provenance
-- `verify` execution results over the materialized twin state
+- an attached `verify` execution report over the materialized twin state
 
 `twinning` may aggregate those signals into one report for iteration speed, but
 the constraint semantics belong to `verify`, the gold-set semantics belong to
 `benchmark`, and proceed / escalate / block decisions belong to `assess`.
+
+The stable boundary is:
+
+- `twinning` owns runtime/session behavior, materialized state, snapshots, and
+  raw twin-native metrics
+- `verify` owns constraint meaning and report semantics
+- `benchmark` owns correctness against gold data
+- `assess` owns policy decisions
+
+So the `twinning` report should surface raw twin-native metrics and attach a
+`verify.report.v1` artifact or embedded equivalent. It should not collapse those
+signals into a new pseudo-score.
+
+For v0, `twinning` should execute `verify` through the embedded library surface,
+not by exporting state and shelling out to batch `verify`. If a provided
+constraint artifact contains batch-only rules, live `twinning` must refuse them
+explicitly instead of silently degrading into a second execution path.
 
 Example combined report:
 
@@ -309,12 +317,9 @@ Example combined report:
   "engine": "postgres",
   "schema": "cmbs.v1",
   "tables": {
-    "deals":        { "rows": 3500, "expected": 3500, "coverage": 1.0 },
-    "loans":        { "rows": 412000, "expected": null, "coverage": null },
-    "properties":   { "rows": 389000, "expected": null, "coverage": null },
-    "financials":   { "rows": 48200000, "expected": null, "coverage": null },
-    "payments":     { "rows": 67100000, "expected": null, "coverage": null },
-    "modifications": { "rows": 2100000, "expected": null, "coverage": null }
+    "deals": { "rows": 3500, "columns": 8, "indexes": 2 },
+    "loans": { "rows": 412000, "columns": 19, "indexes": 4 },
+    "properties": { "rows": 389000, "columns": 27, "indexes": 3 }
   },
   "constraints": {
     "not_null_violations": 0,
@@ -322,13 +327,19 @@ Example combined report:
     "check_violations": 0,
     "unique_violations": 0
   },
+  "verify_artifact": {
+    "source": "loan-perf.verify.json",
+    "hash": "sha256:...",
+    "loaded": 14
+  },
   "verify": {
-    "pass": 12,
-    "fail": 2,
-    "violations": [
-      { "rule_id": "NOI_CALC", "count": 47, "sample": { "property_id": "P-123", "period": "2024-12" } },
-      { "rule_id": "DSCR_POSITIVE", "count": 3, "sample": { "property_id": "P-456", "period": "2024-06" } }
-    ]
+    "version": "verify.report.v1",
+    "outcome": "FAIL",
+    "summary": {
+      "total_rules": 14,
+      "passed_rules": 12,
+      "failed_rules": 2
+    }
   },
   "null_rates": {
     "financials.noi": 0.02,
@@ -342,11 +353,10 @@ Example combined report:
 }
 ```
 
-### Anchored vs unanchored coverage
-
-`expected` is populated from anchor points when available (deal documents, declared loan counts, trustee summary statistics). When `expected` is null, the twin can't measure completeness — only internal consistency.
-
-This distinction is a design principle. Anchored coverage ("3,211 of 3,500 deals have financials data, verified against trustee-declared deal counts") is a real, auditable number. Unanchored coverage ("48.2M financial rows exist and pass all constraints") proves internal consistency and policy compliance — valuable, but a different claim. The twin never reports a coverage percentage without specifying whether it's anchored.
+Anchored coverage is not a first-class `twinning` claim in v0. The twin may
+surface raw anchor-query outputs or local expected-vs-observed counters when a
+caller provides them, but global anchored-coverage interpretation belongs at the
+factory/reporting layer above `twinning`.
 
 ---
 
@@ -403,7 +413,7 @@ Each twin type follows the same contract:
 - Keep the hot working set in memory; use snapshots, overlays, or heavier backends for the rest
 - Enforce constraints from the schema definition (DDL, DBD, copybook)
 - Support content-addressed snapshots
-- Report coverage
+- Report raw twin-native metrics
 
 The VSAM twin is the highest-value addition. COBOL batch programs that read VSAM datasets are ~30% of typical mainframe workloads, and the VSAM access pattern (keyed byte-array store) is simpler than SQL. A VSAM twin + GnuCOBOL (open-source COBOL compiler) enables off-mainframe batch job replay: compile the COBOL program, point its file I/O at the VSAM twin, run it, capture output, compare against known-good output from the mainframe.
 
@@ -428,24 +438,24 @@ The copybook IS the schema for non-SQL twins. `PIC S9(7)V99 COMP-3` declares a s
 # Start a Postgres twin on port 5433 with a schema file
 twinning postgres --schema schema.sql --port 5433
 
-# One-shot: run extraction, get coverage report, exit
-twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
-  --run "python extract.py" --report coverage.json
+# One-shot: run extraction, get a twin report plus attached verify results, exit
+twinning postgres --schema schema.sql --verify schema.verify.json --port 5433 \
+  --run "python extract.py" --report twin-report.json
 
 # Agent iteration loop (typical factory usage)
 # 1. Start fresh twin
-twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
-  --run "python extract_deal_42.py" --report deal_42_coverage.json
-# 2. Agent reads coverage report, fixes extractor, re-runs in seconds
-# 3. Repeat 20x per hour until coverage targets met
+twinning postgres --schema schema.sql --verify schema.verify.json --port 5433 \
+  --run "python extract_deal_42.py" --report deal_42_report.json
+# 2. Agent reads the twin report and attached verify output, fixes extractor, re-runs in seconds
+# 3. Repeat 20x per hour until the twin and verify signals stabilize
 ```
 
-### Legacy migration proof
+### Later-mode migration proof
 
 ```bash
-# Boot Twin A (Oracle schema) and Twin B (target schema) for loan performance mart
+# Boot Twin A (legacy schema) and Twin B (target schema) for loan performance mart
 twinning postgres --schema oracle-loan-tables.sql --port 5433 &
-twinning postgres --schema loan-perf-schema.sql --rules loan-perf.verify.json --port 5434 &
+twinning postgres --schema loan-perf-schema.sql --verify loan-perf.verify.json --port 5434 &
 
 # Load migrated data into Twin A
 psql -p 5433 -f load_oracle_slice.sql
@@ -474,9 +484,9 @@ pack seal replay-results/ benchmark.json verify.json decision.json \
 ```bash
 # Score 3 assembly strategies for the same data product
 for strategy in oracle-direct doc-reparse hybrid; do
-  twinning postgres --schema loan-perf-schema.sql --rules loan-perf.verify.json --port 5433 \
+  twinning postgres --schema loan-perf-schema.sql --verify loan-perf.verify.json --port 5433 \
     --run "python assemble_${strategy}.py" \
-    --report "results/${strategy}_coverage.json" \
+    --report "results/${strategy}_report.json" \
     --snapshot "snapshots/${strategy}.twin"
 done
 
@@ -490,12 +500,12 @@ done
 
 | Tool | Relationship |
 |------|-------------|
-| **factory** | Factory orchestrates twin pairs for migration proof. Twin A for replay, Twin B for target scoring. |
+| **factory** | Factory uses `twinning` as a scale-phase speed layer for tournament iteration and may later orchestrate twin-pair migration proof on top of the same kernel. |
 | **decoding** | Decoding resolves claims into canonical mutations; the twin enforces constraints on those mutations |
-| **verify** | `verify` owns the constraint protocol. `twinning` consumes compiled `verify.constraint.v1` artifacts and reports validation results over materialized state. |
+| **verify** | `verify` owns the constraint protocol and report semantics. `twinning` consumes compiled `verify.constraint.v1` artifacts and attaches `verify` results over materialized state. |
 | **shape** | Twin's schema DDL is the structural contract; `shape` checks CSV inputs before they reach the twin |
-| **benchmark** | Gold set assertions can be checked against twin state (export to CSV, run `benchmark`) |
-| **assess** | Twin coverage report feeds `assess` for go/no-go decisions |
+| **benchmark** | `benchmark` scores correctness against gold data; `twinning` does not replace it |
+| **assess** | `assess` consumes `twinning`, `verify`, and `benchmark` outputs as policy inputs; `twinning` does not make the decision |
 | **pack** | Twin snapshots can be included in evidence packs |
 | **rvl** | Diffing twin states across time: export to CSV, run `rvl` |
 
@@ -611,7 +621,7 @@ Every new interface must terminate at the same `Operation IR` and `Semantic kern
 
 | Phase | Goal | Deliverables | Hard gate to continue | Stop / redirect if |
 |------|------|--------------|------------------------|--------------------|
-| **0** | Bootstrap the artifact surface | CLI, DDL/catalog parsing, rules loading, deterministic report, snapshot hashing | Done in the current repo | n/a |
+| **0** | Bootstrap the artifact surface | CLI, DDL/catalog parsing, verify-artifact loading, deterministic report, snapshot hashing | Done in the current repo | n/a |
 | **1** | Make common Postgres clients connect and execute a first parameterized round trip | Startup/auth handshake, backend key data, parameter status, simple query path, minimal extended-query path, `SET`/`BEGIN`/`COMMIT`/`ROLLBACK` ACKs, minimal session state, correct protocol/error framing | `psql` smoke, `psycopg2` parameterized smoke, and SQLAlchemy Core smoke all pass without app-side hacks | If common clients cannot complete the parameterized canaries through `pgwire` after a bounded spike, stop adding SQL features and reassess the protocol strategy |
 | **2** | Make the write path correct | `INSERT`, `ON CONFLICT`, PK/UNIQUE/FK/NOT NULL/CHECK, type coercion, SQLSTATE mapping, deterministic snapshot/restore, overlay-safe mutations | Differential tests vs real Postgres pass for the declared write subset with exact SQLSTATE parity; extractor canaries can write unchanged | If error codes, coercion, or upsert behavior drift from Postgres on repeated gold cases, stop and fix the kernel before adding reads |
 | **3** | Support the read subset extractors actually use | Declared `SELECT` subset, predicates, joins only if the canary corpus demands them, basic aggregates / `GROUP BY` only if demanded, `UPDATE`, `DELETE`, minimal catalog stubs, explicit SKIP reporting | The curated query corpus meets the acceptance budgets below, and unsupported features are classified explicitly rather than guessed | If unsupported-query rate stays high for the real corpus, narrow the supported subset and stop claiming broader compatibility |
@@ -654,7 +664,7 @@ The next sequence should match the current Beads queue:
 2. `bd-1jd`: land the pgwire listener only far enough to satisfy the phase-1 canaries.
 3. `bd-372`: implement the row store and constraint executor to satisfy the phase-2 gold corpus.
 4. `bd-28r`: add bounded-memory overlays and the replay/proof backend boundary before widening the query surface or adding another interface.
-5. `bd-wij`: layer live rule evaluation and coverage scoring on top once semantics and storage behavior are trustworthy.
+5. `bd-wij`: layer embedded `verify` execution and raw twin metrics reporting on top once semantics and storage behavior are trustworthy.
 
 ### Test strategy
 

@@ -8,7 +8,7 @@ use crate::{
     config::TwinConfig,
     refusal,
     refusal::RefusalResult,
-    report::{RulesReport, SchemaReport, SnapshotReport, TwinReport, TwinReportSeed},
+    report::{SchemaReport, SnapshotReport, TwinReport, TwinReportSeed, VerifyArtifactReport},
     snapshot::{self, TwinSnapshot},
 };
 
@@ -22,7 +22,7 @@ pub struct Execution {
 struct BootstrapState {
     schema_source: String,
     schema_hash: String,
-    rules: Option<RulesReport>,
+    verify_artifact: Option<VerifyArtifactReport>,
     catalog: Catalog,
     restored_from: Option<String>,
     warnings: Vec<String>,
@@ -66,7 +66,7 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
             config.engine,
             state.schema_source.clone(),
             state.schema_hash.clone(),
-            state.rules.clone(),
+            state.verify_artifact.clone(),
             state.catalog.clone(),
         )?;
         let snapshot_hash = snapshot::write_snapshot(snapshot_path, &snapshot)?;
@@ -86,7 +86,7 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
             index_count: state.catalog.index_count,
             constraint_count: state.catalog.constraint_count,
         },
-        rules: state.rules.clone(),
+        verify_artifact: state.verify_artifact.clone(),
         catalog: &state.catalog,
         snapshot: snapshot_report,
         warnings: state.warnings,
@@ -125,7 +125,7 @@ fn load_state_from_schema(config: &TwinConfig) -> RefusalResult<BootstrapState> 
     Ok(BootstrapState {
         schema_source: path_display(schema_path),
         schema_hash: sha256_prefixed(&schema_bytes),
-        rules: load_rules(config.rules_path.as_deref())?,
+        verify_artifact: load_verify_artifact(config.verify_path.as_deref())?,
         catalog,
         restored_from: None,
         warnings: Vec::new(),
@@ -134,39 +134,39 @@ fn load_state_from_schema(config: &TwinConfig) -> RefusalResult<BootstrapState> 
 
 fn restore_state(config: &TwinConfig, restore_path: &Path) -> RefusalResult<BootstrapState> {
     let snapshot = snapshot::read_snapshot(restore_path)?;
-    let rules = match config.rules_path.as_deref() {
-        Some(path) => load_rules(Some(path))?,
-        None => snapshot.rules.clone(),
+    let verify_artifact = match config.verify_path.as_deref() {
+        Some(path) => load_verify_artifact(Some(path))?,
+        None => snapshot.verify_artifact.clone(),
     };
 
     Ok(BootstrapState {
         schema_source: snapshot.schema_source,
         schema_hash: snapshot.schema_hash,
-        rules,
+        verify_artifact,
         catalog: snapshot.catalog,
         restored_from: Some(path_display(restore_path)),
         warnings: Vec::new(),
     })
 }
 
-fn load_rules(path: Option<&Path>) -> RefusalResult<Option<RulesReport>> {
+fn load_verify_artifact(path: Option<&Path>) -> RefusalResult<Option<VerifyArtifactReport>> {
     let Some(path) = path else {
         return Ok(None);
     };
 
     let bytes = std::fs::read(path).map_err(|error| Box::new(refusal::io_read(path, &error)))?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|error| Box::new(refusal::rules_parse(path, error.to_string())))?;
-    let loaded = count_rules(&value);
+        .map_err(|error| Box::new(refusal::verify_artifact_parse(path, error.to_string())))?;
+    let loaded = count_verify_rules(&value);
 
-    Ok(Some(RulesReport {
+    Ok(Some(VerifyArtifactReport {
         source: path_display(path),
         hash: sha256_prefixed(&bytes),
         loaded,
     }))
 }
 
-fn count_rules(value: &serde_json::Value) -> usize {
+fn count_verify_rules(value: &serde_json::Value) -> usize {
     match value {
         serde_json::Value::Null => 0,
         serde_json::Value::Array(items) => items.len(),
@@ -216,7 +216,7 @@ mod tests {
     fn bootstrap_writes_report_and_snapshot() {
         let tempdir = tempdir().expect("tempdir");
         let schema_path = tempdir.path().join("schema.sql");
-        let rules_path = tempdir.path().join("rules.json");
+        let verify_path = tempdir.path().join("verify.json");
         let report_path = tempdir.path().join("out").join("bootstrap.json");
         let snapshot_path = tempdir.path().join("out").join("bootstrap.twin");
 
@@ -230,14 +230,14 @@ mod tests {
         "#,
         )
         .expect("schema write");
-        fs::write(&rules_path, r#"{ "rules": [{"id": "DEAL_EXISTS"}] }"#).expect("rules write");
+        fs::write(&verify_path, r#"{ "rules": [{"id": "DEAL_EXISTS"}] }"#).expect("verify write");
 
         let config = TwinConfig {
             engine: Engine::Postgres,
             host: "127.0.0.1".to_owned(),
             port: 5432,
             schema_path: Some(schema_path.clone()),
-            rules_path: Some(rules_path.clone()),
+            verify_path: Some(verify_path.clone()),
             run_command: None,
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
@@ -253,7 +253,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&execution.stdout).expect("json");
         assert_eq!(json["outcome"], "READY");
         assert_eq!(json["schema"]["table_count"], 1);
-        assert_eq!(json["verify_rules"]["loaded"], 1);
+        assert_eq!(json["verify"]["loaded"], 1);
     }
 
     #[test]
@@ -263,7 +263,7 @@ mod tests {
             host: "127.0.0.1".to_owned(),
             port: 5432,
             schema_path: Some(PathBuf::from("schema.sql")),
-            rules_path: None,
+            verify_path: None,
             run_command: Some("python extract.py".to_owned()),
             report_path: None,
             snapshot_path: None,

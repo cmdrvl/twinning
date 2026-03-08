@@ -9,7 +9,7 @@
   "invocation": {
     "binary": "twinning",
     "usage": [
-      "twinning <ENGINE> [OPTIONS]"
+      "twinning postgres [OPTIONS]"
     ],
     "output_mode": "status",
     "output_schema": "twinning.v0",
@@ -21,7 +21,7 @@
       "type": "string",
       "required": true,
       "position": 0,
-      "description": "Database engine to impersonate: postgres, mysql, or oracle"
+      "description": "Database engine to impersonate. V0 is Postgres-only; mysql and oracle remain declared-but-refused placeholders."
     }
   ],
   "options": [
@@ -32,10 +32,10 @@
       "description": "SQL DDL file defining tables, constraints, and indexes"
     },
     {
-      "name": "rules",
-      "flag": "--rules",
+      "name": "verify",
+      "flag": "--verify",
       "type": "file_path",
-      "description": "Verify-rule JSON manifest for later coverage scoring"
+      "description": "Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation"
     },
     {
       "name": "host",
@@ -47,7 +47,7 @@
       "name": "port",
       "flag": "--port",
       "type": "integer",
-      "description": "Listen port (default engine-specific)"
+      "description": "Listen port (default 5432 in the current Postgres-only build)"
     },
     {
       "name": "run",
@@ -108,7 +108,7 @@
     },
     "implemented_surface": [
       "DDL catalog parsing",
-      "rules manifest hashing",
+      "compiled verify artifact hashing",
       "bootstrap report generation",
       "snapshot write/restore with hash verification",
       "storage-boundary reporting for tournament vs replay modes"
