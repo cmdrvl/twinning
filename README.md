@@ -12,12 +12,16 @@
 
 - Parse schema DDL with `sqlparser-rs`
 - Normalize tables, columns, keys, checks, foreign keys, and indexes into a deterministic catalog
-- Load rule manifests and hash all bootstrap inputs
+- Load compiled `verify.constraint.v1` artifacts and hash all bootstrap inputs
 - Emit `twinning.v0` readiness reports and `twinning.snapshot.v0` snapshots
 - Refuse unimplemented live-server paths explicitly instead of pretending to be a database
 - Establish the bounded-memory tournament / heavier replay split in the artifact surface
 
 The wire protocol runtime is not implemented yet. This first cut is intentionally honest: it gives the factory a strong artifact contract and a clean Rust architecture now, without faking pgwire support.
+
+Per `PLAN_FACTORY.md`, live `twinning` is a later scale-phase layer. The core
+decode loop is still meant to be proven against real Postgres first. This repo
+exists now so the twin contract is explicit before the wire/runtime work lands.
 
 ## Quick Start
 
@@ -26,7 +30,7 @@ The wire protocol runtime is not implemented yet. This first cut is intentionall
 twinning postgres --schema schema.sql --json
 
 # Write the bootstrap report and an empty deterministic snapshot
-twinning postgres --schema schema.sql --rules rules.json \
+twinning postgres --schema schema.sql --rules schema.verify.json \
   --report out/bootstrap.json \
   --snapshot out/bootstrap.twin \
   --json
@@ -44,7 +48,7 @@ Arguments:
 
 Options:
 - `--schema <FILE>`: SQL DDL file defining tables, constraints, and indexes
-- `--rules <FILE>`: verify-rule manifest for later coverage scoring
+- `--rules <FILE>`: compiled verify constraint artifact (`verify.constraint.v1`)
 - `--host <HOST>`: bind host (default `127.0.0.1`)
 - `--port <PORT>`: bind port (default engine-specific port)
 - `--run <COMMAND>`: planned live one-shot mode; currently refused
@@ -75,7 +79,7 @@ Deferred:
 - heavier replay/proof backends
 - row storage and constraint enforcement
 - `--run` live orchestration
-- rule evaluation against materialized twin state
+- compiled-verify evaluation against materialized twin state
 
 ## Repository Plan
 

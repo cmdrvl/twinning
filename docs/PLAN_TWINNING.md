@@ -19,6 +19,13 @@ Both use cases need the same thing: a fast, ephemeral, constraint-checked behavi
 
 This is the Digital Twin Universe insight from StrongDM applied to databases instead of SaaS APIs. An agent iterates 20 times per hour instead of once per day. A migration team replays 12 months of production queries in minutes. The twin speaks the real wire protocol; existing client code can't tell the difference.
 
+### Factory sequencing
+
+Per the factory plan, `twinning` is a scale-phase speed layer, not the first
+thing the factory must prove. The core decode loop is proven against real
+Postgres first. `twinning` becomes worth building when iteration speed and
+swarm economics become the bottleneck.
+
 ---
 
 ## Non-goals
@@ -31,7 +38,10 @@ This is the Digital Twin Universe insight from StrongDM applied to databases ins
 - A query translator (it runs SQL verbatim — schema must match the client's expectations)
 - A promise that every twin keeps the entire universe resident in RAM
 
-No application points at the twin. The customer's web app, API, and reports continue to run against their production database. The twin exists in two loops: the extractor development loop (agents iterate fast) and the migration proof loop (replay historical queries, compare results).
+No application points at the twin. The customer's web app, API, and reports
+continue to run against their production database. The twin exists in two loops:
+the extractor development loop (agents iterate fast) and the migration proof
+loop (replay historical queries, diff results).
 
 ### Storage boundary
 
@@ -53,11 +63,11 @@ Arguments:
 
 Options:
   --schema <FILE>        SQL DDL file defining tables, constraints, indexes
-  --rules <FILE>         Verify rules (JSON) for coverage scoring
+  --rules <FILE>         Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation
   --port <PORT>          Listen port (default: engine-specific default)
   --host <HOST>          Listen address (default: 127.0.0.1)
   --run <COMMAND>        Run command against the twin, then report and exit
-  --report <FILE>        Write coverage/quality report as JSON on exit
+  --report <FILE>        Write twin validation / metrics report as JSON on exit
   --snapshot <FILE>      Dump twin state to content-addressed snapshot on exit
   --restore <FILE>       Restore twin state from a snapshot before accepting connections
   --json                 JSON output for status messages
@@ -74,14 +84,15 @@ Options:
 twinning postgres --schema schema.sql --port 5433
 ```
 
-**With coverage scoring:** Start with verify rules, get a coverage report.
+**With twin-side validation:** Start with compiled verify constraints and emit a
+validation / metrics report.
 ```bash
-twinning postgres --schema schema.sql --rules rules.json --port 5433
+twinning postgres --schema schema.sql --rules schema.verify.json --port 5433
 ```
 
 **One-shot:** Start, run extraction, get coverage report, exit.
 ```bash
-twinning postgres --schema schema.sql --rules rules.json --port 5433 \
+twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
   --run "python extract.py" --report coverage.json
 ```
 
@@ -94,13 +105,13 @@ twinning postgres --schema schema.sql --rules rules.json --port 5433 \
 |                     twinning                               |
 |                                                            |
 |  +-------------+   +-------------+   +---------------+    |
-|  | Protocol    |   | Operation   |   | Coverage      |    |
-|  | Adapter     |   | Parser /    |   | Scorer        |    |
+|  | Protocol    |   | Operation   |   | Validation /  |    |
+|  | Adapter     |   | Parser /    |   | Metrics       |    |
 |  |             |   | Router      |   |               |    |
 |  | Postgres v3 |   | INSERT      |   | row counts    |    |
 |  | MySQL proto |   | UPSERT      |   | null rates    |    |
 |  | Oracle TNS  |   | SELECT      |   | FK coverage   |    |
-|  | VSAM / IMS  |   | READ/WRITE  |   | verify rules  |    |
+|  | VSAM / IMS  |   | READ/WRITE  |   | verify output |    |
 |  +------+------+   +------+------+   +-------+-------+    |
 |         |                 |                   |            |
 |  +------v-----------------v-------------------v---------+  |
@@ -145,8 +156,8 @@ In legacy migration mode, each data product gets **two** twin instances:
 # Twin A: Oracle schema for the loan performance slice
 twinning postgres --schema oracle-loan-tables.sql --port 5433
 
-# Twin B: New data product schema with verify rules
-twinning postgres --schema loan-perf-schema.sql --rules loan-perf-rules.json --port 5434
+# Twin B: New data product schema with compiled verify constraints
+twinning postgres --schema loan-perf-schema.sql --rules loan-perf.verify.json --port 5434
 ```
 
 ### Why two twins
@@ -159,7 +170,10 @@ Two independent proofs:
 1. **Behavioral equivalence** — Twin A + replay: "the migrated data answers the same questions the legacy system did"
 2. **Target correctness** — Twin B + spine scoring: "the new data product satisfies its own contracts"
 
-The transformation logic between Twin A and Twin B is itself testable — load the same source data into both, export, run `compare`. Any difference is either an intentional schema change (documented) or a bug.
+The transformation logic between Twin A and Twin B is itself testable: load the
+same source data into both, export normalized result packs, and diff them in
+the replay harness. Any difference is either an intentional schema change
+(documented) or a bug.
 
 ---
 
@@ -256,9 +270,22 @@ For day-to-day swarm iteration, the expected shape is much smaller: per-deal, pe
 
 ---
 
-## Coverage scoring
+## Validation and coverage reporting
 
-The twin has a built-in coverage scorer that runs `verify` rules against its materialized state plus additional structural checks:
+The twin should not invent its own rule language.
+
+It consumes a compiled `verify.constraint.v1` artifact (currently surfaced in
+the CLI as `--rules`) and reports two families of signals:
+
+- twin-native structural metrics such as row counts, null rates, FK coverage,
+  and snapshot provenance
+- `verify` execution results over the materialized twin state
+
+`twinning` may aggregate those signals into one report for iteration speed, but
+the constraint semantics belong to `verify`, the gold-set semantics belong to
+`benchmark`, and proceed / escalate / block decisions belong to `assess`.
+
+Example combined report:
 
 ```json
 {
@@ -279,7 +306,7 @@ The twin has a built-in coverage scorer that runs `verify` rules against its mat
     "check_violations": 0,
     "unique_violations": 0
   },
-  "verify_rules": {
+  "verify": {
     "pass": 12,
     "fail": 2,
     "violations": [
@@ -385,12 +412,12 @@ The copybook IS the schema for non-SQL twins. `PIC S9(7)V99 COMP-3` declares a s
 twinning postgres --schema schema.sql --port 5433
 
 # One-shot: run extraction, get coverage report, exit
-twinning postgres --schema schema.sql --rules rules.json --port 5433 \
+twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
   --run "python extract.py" --report coverage.json
 
 # Agent iteration loop (typical factory usage)
 # 1. Start fresh twin
-twinning postgres --schema schema.sql --rules rules.json --port 5433 \
+twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
   --run "python extract_deal_42.py" --report deal_42_coverage.json
 # 2. Agent reads coverage report, fixes extractor, re-runs in seconds
 # 3. Repeat 20x per hour until coverage targets met
@@ -401,7 +428,7 @@ twinning postgres --schema schema.sql --rules rules.json --port 5433 \
 ```bash
 # Boot Twin A (Oracle schema) and Twin B (target schema) for loan performance mart
 twinning postgres --schema oracle-loan-tables.sql --port 5433 &
-twinning postgres --schema loan-perf-schema.sql --rules loan-perf-rules.json --port 5434 &
+twinning postgres --schema loan-perf-schema.sql --rules loan-perf.verify.json --port 5434 &
 
 # Load migrated data into Twin A
 psql -p 5433 -f load_oracle_slice.sql
@@ -417,7 +444,7 @@ factory replay --queries scan-results/queries/risk-app.sql \
 
 # Score Twin B against spine
 benchmark loan_perf_export.csv --assertions gold.jsonl --key loan_id --json > benchmark.json
-verify loan_perf_export.csv --rules loan-perf-rules.json --json > verify.json
+verify run loan-perf.verify.json --bind loan_perf=loan_perf_export.csv --json > verify.json
 assess benchmark.json verify.json --policy migration.v1 > decision.json
 
 # Seal evidence for both proofs
@@ -430,7 +457,7 @@ pack seal replay-results/ benchmark.json verify.json decision.json \
 ```bash
 # Score 3 assembly strategies for the same data product
 for strategy in oracle-direct doc-reparse hybrid; do
-  twinning postgres --schema loan-perf-schema.sql --rules loan-perf-rules.json --port 5433 \
+  twinning postgres --schema loan-perf-schema.sql --rules loan-perf.verify.json --port 5433 \
     --run "python assemble_${strategy}.py" \
     --report "results/${strategy}_coverage.json" \
     --snapshot "snapshots/${strategy}.twin"
@@ -448,10 +475,9 @@ done
 |------|-------------|
 | **factory** | Factory orchestrates twin pairs for migration proof. Twin A for replay, Twin B for target scoring. |
 | **decoding** | Decoding resolves claims into canonical mutations; the twin enforces constraints on those mutations |
-| **verify** | Twin runs `verify` rules against its materialized state for coverage scoring |
+| **verify** | `verify` owns the constraint protocol. `twinning` consumes compiled `verify.constraint.v1` artifacts and reports validation results over materialized state. |
 | **shape** | Twin's schema DDL is the structural contract; `shape` checks CSV inputs before they reach the twin |
 | **benchmark** | Gold set assertions can be checked against twin state (export to CSV, run `benchmark`) |
-| **compare** | Diffing Twin A export vs Oracle export proves data equivalence |
 | **assess** | Twin coverage report feeds `assess` for go/no-go decisions |
 | **pack** | Twin snapshots can be included in evidence packs |
 | **rvl** | Diffing twin states across time: export to CSV, run `rvl` |
@@ -473,7 +499,7 @@ done
 | Constraint checker (NOT NULL, CHECK, UNIQUE, FK, types) | Custom | ~1-2K |
 | Upsert logic (ON CONFLICT) | Custom | ~500 |
 | Basic SELECT executor | Custom | ~2-3K |
-| Coverage scorer + verify integration | Custom | ~1-2K |
+| Twin metrics + verify integration | Custom | ~1-2K |
 | Snapshot dump/restore | Custom | ~500-1K |
 | Error code mapping (SQLSTATE) | Custom | ~300 |
 | **Total** | | **~10-15K lines of Rust** |
