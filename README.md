@@ -41,22 +41,23 @@ twinning postgres --restore out/bootstrap.twin --json
 
 ## Current Runtime Contract
 
-`twinning <ENGINE> [OPTIONS]`
-
-Arguments:
-- `<ENGINE>`: `postgres`, `mysql`, or `oracle`
+`twinning postgres [OPTIONS]`
 
 Options:
 - `--schema <FILE>`: SQL DDL file defining tables, constraints, and indexes
 - `--rules <FILE>`: compiled verify constraint artifact (`verify.constraint.v1`)
 - `--host <HOST>`: bind host (default `127.0.0.1`)
-- `--port <PORT>`: bind port (default engine-specific port)
+- `--port <PORT>`: bind port (default `5432`)
 - `--run <COMMAND>`: planned live one-shot mode; currently refused
 - `--report <FILE>`: write the `twinning.v0` readiness report as JSON
 - `--snapshot <FILE>`: write the deterministic `twinning.snapshot.v0` bootstrap snapshot
 - `--restore <FILE>`: restore a prior `twinning.snapshot.v0` snapshot
 - `--json`: emit structured JSON status instead of human-readable text
 - `--describe`: print `operator.json`
+
+V0 scope:
+- Postgres wire format only
+- non-Postgres adapters are future work and should not shape the current kernel
 
 Exit codes:
 - `0`: clean bootstrap
@@ -80,6 +81,13 @@ Deferred:
 - row storage and constraint enforcement
 - `--run` live orchestration
 - compiled-verify evaluation against materialized twin state
+
+Implementation note:
+- `asupersync` is a plausible runtime substrate for the live protocol shell
+  once it lands: session orchestration, cancellation correctness, deterministic
+  protocol-race testing, and snapshot lifecycle.
+- It is not the semantic kernel. SQL behavior, row-store semantics,
+  constraint enforcement, and verify integration remain `twinning`'s job.
 
 ## Repository Plan
 

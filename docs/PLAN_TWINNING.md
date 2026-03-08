@@ -26,6 +26,25 @@ thing the factory must prove. The core decode loop is proven against real
 Postgres first. `twinning` becomes worth building when iteration speed and
 swarm economics become the bottleneck.
 
+## V0 scope discipline
+
+V0 is intentionally narrow:
+
+- Postgres v3 wire protocol only
+- tournament mode first
+- one protocol-faithful twin for the canary-defined SQL subset
+- one twin-side validation path that consumes compiled
+  `verify.constraint.v1`
+- one snapshot / restore contract
+
+Deferred beyond v0:
+
+- MySQL protocol support
+- Oracle TNS support
+- VSAM / IMS / CICS adapters
+- OpenSearch or other non-SQL twins
+- replay/proof mode as a primary implementation target
+
 ---
 
 ## Non-goals
@@ -56,15 +75,12 @@ Short version: **memory-resident behavior, not memory-resident universe**.
 ## CLI
 
 ```
-twinning <ENGINE> [OPTIONS]
-
-Arguments:
-  <ENGINE>               Target database engine to impersonate (postgres, mysql, oracle)
+twinning postgres [OPTIONS]
 
 Options:
   --schema <FILE>        SQL DDL file defining tables, constraints, indexes
   --rules <FILE>         Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation
-  --port <PORT>          Listen port (default: engine-specific default)
+  --port <PORT>          Listen port (default: 5432)
   --host <HOST>          Listen address (default: 127.0.0.1)
   --run <COMMAND>        Run command against the twin, then report and exit
   --report <FILE>        Write twin validation / metrics report as JSON on exit
@@ -109,9 +125,9 @@ twinning postgres --schema schema.sql --rules schema.verify.json --port 5433 \
 |  | Adapter     |   | Parser /    |   | Metrics       |    |
 |  |             |   | Router      |   |               |    |
 |  | Postgres v3 |   | INSERT      |   | row counts    |    |
-|  | MySQL proto |   | UPSERT      |   | null rates    |    |
-|  | Oracle TNS  |   | SELECT      |   | FK coverage   |    |
-|  | VSAM / IMS  |   | READ/WRITE  |   | verify output |    |
+|  | (future     |   | UPSERT      |   | null rates    |    |
+|  | adapters)   |   | SELECT      |   | FK coverage   |    |
+|  |             |   | READ/WRITE  |   | verify output |    |
 |  +------+------+   +------+------+   +-------+-------+    |
 |         |                 |                   |            |
 |  +------v-----------------v-------------------v---------+  |
@@ -352,22 +368,23 @@ A snapshot is a content-addressed dump of the twin state (schema + materialized 
 
 ---
 
-## Engine support roadmap
+## Postgres-only v0
 
-| Engine | Wire protocol | Existing crate | Priority |
-|--------|--------------|----------------|----------|
-| **Postgres** | Postgres v3 (FE/BE message protocol) | **pgwire** (Rust, production-grade) | v0 — ship first |
-| **MySQL** | MySQL client/server protocol | **opensrv-mysql** (Rust) | v0.2 |
-| **Oracle** | Oracle TNS/Net8 | None in Rust (would need custom impl or OCI shim) | Defer |
-| **OpenSearch** | REST API (HTTP/JSON) | Hyper/Axum (Rust HTTP) | v0.3 — different architecture (REST, not wire protocol) |
+V0 is Postgres-only on purpose.
 
-Postgres first because: pgwire crate is mature, SQLAlchemy/psycopg2 is the most common client in Python data engineering, and the target database for the CMBS use case is Postgres.
+Why Postgres first:
 
-Oracle is the hardest — TNS protocol is proprietary and poorly documented. The pragmatic path for legacy migration: load Oracle's data into a Postgres twin with the same schema (translated DDL). Most Oracle SQL that extraction code uses is standard enough that Postgres handles it. Oracle-specific features (hierarchical queries, `CONNECT BY`, PL/SQL) are classified as SKIP in replay results.
+- `pgwire` is mature enough to make protocol fidelity plausible
+- `psycopg2` and SQLAlchemy Core are the primary client canaries
+- the factory's immediate target environment is Postgres
+- the hard part is not "many engines"; it is one honest, compatible twin
+
+Future interface support belongs to later phases only after the Postgres kernel,
+snapshot contract, and tournament economics are proven.
 
 ---
 
-## Beyond SQL: the generalized interface model
+## Beyond v0: the generalized interface model
 
 The twin's core abstraction is not "a SQL database emulator." It's **an interface emulator**: speak the protocol the client expects, enforce the schema's constraints, and keep enough behavioral state to answer correctly. SQL wire protocols are one interface. There are others — and the architecture supports them without changing the factory, the convergence model, or the tournament.
 
@@ -509,10 +526,33 @@ done
 | Need | Crate | Notes |
 |------|-------|-------|
 | Postgres wire protocol | `pgwire` | Production-grade, Rust |
-| MySQL wire protocol | `opensrv-mysql` | Rust |
 | SQL parsing | `sqlparser-rs` | Postgres dialect, mature |
 | Fast hashing | `rustc-hash` (FxHash) | HashMap performance |
 | Content hashing | `sha2` | Snapshot content addressing |
+
+### Ideal role for `asupersync`
+
+`asupersync` is a plausible runtime substrate for the live twin shell, but not
+for the semantic center.
+
+Good fit:
+
+- connection/session task orchestration
+- cancellation-correct protocol handling
+- per-twin overlay lifecycle and teardown
+- deterministic replay of protocol races in compatibility tests
+- snapshot/export/restore orchestration
+
+Not its job:
+
+- SQL parsing
+- row-store semantics
+- constraint enforcement
+- SQLSTATE parity
+- `verify` semantics
+
+Short version: if adopted, `asupersync` should sit around the protocol adapter
+and runtime shell, not replace the semantic kernel or state model.
 
 Follows the same implementation standards as protocol tools: `#![forbid(unsafe_code)]`, clap derive CLI, MIT license, CI (fmt -> clippy -> test), cross-platform release builds.
 
