@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.snapshot.v0.schema.json",
+  "title": "twinning.snapshot.v0",
+  "description": "Deterministic twinning snapshot artifact for bootstrap and later committed-state restore/export.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "snapshot_hash",
+    "created_at",
+    "engine",
+    "mode",
+    "schema_source",
+    "schema_hash",
+    "catalog",
+    "table_rows"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "twinning.snapshot.v0"
+    },
+    "snapshot_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "engine": {
+      "type": "string",
+      "const": "postgres"
+    },
+    "mode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "base_snapshot_hash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "verify_artifact": {
+      "$ref": "#/$defs/verify_artifact"
+    },
+    "catalog": {
+      "$ref": "#/$defs/catalog"
+    },
+    "relations": {
+      "type": "object",
+      "description": "Optional canonical committed relation contents keyed by canonical schema.table name.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "table_rows": {
+      "type": "object",
+      "description": "Deterministic per-table committed row counts keyed by canonical schema.table name.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "$defs": {
+    "nullable_string": {
+      "type": ["string", "null"]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "verify_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "hash", "loaded"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "loaded": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dialect",
+        "tables",
+        "table_count",
+        "column_count",
+        "index_count",
+        "constraint_count"
+      ],
+      "properties": {
+        "dialect": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/table_catalog"
+          }
+        },
+        "table_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "index_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "constraint_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "table_catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "columns",
+        "primary_key",
+        "unique_constraints",
+        "foreign_keys",
+        "checks",
+        "indexes"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/column_catalog"
+          }
+        },
+        "primary_key": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/key_constraint"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unique_constraints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/key_constraint"
+          }
+        },
+        "foreign_keys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/foreign_key_constraint"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check_constraint"
+          }
+        },
+        "indexes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/index_catalog"
+          }
+        }
+      }
+    },
+    "column_catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "declared_type",
+        "normalized_type",
+        "nullable",
+        "default_sql"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "declared_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "normalized_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nullable": {
+          "type": "boolean"
+        },
+        "default_sql": {
+          "$ref": "#/$defs/nullable_string"
+        }
+      }
+    },
+    "key_constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "columns"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "foreign_key_constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "columns",
+        "foreign_table",
+        "referred_columns",
+        "on_delete",
+        "on_update"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "foreign_table": {
+          "type": "string",
+          "minLength": 1
+        },
+        "referred_columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "on_delete": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "on_update": {
+          "$ref": "#/$defs/nullable_string"
+        }
+      }
+    },
+    "check_constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "expression"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "expression": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "index_catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "unique", "columns", "method", "predicate"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "unique": {
+          "type": "boolean"
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "method": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "predicate": {
+          "$ref": "#/$defs/nullable_string"
+        }
+      }
+    }
+  }
+}

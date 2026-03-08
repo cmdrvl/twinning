@@ -25,6 +25,7 @@ struct BootstrapState {
     verify_artifact: Option<VerifyArtifactReport>,
     catalog: Catalog,
     restored_from: Option<String>,
+    restored_snapshot_hash: Option<String>,
     warnings: Vec<String>,
 }
 
@@ -66,6 +67,7 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
             config.engine,
             state.schema_source.clone(),
             state.schema_hash.clone(),
+            state.restored_snapshot_hash.clone(),
             state.verify_artifact.clone(),
             state.catalog.clone(),
         )?;
@@ -128,12 +130,14 @@ fn load_state_from_schema(config: &TwinConfig) -> RefusalResult<BootstrapState> 
         verify_artifact: load_verify_artifact(config.verify_path.as_deref())?,
         catalog,
         restored_from: None,
+        restored_snapshot_hash: None,
         warnings: Vec::new(),
     })
 }
 
 fn restore_state(config: &TwinConfig, restore_path: &Path) -> RefusalResult<BootstrapState> {
     let snapshot = snapshot::read_snapshot(restore_path)?;
+    let restored_snapshot_hash = snapshot.snapshot_hash.clone();
     let verify_artifact = match config.verify_path.as_deref() {
         Some(path) => load_verify_artifact(Some(path))?,
         None => snapshot.verify_artifact.clone(),
@@ -145,6 +149,7 @@ fn restore_state(config: &TwinConfig, restore_path: &Path) -> RefusalResult<Boot
         verify_artifact,
         catalog: snapshot.catalog,
         restored_from: Some(path_display(restore_path)),
+        restored_snapshot_hash: Some(restored_snapshot_hash),
         warnings: Vec::new(),
     })
 }
@@ -253,7 +258,8 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&execution.stdout).expect("json");
         assert_eq!(json["outcome"], "READY");
         assert_eq!(json["schema"]["table_count"], 1);
-        assert_eq!(json["verify"]["loaded"], 1);
+        assert_eq!(json["verify_artifact"]["loaded"], 1);
+        assert!(json.get("verify").is_none());
     }
 
     #[test]

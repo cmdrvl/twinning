@@ -475,6 +475,8 @@ The report can no longer be example-only. v0 needs one explicit artifact shape.
 Artifact identity:
 
 - current artifact ID: `twinning.v0`
+- authoritative machine schema:
+  [schemas/twinning.v0.schema.json](/Users/zac/Source/cmdrvl/twinning/schemas/twinning.v0.schema.json)
 
 Required top-level fields:
 
@@ -484,10 +486,16 @@ Required top-level fields:
 | `outcome` | `READY`, `PASS`, `FAIL`, or `REFUSAL` at the twin-report boundary |
 | `mode` | `bootstrap`, `interactive`, or `run_once` |
 | `engine` | `postgres` in v0 |
+| `host` | bind host for the twin boundary |
+| `port` | bind port for the twin boundary |
+| `wire_protocol` | declared wire/runtime contract, e.g. `planned.pgwire` |
 | `schema` | normalized schema identity and hash |
+| `catalog` | normalized catalog summary for the loaded schema |
+| `storage` | declared tournament / replay storage boundary |
 | `tables` | per-table structural/runtime metrics |
 | `constraints` | twin-native constraint counters |
 | `snapshot` | final snapshot metadata if written or restored |
+| `next_step` | operator-facing summary of the next live/runtime step |
 
 Optional top-level fields:
 
@@ -515,6 +523,8 @@ Report rules:
   blobs from the child command.
 - If `--run` is not used, the `run` object is omitted entirely.
 - If `--verify` is not used, both `verify_artifact` and `verify` are omitted.
+- Optional sections are omitted when absent; they are not serialized as `null`
+  placeholders or empty warning arrays.
 - The embedded `verify` payload preserves `verify.report.v1` field semantics and
   ordering; `twinning` may wrap it, but not reinterpret it.
 
@@ -526,11 +536,49 @@ Example combined report:
   "outcome": "FAIL",
   "mode": "run_once",
   "engine": "postgres",
-  "schema": "cmbs.v1",
+  "host": "127.0.0.1",
+  "port": 5433,
+  "wire_protocol": "planned.pgwire",
+  "schema": {
+    "source": "schemas/cmbs.sql",
+    "hash": "sha256:...",
+    "table_count": 3,
+    "column_count": 54,
+    "index_count": 9,
+    "constraint_count": 11
+  },
+  "catalog": {
+    "dialect": "postgres",
+    "table_count": 3,
+    "column_count": 54,
+    "index_count": 9,
+    "constraint_count": 11
+  },
+  "storage": {
+    "tournament_mode": "bounded-memory hot working set with per-twin overlay",
+    "replay_mode": "snapshot-backed or delegated real-database backend",
+    "hot_working_set": "memory",
+    "cold_state": "shared snapshot or pluggable backing store"
+  },
   "tables": {
-    "deals": { "rows": 3500, "columns": 8, "indexes": 2 },
-    "loans": { "rows": 412000, "columns": 19, "indexes": 4 },
-    "properties": { "rows": 389000, "columns": 27, "indexes": 3 }
+    "public.deals": {
+      "rows": 3500,
+      "columns": 8,
+      "indexes": 2,
+      "constraints": 3
+    },
+    "public.loans": {
+      "rows": 412000,
+      "columns": 19,
+      "indexes": 4,
+      "constraints": 5
+    },
+    "public.properties": {
+      "rows": 389000,
+      "columns": 27,
+      "indexes": 3,
+      "constraints": 3
+    }
   },
   "constraints": {
     "not_null_violations": 0,
@@ -555,7 +603,6 @@ Example combined report:
   "run": {
     "command": "python extract.py",
     "exit_code": 0,
-    "signal": null,
     "timed_out": false
   },
   "null_rates": {
@@ -566,7 +613,8 @@ Example combined report:
   "fk_coverage": {
     "loans.deal_id -> deals.deal_id": 1.0,
     "financials.property_id -> properties.property_id": 0.97
-  }
+  },
+  "next_step": "Read the attached verify report, fix extractor drift, and rerun the candidate against the twin."
 }
 ```
 
@@ -597,6 +645,10 @@ A snapshot is a content-addressed dump of the twin state (schema + materialized 
 
 The snapshot contract must be explicit enough to support the determinism claim.
 
+Authoritative machine schema:
+
+- [schemas/twinning.snapshot.v0.schema.json](/Users/zac/Source/cmdrvl/twinning/schemas/twinning.snapshot.v0.schema.json)
+
 A live `twinning.snapshot.v0` hash surface must include:
 
 - snapshot format version
@@ -617,6 +669,17 @@ A live `twinning.snapshot.v0` hash surface must exclude:
 
 If timestamps or debug metadata are present in the serialized snapshot, they
 must live outside the content-addressed hash surface.
+
+Phase-0 bootstrap note:
+
+- The current bootstrap build emits normalized catalog identity plus deterministic
+  `table_rows` counts and optional restore lineage.
+- Live committed relation contents may be attached later through the optional
+  `relations` section declared in the schema, but only if the canonical ordering
+  rules below are preserved.
+- If a future live implementation cannot preserve those ordering rules under the
+  existing schema surface, it must bump the snapshot version instead of silently
+  changing the meaning of `twinning.snapshot.v0`.
 
 Canonical representation rule for v0:
 

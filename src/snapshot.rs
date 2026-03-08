@@ -19,6 +19,9 @@ pub struct TwinSnapshot {
     pub mode: String,
     pub schema_source: String,
     pub schema_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_snapshot_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verify_artifact: Option<VerifyArtifactReport>,
     pub catalog: Catalog,
     pub table_rows: BTreeMap<String, u64>,
@@ -29,6 +32,7 @@ impl TwinSnapshot {
         engine: Engine,
         schema_source: String,
         schema_hash: String,
+        base_snapshot_hash: Option<String>,
         verify_artifact: Option<VerifyArtifactReport>,
         catalog: Catalog,
     ) -> RefusalResult<Self> {
@@ -46,6 +50,7 @@ impl TwinSnapshot {
             mode: "catalog_only".to_owned(),
             schema_source,
             schema_hash,
+            base_snapshot_hash,
             verify_artifact,
             catalog,
             table_rows,
@@ -57,6 +62,7 @@ impl TwinSnapshot {
     pub fn compute_hash(&self) -> RefusalResult<String> {
         let mut clone = self.clone();
         clone.snapshot_hash.clear();
+        clone.created_at.clear();
         let bytes = serde_json::to_vec(&clone)
             .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
         let mut digest = Sha256::new();
@@ -150,6 +156,7 @@ mod tests {
             "schema.sql".to_owned(),
             "sha256:abc".to_owned(),
             None,
+            None,
             catalog,
         )
         .expect("snapshot");
@@ -161,6 +168,42 @@ mod tests {
         assert_eq!(
             restored.table_rows,
             BTreeMap::from([(String::from("public.deals"), 0)])
+        );
+    }
+
+    #[test]
+    fn snapshot_hash_ignores_created_at_but_includes_base_snapshot_hash() {
+        let catalog = Catalog {
+            dialect: "postgres".to_owned(),
+            tables: Vec::new(),
+            table_count: 0,
+            column_count: 0,
+            index_count: 0,
+            constraint_count: 0,
+        };
+
+        let snapshot = TwinSnapshot::new(
+            Engine::Postgres,
+            "schema.sql".to_owned(),
+            "sha256:abc".to_owned(),
+            Some("sha256:parent".to_owned()),
+            None,
+            catalog,
+        )
+        .expect("snapshot");
+
+        let mut changed_timestamp = snapshot.clone();
+        changed_timestamp.created_at = "2030-01-01T00:00:00Z".to_owned();
+        assert_eq!(
+            snapshot.compute_hash().expect("hash"),
+            changed_timestamp.compute_hash().expect("hash")
+        );
+
+        let mut changed_parent = snapshot;
+        changed_parent.base_snapshot_hash = Some("sha256:other".to_owned());
+        assert_ne!(
+            changed_parent.compute_hash().expect("hash"),
+            changed_timestamp.compute_hash().expect("hash")
         );
     }
 }

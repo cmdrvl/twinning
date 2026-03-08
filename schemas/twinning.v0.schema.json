@@ -1,0 +1,349 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.v0.schema.json",
+  "title": "twinning.v0",
+  "description": "Deterministic twinning report artifact for bootstrap, run-once, and interactive report boundaries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "outcome",
+    "mode",
+    "engine",
+    "host",
+    "port",
+    "wire_protocol",
+    "schema",
+    "catalog",
+    "storage",
+    "tables",
+    "constraints",
+    "snapshot",
+    "next_step"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "twinning.v0"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["READY", "PASS", "FAIL", "REFUSAL"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["bootstrap", "interactive", "run_once"]
+    },
+    "engine": {
+      "type": "string",
+      "const": "postgres"
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "wire_protocol": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema": {
+      "$ref": "#/$defs/summary"
+    },
+    "verify_artifact": {
+      "$ref": "#/$defs/verify_artifact"
+    },
+    "catalog": {
+      "$ref": "#/$defs/catalog_summary"
+    },
+    "storage": {
+      "$ref": "#/$defs/storage"
+    },
+    "tables": {
+      "type": "object",
+      "description": "Per-table twin metrics keyed by canonical schema.table name.",
+      "additionalProperties": {
+        "$ref": "#/$defs/table_report"
+      }
+    },
+    "constraints": {
+      "$ref": "#/$defs/constraint_counters"
+    },
+    "verify": {
+      "type": "object",
+      "description": "Embedded verify.report.v1 payload preserved without twinning-local reinterpretation.",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "const": "verify.report.v1"
+        }
+      },
+      "additionalProperties": true
+    },
+    "snapshot": {
+      "$ref": "#/$defs/snapshot_report"
+    },
+    "run": {
+      "$ref": "#/$defs/run_report"
+    },
+    "null_rates": {
+      "$ref": "#/$defs/ratio_map"
+    },
+    "fk_coverage": {
+      "$ref": "#/$defs/ratio_map"
+    },
+    "warnings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "next_step": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "hash",
+        "table_count",
+        "column_count",
+        "index_count",
+        "constraint_count"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "table_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "index_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "constraint_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "catalog_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dialect",
+        "table_count",
+        "column_count",
+        "index_count",
+        "constraint_count"
+      ],
+      "properties": {
+        "dialect": {
+          "type": "string",
+          "minLength": 1
+        },
+        "table_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "index_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "constraint_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tournament_mode",
+        "replay_mode",
+        "hot_working_set",
+        "cold_state"
+      ],
+      "properties": {
+        "tournament_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replay_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hot_working_set": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cold_state": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "table_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rows", "columns", "indexes", "constraints"],
+      "properties": {
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "indexes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "constraints": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "constraint_counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "not_null_violations",
+        "fk_violations",
+        "check_violations",
+        "unique_violations"
+      ],
+      "properties": {
+        "not_null_violations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fk_violations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "check_violations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unique_violations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "verify_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "hash", "loaded"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "loaded": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "snapshot_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "restored_from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "written_to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "run_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "timed_out"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "signal": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "timed_out": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ratio_map": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  }
+}

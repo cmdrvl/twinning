@@ -73,6 +73,7 @@ Implemented now:
 - Report generation for the factory/orchestration layer
 - Storage-boundary reporting for tournament mode vs replay/proof mode
 - Verify-artifact loading and bootstrap attachment metadata
+- Checked-in JSON Schemas for `twinning.v0` and `twinning.snapshot.v0`
 
 Deferred:
 - pgwire listener
@@ -103,6 +104,8 @@ Implementation note:
 
 - Plan: [docs/PLAN_TWINNING.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING.md)
 - Futures: [docs/PLAN_TWINNING_FUTURES.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING_FUTURES.md)
+- Report schema: [schemas/twinning.v0.schema.json](/Users/zac/Source/cmdrvl/twinning/schemas/twinning.v0.schema.json)
+- Snapshot schema: [schemas/twinning.snapshot.v0.schema.json](/Users/zac/Source/cmdrvl/twinning/schemas/twinning.snapshot.v0.schema.json)
 - Factory master plan: [PLAN_FACTORY.md](/Users/zac/Source/cmdrvl/cmdrvl-context/docs/09-plans/epistemic-spine/PLAN_FACTORY.md)
 
 ## Quality Gate

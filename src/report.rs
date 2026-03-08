@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::catalog::Catalog;
 
@@ -16,13 +17,16 @@ pub struct TwinReport {
     pub port: u16,
     pub wire_protocol: String,
     pub schema: SchemaReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verify_artifact: Option<VerifyArtifactReport>,
     pub catalog: CatalogReport,
     pub storage: StorageReport,
     pub tables: BTreeMap<String, TableReport>,
     pub constraints: ConstraintCounters,
-    pub verify: VerifyExecutionReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify: Option<Value>,
     pub snapshot: SnapshotReport,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub next_step: String,
 }
@@ -80,25 +84,12 @@ pub struct ConstraintCounters {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerifyExecutionReport {
-    pub loaded: usize,
-    pub evaluated: usize,
-    pub pass: usize,
-    pub fail: usize,
-    pub violations: Vec<RuleViolation>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuleViolation {
-    pub rule_id: String,
-    pub count: u64,
-    pub sample: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub restored_from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub written_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_hash: Option<String>,
 }
 
@@ -134,11 +125,6 @@ impl TwinReport {
             })
             .collect();
 
-        let loaded_rules = seed
-            .verify_artifact
-            .as_ref()
-            .map_or(0, |artifact| artifact.loaded);
-
         Self {
             version: REPORT_VERSION.to_owned(),
             outcome: "READY".to_owned(),
@@ -170,13 +156,7 @@ impl TwinReport {
                 check_violations: 0,
                 unique_violations: 0,
             },
-            verify: VerifyExecutionReport {
-                loaded: loaded_rules,
-                evaluated: 0,
-                pass: 0,
-                fail: 0,
-                violations: Vec::new(),
-            },
+            verify: None,
             snapshot: seed.snapshot,
             warnings: seed.warnings,
             next_step: "Live pgwire execution is not implemented yet. Use this build to validate schema assets, emit deterministic bootstrap artifacts, and stage the runtime boundary cleanly.".to_owned(),
@@ -233,5 +213,73 @@ impl TwinReport {
         lines.push(format!("next: {}", self.next_step));
         lines.push(String::new());
         lines.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{
+        CatalogReport, ConstraintCounters, SchemaReport, SnapshotReport, StorageReport, TwinReport,
+    };
+
+    #[test]
+    fn render_json_omits_absent_optional_sections() {
+        let report = TwinReport {
+            version: "twinning.v0".to_owned(),
+            outcome: "READY".to_owned(),
+            mode: "bootstrap".to_owned(),
+            engine: "postgres".to_owned(),
+            host: "127.0.0.1".to_owned(),
+            port: 5432,
+            wire_protocol: "planned.pgwire".to_owned(),
+            schema: SchemaReport {
+                source: "schema.sql".to_owned(),
+                hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_owned(),
+                table_count: 0,
+                column_count: 0,
+                index_count: 0,
+                constraint_count: 0,
+            },
+            verify_artifact: None,
+            catalog: CatalogReport {
+                dialect: "postgres".to_owned(),
+                table_count: 0,
+                column_count: 0,
+                index_count: 0,
+                constraint_count: 0,
+            },
+            storage: StorageReport {
+                tournament_mode: "overlay".to_owned(),
+                replay_mode: "delegated".to_owned(),
+                hot_working_set: "memory".to_owned(),
+                cold_state: "snapshot".to_owned(),
+            },
+            tables: BTreeMap::new(),
+            constraints: ConstraintCounters {
+                not_null_violations: 0,
+                fk_violations: 0,
+                check_violations: 0,
+                unique_violations: 0,
+            },
+            verify: None,
+            snapshot: SnapshotReport {
+                restored_from: None,
+                written_to: None,
+                snapshot_hash: None,
+            },
+            warnings: Vec::new(),
+            next_step: "next".to_owned(),
+        };
+
+        let rendered = report.render_json().expect("render json");
+        let json: serde_json::Value = serde_json::from_str(&rendered).expect("parse json");
+
+        assert!(json.get("verify_artifact").is_none());
+        assert!(json.get("verify").is_none());
+        assert!(json.get("warnings").is_none());
+        assert_eq!(json["snapshot"], serde_json::json!({}));
     }
 }
