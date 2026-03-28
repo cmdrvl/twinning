@@ -19,18 +19,18 @@ Both use cases need the same thing: a fast, ephemeral, constraint-checked behavi
 
 This is the Digital Twin Universe insight from StrongDM applied to databases instead of SaaS APIs. An agent iterates 20 times per hour instead of once per day. A migration team replays 12 months of production queries in minutes. The twin speaks the real wire protocol; existing client code can't tell the difference.
 
-### Factory sequencing
+### Crucible sequencing
 
-Per the factory plan, `twinning` is a scale-phase speed layer, not the first
-thing the factory must prove. The core decode loop is proven against real
+Per the Crucible plan, `twinning` is a scale-phase speed layer, not the first
+thing Crucible must prove. The core decode loop is proven against real
 Postgres first. `twinning` becomes worth building when iteration speed and
 swarm economics become the bottleneck.
 
-### Boundary with `decoding` and `factory`
+### Boundary with `decoding` and `crucible`
 
 `twinning` only makes sense if the truth/runtime split stays explicit.
 
-- `factory` orchestrates the overall loop and decides when a candidate state is
+- `crucible` orchestrates the overall loop and decides when a candidate state is
   ready to materialize
 - `decoding` resolves claims into canonical mutations or canonical archaeology
   entries
@@ -640,7 +640,7 @@ Example combined report:
 Anchored coverage is not a first-class `twinning` claim in v0. The twin may
 surface raw anchor-query outputs or local expected-vs-observed counters when a
 caller provides them, but global anchored-coverage interpretation belongs at the
-factory/reporting layer above `twinning`.
+Crucible/reporting layer above `twinning`.
 
 ---
 
@@ -721,7 +721,7 @@ Why Postgres first:
 
 - `pgwire` is mature enough to make protocol fidelity plausible
 - `psycopg2` and SQLAlchemy Core are the primary client canaries
-- the factory's immediate target environment is Postgres
+- Crucible's immediate target environment is Postgres
 - the hard part is not "many engines"; it is one honest, compatible twin
 
 Future interface support belongs to later phases only after the Postgres kernel,
@@ -741,7 +741,7 @@ twinning postgres --schema schema.sql --port 5433
 twinning postgres --schema schema.sql --verify schema.verify.json --port 5433 \
   --run "python extract.py" --report twin-report.json
 
-# Agent iteration loop (typical factory usage)
+# Agent iteration loop (typical Crucible usage)
 # 1. Start fresh twin
 twinning postgres --schema schema.sql --verify schema.verify.json --port 5433 \
   --run "python extract_deal_42.py" --report deal_42_report.json
@@ -770,7 +770,7 @@ done
 
 | Tool | Relationship |
 |------|-------------|
-| **factory** | Factory uses `twinning` as a later speed/protocol layer for tournament iteration after the first proof loop exists on deterministic artifacts plus real Postgres. It may later orchestrate twin-pair migration proof on top of the same kernel. |
+| **crucible** | Crucible uses `twinning` as a later speed/protocol layer for tournament iteration after the first proof loop exists on deterministic artifacts plus real Postgres. It may later orchestrate twin-pair migration proof on top of the same kernel. |
 | **decoding** | Decoding resolves claims into canonical mutations or canonical archaeology outputs; the twin materializes that state and enforces runtime/constraint behavior without resolving claims itself. |
 | **verify** | `verify` owns the constraint protocol and report semantics. `twinning` consumes compiled `verify.constraint.v1` artifacts and attaches `verify` results over materialized state. |
 | **shape** | Twin's schema DDL is the structural contract; `shape` checks CSV inputs before they reach the twin |
@@ -1002,7 +1002,7 @@ The first harnesses are not optional. They define the real subset.
 - `psql_smoke`: connect, authenticate, `SET application_name`, `BEGIN`, `SELECT`, `ROLLBACK`, restore-ready snapshot load
 - `psycopg2_params`: parameterized `INSERT`, `SELECT`, `ON CONFLICT`, and a known unique-violation SQLSTATE
 - `sqlalchemy_core`: engine connect, transaction begin/commit, parameterized execute, row fetch, no reflection requirement in v1
-- `extractor_canary`: one real factory extractor script, run unchanged against the twin
+- `extractor_canary`: one real Crucible extractor script, run unchanged against the twin
 The rule is simple: no new feature claim lands without a canary or differential fixture that proves it.
 
 ### Immediate work order
@@ -1022,7 +1022,7 @@ The implementation lives or dies by the harnesses, not the prose.
 
 - **Client compatibility suite:** real `psql`, `psycopg2`, SQLAlchemy, and later `asyncpg`, running startup, session, transaction, and error-path canaries.
 - **Differential semantics suite:** the same DDL/DML/query corpus executed against real Postgres and the twin, with result and SQLSTATE comparison.
-- **Extractor canary suite:** a small set of real extractor scripts from factory use cases, run unchanged against the twin.
+- **Extractor canary suite:** a small set of real extractor scripts from Crucible use cases, run unchanged against the twin.
 - **Storage-economics suite:** startup time, reset time, overlay size, hot-working-set growth, and concurrent-twin memory budgets.
 - **Snapshot suite:** restore fidelity, content-address determinism, and overlay isolation checks.
 

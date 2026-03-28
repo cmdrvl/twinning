@@ -32,7 +32,7 @@ In that later mode, each data product may use two twins:
   terms.
 
 That later mode is intentionally deferred because it pulls in replay harnesses,
-result diffing, and broader factory evidence flows that are not required to
+result diffing, and broader Crucible evidence flows that are not required to
 stabilize the v0 tournament boundary.
 
 ### Later-mode migration proof example
@@ -48,8 +48,8 @@ psql -p 5433 -f load_oracle_slice.sql
 # Load transformed data into Twin B
 psql -p 5434 -f load_loan_perf_data.sql
 
-# Replay historical queries against Twin A (factory handles comparison)
-factory replay --queries scan-results/queries/risk-app.sql \
+# Replay historical queries against Twin A (Crucible handles comparison)
+crucible replay --queries scan-results/queries/risk-app.sql \
   --oracle oracle://prod-readonly \
   --twin localhost:5433 \
   --output replay-results/
@@ -72,7 +72,7 @@ The twin's core abstraction is not "a SQL database emulator." It's **an
 interface emulator**: speak the protocol the client expects, enforce the
 schema's constraints, and keep enough behavioral state to answer correctly. SQL
 wire protocols are one interface. There are others, and the architecture should
-eventually support them without changing the factory, the convergence model, or
+eventually support them without changing Crucible, the convergence model, or
 the tournament.
 
 ### Non-SQL twin types
@@ -99,7 +99,7 @@ VSAM datasets are a large share of typical mainframe workloads, and the VSAM
 access pattern is simpler than SQL. A VSAM twin plus GnuCOBOL enables
 off-mainframe batch job replay: compile the COBOL program, point its file I/O
 at the VSAM twin, run it, capture output, and diff it against known-good output
-from the mainframe using whatever audit surface the factory standardizes
+from the mainframe using whatever audit surface Crucible standardizes
 (`rvl --exhaustive`, `pack diff`, or a twin-specific result comparator).
 
 ### Schema definitions by twin type

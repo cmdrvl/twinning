@@ -8,7 +8,10 @@
 
 ---
 
-`twinning` is the factory's speed layer: a protocol-faithful twin that keeps the hot working set in memory for tournament iteration and leaves room for heavier replay/proof backends when the corpus gets large. The repo now has the real artifact surface and internal boundaries for that system:
+`twinning` is Crucible's speed layer: a protocol-faithful twin that keeps the
+hot working set in memory for tournament iteration and leaves room for heavier
+replay/proof backends when the corpus gets large. The repo now has the real
+artifact surface and internal boundaries for that system:
 
 - Parse schema DDL with `sqlparser-rs`
 - Normalize tables, columns, keys, checks, foreign keys, and indexes into a deterministic catalog
@@ -17,9 +20,12 @@
 - Refuse unimplemented live-server paths explicitly instead of pretending to be a database
 - Establish the bounded-memory tournament / heavier replay split in the artifact surface
 
-The wire protocol runtime is not implemented yet. This first cut is intentionally honest: it gives the factory a strong artifact contract and a clean Rust architecture now, without faking pgwire support.
+The wire protocol runtime is not implemented yet. This first cut is
+intentionally honest: it gives Crucible a strong artifact contract and a clean
+Rust architecture now, without faking pgwire support.
 
-Per `PLAN_FACTORY.md`, live `twinning` is a later scale-phase layer. The core
+Per the Crucible master plan (`PLAN_FACTORY.md`), live `twinning` is a later
+scale-phase layer. The core
 decode loop is still meant to be proven against real Postgres first. This repo
 exists now so the twin contract is explicit before the wire/runtime work lands.
 
@@ -77,7 +83,7 @@ Implemented now:
 - CLI surface aligned with the plan
 - Deterministic catalog parsing for `CREATE TABLE` and `CREATE INDEX`
 - Snapshot hashing and verification
-- Report generation for the factory/orchestration layer
+- Report generation for the Crucible/orchestration layer
 - Storage-boundary reporting for tournament mode vs replay/proof mode
 - Verify-artifact loading and bootstrap attachment metadata
 - Checked-in JSON Schemas for `twinning.v0` and `twinning.snapshot.v0`
@@ -113,7 +119,7 @@ Implementation note:
 - Futures: [docs/PLAN_TWINNING_FUTURES.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING_FUTURES.md)
 - Report schema: [schemas/twinning.v0.schema.json](/Users/zac/Source/cmdrvl/twinning/schemas/twinning.v0.schema.json)
 - Snapshot schema: [schemas/twinning.snapshot.v0.schema.json](/Users/zac/Source/cmdrvl/twinning/schemas/twinning.snapshot.v0.schema.json)
-- Factory master plan: [PLAN_FACTORY.md](/Users/zac/Source/cmdrvl/cmdrvl-context/docs/09-plans/epistemic-spine/PLAN_FACTORY.md)
+- Crucible master plan: [PLAN_FACTORY.md](/Users/zac/Source/cmdrvl/cmdrvl-context/docs/09-plans/epistemic-spine/PLAN_FACTORY.md)
 
 ## Quality Gate
 
