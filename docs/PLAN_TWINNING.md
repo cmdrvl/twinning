@@ -26,6 +26,25 @@ thing the factory must prove. The core decode loop is proven against real
 Postgres first. `twinning` becomes worth building when iteration speed and
 swarm economics become the bottleneck.
 
+### Boundary with `decoding` and `factory`
+
+`twinning` only makes sense if the truth/runtime split stays explicit.
+
+- `factory` orchestrates the overall loop and decides when a candidate state is
+  ready to materialize
+- `decoding` resolves claims into canonical mutations or canonical archaeology
+  entries
+- `twinning` materializes that already-decided state behind a protocol-faithful
+  runtime boundary
+
+So:
+
+1. the first proof path is deterministic artifacts plus real Postgres
+2. `twinning` is added when protocol fidelity and iteration speed become the
+   bottleneck
+3. `twinning` never resolves claims, canonicalizes entities, or substitutes for
+   decode policy
+
 ## V0 scope discipline
 
 V0 is intentionally narrow:
@@ -751,8 +770,8 @@ done
 
 | Tool | Relationship |
 |------|-------------|
-| **factory** | Factory uses `twinning` as a scale-phase speed layer for tournament iteration and may later orchestrate twin-pair migration proof on top of the same kernel. |
-| **decoding** | Decoding resolves claims into canonical mutations; the twin enforces constraints on those mutations |
+| **factory** | Factory uses `twinning` as a later speed/protocol layer for tournament iteration after the first proof loop exists on deterministic artifacts plus real Postgres. It may later orchestrate twin-pair migration proof on top of the same kernel. |
+| **decoding** | Decoding resolves claims into canonical mutations or canonical archaeology outputs; the twin materializes that state and enforces runtime/constraint behavior without resolving claims itself. |
 | **verify** | `verify` owns the constraint protocol and report semantics. `twinning` consumes compiled `verify.constraint.v1` artifacts and attaches `verify` results over materialized state. |
 | **shape** | Twin's schema DDL is the structural contract; `shape` checks CSV inputs before they reach the twin |
 | **benchmark** | `benchmark` scores correctness against gold data; `twinning` does not replace it |
@@ -849,6 +868,8 @@ Follows the same implementation standards as protocol tools: `#![forbid(unsafe_c
 ### Delivery doctrine
 
 - One wedge at a time. v1 is **Postgres tournament mode**, not "all interfaces."
+- Decode-first before twin-first. If the deterministic decode/materialization
+  loop is not proven on real Postgres, the twin is premature.
 - Protocol fidelity comes before SQL breadth. If clients cannot connect cleanly, new SQL support is wasted work.
 - Capability growth must be explicit. Expand the supported subset by growing the canary corpus and manifest, never by vague claims.
 - Backend abstraction comes before the second interface. Do not hard-code SQL-shaped storage into the kernel.

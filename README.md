@@ -23,6 +23,13 @@ Per `PLAN_FACTORY.md`, live `twinning` is a later scale-phase layer. The core
 decode loop is still meant to be proven against real Postgres first. This repo
 exists now so the twin contract is explicit before the wire/runtime work lands.
 
+Truth boundary:
+- `decoding` resolves claims into canonical mutations or canonical archaeology
+  outputs.
+- `twinning` materializes already-decided state behind a protocol boundary and
+  reports runtime / verify evidence.
+- `twinning` does not resolve claims, canonicalize identity, or decide policy.
+
 ## Quick Start
 
 ```bash

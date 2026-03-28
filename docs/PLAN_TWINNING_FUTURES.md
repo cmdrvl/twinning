@@ -98,8 +98,9 @@ The VSAM twin is the highest-value addition. COBOL batch programs that read
 VSAM datasets are a large share of typical mainframe workloads, and the VSAM
 access pattern is simpler than SQL. A VSAM twin plus GnuCOBOL enables
 off-mainframe batch job replay: compile the COBOL program, point its file I/O
-at the VSAM twin, run it, capture output, and compare against known-good output
-from the mainframe.
+at the VSAM twin, run it, capture output, and diff it against known-good output
+from the mainframe using whatever audit surface the factory standardizes
+(`rvl --exhaustive`, `pack diff`, or a twin-specific result comparator).
 
 ### Schema definitions by twin type
 
