@@ -374,16 +374,28 @@ twinning only answers: **Can this client run against a protocol-faithful twin fo
 
 ## Installation
 
+### Homebrew (tagged releases)
+
+Tagged releases publish `twinning` to `cmdrvl/tap`:
+
+```bash
+brew install cmdrvl/tap/twinning
+```
+
+Until the first tagged release is cut, use the source build below.
+
 ### From source (current)
 
 ```bash
 git clone https://github.com/cmdrvl/twinning.git
+git clone https://github.com/cmdrvl/verify.git
 cd twinning
 cargo build --release
 # Binary at target/release/twinning
 ```
 
-No Homebrew tap or pre-built binaries yet. These will be added with the v0.1.0 release once the current run-once runtime contract settles.
+Current source builds expect a sibling `verify/` checkout because `twinning`
+links against `verify-core` and `verify-engine` via path dependencies.
 
 ---
 

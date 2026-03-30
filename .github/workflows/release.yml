@@ -1,0 +1,430 @@
+name: Release Build Matrix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths: ["Cargo.toml"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-artifacts:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: twinning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_ext: tar.gz
+            bin: twinning
+            strip: linux
+            use_cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive_ext: tar.gz
+            bin: twinning
+            strip: linux-cross
+            use_cross: true
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            archive_ext: tar.gz
+            bin: twinning
+            strip: macos
+            use_cross: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive_ext: tar.gz
+            bin: twinning
+            strip: macos
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive_ext: zip
+            bin: twinning.exe
+            strip: none
+            use_cross: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: twinning
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cmdrvl/verify
+          path: verify
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            twinning -> target
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@cross
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          version=$(python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path('Cargo.toml').read_text())
+          print(f"v{data['package']['version']}")
+          PY
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (cargo)
+        if: matrix.use_cross == false
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Strip binary (linux)
+        if: matrix.strip == 'linux'
+        run: |
+          if command -v strip >/dev/null; then
+            strip target/${{ matrix.target }}/release/${{ matrix.bin }}
+          else
+            echo "strip not available; skipping"
+          fi
+
+      - name: Strip binary (macos)
+        if: matrix.strip == 'macos'
+        run: |
+          if command -v strip >/dev/null; then
+            strip -x target/${{ matrix.target }}/release/${{ matrix.bin }}
+          else
+            echo "strip not available; skipping"
+          fi
+
+      - name: Install cross-strip toolchain
+        if: matrix.strip == 'linux-cross'
+        run: sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu
+
+      - name: Strip binary (linux cross)
+        if: matrix.strip == 'linux-cross'
+        run: aarch64-linux-gnu-strip target/${{ matrix.target }}/release/${{ matrix.bin }}
+
+      - name: Package archive (unix)
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        run: |
+          dist_dir="dist/${{ matrix.target }}"
+          mkdir -p "$dist_dir"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$dist_dir/twinning"
+          cp LICENSE README.md "$dist_dir/"
+          tar -czf "twinning-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz" -C "$dist_dir" .
+
+      - name: Package archive (windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $dist = "dist/${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$dist\\twinning.exe"
+          Copy-Item LICENSE,README.md $dist
+          Compress-Archive -Path "$dist\\*" -DestinationPath "twinning-${{ steps.version.outputs.version }}-${{ matrix.target }}.zip" -Force
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: twinning-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          path: twinning/twinning-${{ steps.version.outputs.version }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Release artifacts
+    runs-on: ubuntu-latest
+    needs: build-artifacts
+    permissions:
+      contents: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: twinning
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: twinning
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cmdrvl/verify
+          path: verify
+
+      - name: Fetch tags
+        run: git fetch --tags
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path('Cargo.toml').read_text())
+          print(f"v{data['package']['version']}")
+          PY
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "bare_version=${version#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag if missing
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version="${{ steps.version.outputs.version }}"
+          if git rev-parse --verify --quiet "refs/tags/$version" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "$version")"
+            if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+              echo "Tag $version already exists at $tag_sha, current commit is $GITHUB_SHA."
+              echo "Refusing to republish artifacts for an existing version tag."
+              echo "Bump Cargo.toml package.version to cut a new immutable release."
+              exit 1
+            fi
+            echo "Tag $version already points to current commit; reusing it."
+          else
+            git tag -a "$version" -m "Release $version"
+            git push origin "$version"
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: twinning/dist
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          find . -maxdepth 1 -type f \( -name "twinning-*.tar.gz" -o -name "twinning-*.zip" \) -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's|  \./|  |' > SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SHA256SUMS
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/SHA256SUMS.sig \
+            --output-certificate dist/SHA256SUMS.pem \
+            dist/SHA256SUMS
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@cargo-cyclonedx
+
+      - name: Generate SBOM
+        run: |
+          cargo cyclonedx --format json --override-filename sbom.cdx
+          mv sbom.cdx.json dist/sbom.cdx.json
+
+      - name: Generate provenance
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import pathlib
+
+          dist = pathlib.Path("dist")
+          sums = (dist / "SHA256SUMS").read_text().strip().splitlines()
+          subjects = []
+          for line in sums:
+              digest, name = line.split(maxsplit=1)
+              subjects.append({
+                "name": name,
+                "digest": {"sha256": digest},
+              })
+
+          now = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+          statement = {
+            "_type": "https://in-toto.io/Statement/v1",
+            "subject": subjects,
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {
+              "buildDefinition": {
+                "buildType": "https://github.com/actions/runner",
+                "externalParameters": {
+                  "workflow": "release.yml",
+                  "ref": os.environ.get("GITHUB_REF"),
+                  "sha": os.environ.get("GITHUB_SHA"),
+                },
+                "internalParameters": {},
+                "resolvedDependencies": [],
+              },
+              "runDetails": {
+                "builder": {
+                  "id": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}"
+                },
+                "metadata": {
+                  "invocationId": os.environ.get("GITHUB_RUN_ID"),
+                  "startedOn": now,
+                  "finishedOn": now,
+                },
+              },
+            },
+          }
+
+          (dist / "provenance.intoto.jsonl").write_text(json.dumps(statement) + "\n")
+          PY
+
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body: |
+            This release packages `${{ steps.version.outputs.version }}` for all supported targets.
+
+            ## Verification
+
+            ```bash
+            sha256sum -c SHA256SUMS
+            ```
+          generate_release_notes: true
+          files: |
+            twinning/dist/twinning-*.tar.gz
+            twinning/dist/twinning-*.zip
+            twinning/dist/SHA256SUMS
+            twinning/dist/SHA256SUMS.sig
+            twinning/dist/SHA256SUMS.pem
+            twinning/dist/provenance.intoto.jsonl
+            twinning/dist/sbom.cdx.json
+
+  update-homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: twinning
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: twinning
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path('Cargo.toml').read_text())
+          print(f"v{data['package']['version']}")
+          PY
+          )
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "bare_version=${version#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download SHA256SUMS from release
+        run: |
+          curl -fsSL "https://github.com/cmdrvl/twinning/releases/download/${{ steps.version.outputs.version }}/SHA256SUMS" -o SHA256SUMS
+
+      - name: Generate formula
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+          import textwrap
+
+          version = "${{ steps.version.outputs.version }}"
+          bare = "${{ steps.version.outputs.bare_version }}"
+
+          sums = {}
+          for line in pathlib.Path("SHA256SUMS").read_text().strip().splitlines():
+              digest, name = line.split(maxsplit=1)
+              sums[name.strip()] = digest
+
+          targets = {
+              "aarch64-apple-darwin": ("on_macos", "on_arm"),
+              "x86_64-apple-darwin": ("on_macos", "on_intel"),
+              "aarch64-unknown-linux-gnu": ("on_linux", "on_arm"),
+              "x86_64-unknown-linux-gnu": ("on_linux", "on_intel"),
+          }
+
+          blocks = []
+          current_os = None
+          for target, (os_block, arch_block) in targets.items():
+              asset = f"twinning-{version}-{target}.tar.gz"
+              if asset not in sums:
+                  raise SystemExit(f"missing checksum for {asset} in SHA256SUMS")
+              sha = sums[asset]
+              if os_block != current_os:
+                  if current_os is not None:
+                      blocks.append("  end")
+                  blocks.append(f"\n  {os_block} do")
+                  current_os = os_block
+              blocks.append(f"    {arch_block} do")
+              blocks.append(f'      url "https://github.com/cmdrvl/twinning/releases/download/{version}/{asset}"')
+              blocks.append(f'      sha256 "{sha}"')
+              blocks.append("    end")
+          blocks.append("  end")
+
+          formula = textwrap.dedent(f'''\
+          # typed: false
+          # frozen_string_literal: true
+
+          class Twinning < Formula
+            desc "Protocol-faithful interface twins for fast extractor iteration"
+            homepage "https://github.com/cmdrvl/twinning"
+            version "{bare}"
+            license "MIT"
+          {"".join(chr(10) + l for l in blocks)}
+
+            def install
+              bin.install "twinning"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{{bin}}/twinning --version")
+            end
+          end
+          ''').lstrip()
+
+          pathlib.Path("twinning.rb").write_text(formula)
+          PYEOF
+
+      - name: Push formula to tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not configured for this repository."
+            exit 1
+          fi
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/cmdrvl/homebrew-tap.git" tap
+          cp twinning.rb tap/Formula/twinning.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/twinning.rb
+          if git diff --cached --quiet; then
+            echo "No changes to formula"
+          else
+            git commit -m "twinning ${{ steps.version.outputs.version }}"
+            git push origin HEAD:main
+            git push origin HEAD:master
+          fi

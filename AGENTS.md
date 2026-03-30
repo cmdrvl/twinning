@@ -461,8 +461,9 @@ Current repo reality:
 
 - Rust crate exists and is locally runnable with `cargo run -- ...`
 - CI workflow exists at `.github/workflows/ci.yml`
-- no release workflow yet (add when v0.1.0 is ready)
-- no published binary yet
+- release workflow exists at `.github/workflows/release.yml`
+- tagged releases are wired to publish cross-target artifacts and update `cmdrvl/tap`
+- no published binary yet until the first release is cut
 
 Do not add README badges or install claims until they are real.
 
