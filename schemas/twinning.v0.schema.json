@@ -74,16 +74,7 @@
       "$ref": "#/$defs/constraint_counters"
     },
     "verify": {
-      "type": "object",
-      "description": "Embedded verify.report.v1 payload preserved without twinning-local reinterpretation.",
-      "required": ["version"],
-      "properties": {
-        "version": {
-          "type": "string",
-          "const": "verify.report.v1"
-        }
-      },
-      "additionalProperties": true
+      "$ref": "#/$defs/verify_report"
     },
     "snapshot": {
       "$ref": "#/$defs/snapshot_report"
@@ -288,6 +279,294 @@
         "loaded": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "verify_report": {
+      "type": "object",
+      "description": "Embedded verify.report.v1 payload preserved without twinning-local reinterpretation.",
+      "additionalProperties": false,
+      "required": [
+        "tool",
+        "version",
+        "execution_mode",
+        "outcome",
+        "constraint_set_id",
+        "constraint_hash",
+        "bindings",
+        "summary",
+        "policy_signals",
+        "results",
+        "refusal"
+      ],
+      "properties": {
+        "tool": {
+          "const": "verify"
+        },
+        "version": {
+          "const": "verify.report.v1"
+        },
+        "execution_mode": {
+          "enum": ["batch", "embedded"]
+        },
+        "outcome": {
+          "enum": ["PASS", "FAIL", "REFUSAL"]
+        },
+        "constraint_set_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "constraint_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bindings": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/verify_binding_report"
+          }
+        },
+        "summary": {
+          "$ref": "#/$defs/verify_summary"
+        },
+        "policy_signals": {
+          "$ref": "#/$defs/verify_policy_signals"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/verify_rule_result"
+          }
+        },
+        "refusal": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/verify_refusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "REFUSAL"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "refusal": {
+                "$ref": "#/$defs/verify_refusal"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": ["PASS", "FAIL"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "refusal": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "verify_binding_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "content_hash"],
+      "properties": {
+        "kind": {
+          "const": "relation"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "input_verification": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/verify_input_verification"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "verify_input_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "locks"],
+      "properties": {
+        "status": {
+          "enum": ["VERIFIED"]
+        },
+        "locks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "verify_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_rules", "passed_rules", "failed_rules", "by_severity"],
+      "properties": {
+        "total_rules": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed_rules": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_rules": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_severity": {
+          "$ref": "#/$defs/verify_by_severity"
+        }
+      }
+    },
+    "verify_by_severity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error", "warn"],
+      "properties": {
+        "error": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warn": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "verify_policy_signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity_band"],
+      "properties": {
+        "severity_band": {
+          "enum": ["CLEAN", "WARN_ONLY", "ERROR_PRESENT"]
+        }
+      }
+    },
+    "verify_rule_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "severity", "status", "violation_count", "affected"],
+      "properties": {
+        "rule_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": ["error", "warn"]
+        },
+        "status": {
+          "enum": ["pass", "fail"]
+        },
+        "violation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "affected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/verify_affected_entry"
+          }
+        }
+      }
+    },
+    "verify_affected_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding"],
+      "properties": {
+        "binding": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/verify_scalar"
+          }
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": true
+      }
+    },
+    "verify_scalar": {
+      "type": ["string", "number", "boolean", "null"]
+    },
+    "verify_refusal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "detail", "next_step"],
+      "properties": {
+        "code": {
+          "enum": [
+            "E_IO",
+            "E_BAD_CONSTRAINTS",
+            "E_BAD_AUTHORING",
+            "E_DUPLICATE_BINDING",
+            "E_MISSING_BINDING",
+            "E_UNDECLARED_BINDING",
+            "E_FORMAT_DETECT",
+            "E_FIELD_NOT_FOUND",
+            "E_BAD_EXPR",
+            "E_SQL_ERROR",
+            "E_BATCH_ONLY_RULE",
+            "E_KEY_CONFLICT",
+            "E_INPUT_NOT_LOCKED",
+            "E_INPUT_DRIFT",
+            "E_TOO_LARGE"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": true,
+        "next_step": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

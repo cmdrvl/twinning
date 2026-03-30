@@ -1,0 +1,68 @@
+{
+  "version": "twinning.differential.write-corpus.v0",
+  "cases": [
+    {
+      "id": "insert_basic",
+      "description": "Declared INSERT path writes one committed row when the parent tenant exists.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')"
+      ],
+      "sql": "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha')",
+      "expected": {
+        "outcome_class": "success",
+        "command_tag": "INSERT 0 1",
+        "rows_affected": 1
+      }
+    },
+    {
+      "id": "upsert_primary_key",
+      "description": "Declared ON CONFLICT primary-key rewrite keeps INSERT-style command tagging.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha')"
+      ],
+      "sql": "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) VALUES ('deal-001', 'tenant-a', 'ext-001-rewrite', 'Alpha Updated') ON CONFLICT (deal_id) DO UPDATE SET external_key = EXCLUDED.external_key, deal_name = EXCLUDED.deal_name",
+      "expected": {
+        "outcome_class": "success",
+        "command_tag": "INSERT 0 1",
+        "rows_affected": 1
+      }
+    },
+    {
+      "id": "unique_violation",
+      "description": "Duplicate declared unique-key inserts surface SQLSTATE 23505.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) VALUES ('deal-001', 'tenant-a', 'ext-dup', 'Alpha')"
+      ],
+      "sql": "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) VALUES ('deal-002', 'tenant-a', 'ext-dup', 'Beta')",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "23505"
+      }
+    },
+    {
+      "id": "foreign_key_violation",
+      "description": "Missing parent tenants surface SQLSTATE 23503 on declared inserts.",
+      "seed_sql": [],
+      "sql": "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) VALUES ('deal-003', 'tenant-missing', 'ext-003', 'Gamma')",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "23503"
+      }
+    },
+    {
+      "id": "unsupported_insert_select",
+      "description": "Out-of-subset INSERT ... SELECT stays explicitly classified as a refusal case.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha')"
+      ],
+      "sql": "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name) SELECT deal_id, tenant_id, external_key, deal_name FROM public.deals",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
+      }
+    }
+  ]
+}

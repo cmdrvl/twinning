@@ -1,0 +1,132 @@
+{
+  "version": "twinning.extractor-canary.input.v0",
+  "schema_assumptions": {
+    "tables": [
+      "public.tenants",
+      "public.deals"
+    ],
+    "notes": [
+      "public.tenants provides the parent row required for foreign-key acceptance/refusal cases.",
+      "public.deals includes a primary key, a unique natural key, nullable status, and at least one checked column for deterministic extractor coverage."
+    ]
+  },
+  "mutation_cases": [
+    {
+      "name": "insert_seed_deal",
+      "shape": "insert_values",
+      "expect_sqlstate": null,
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-001",
+        "external_key": "alpha-001",
+        "deal_name": "Alpha",
+        "status": null,
+        "amount_text": "100.00"
+      }
+    },
+    {
+      "name": "upsert_existing_pk",
+      "shape": "upsert_pk",
+      "expect_sqlstate": null,
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-001",
+        "external_key": "alpha-001",
+        "deal_name": "Alpha Updated",
+        "status": null,
+        "amount_text": "100.00"
+      }
+    },
+    {
+      "name": "upsert_existing_unique",
+      "shape": "upsert_unique",
+      "expect_sqlstate": null,
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-002",
+        "external_key": "alpha-001",
+        "deal_name": "Alpha Unique Rewrite",
+        "status": "open",
+        "amount_text": "110.00"
+      }
+    },
+    {
+      "name": "reject_missing_required_name",
+      "shape": "insert_values",
+      "expect_sqlstate": "23502",
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-003",
+        "external_key": "missing-name",
+        "deal_name": null,
+        "status": "open",
+        "amount_text": "90.00"
+      }
+    },
+    {
+      "name": "reject_missing_parent_tenant",
+      "shape": "insert_values",
+      "expect_sqlstate": "23503",
+      "row": {
+        "tenant_id": "tenant-missing",
+        "deal_id": "deal-004",
+        "external_key": "missing-parent",
+        "deal_name": "Broken Parent",
+        "status": "open",
+        "amount_text": "95.00"
+      }
+    },
+    {
+      "name": "reject_duplicate_unique_key",
+      "shape": "insert_values",
+      "expect_sqlstate": "23505",
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-005",
+        "external_key": "alpha-001",
+        "deal_name": "Duplicate Unique",
+        "status": "open",
+        "amount_text": "120.00"
+      }
+    },
+    {
+      "name": "reject_bad_status_and_amount_text",
+      "shape": "insert_values",
+      "expect_sqlstate": "23514|22P02",
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-006",
+        "external_key": "bad-status",
+        "deal_name": "Bad Status",
+        "status": "not-a-valid-status",
+        "amount_text": "N/A"
+      }
+    }
+  ],
+  "read_cases": [
+    {
+      "name": "filter_by_tenant_id",
+      "shape": "select_filtered_scan",
+      "predicate": {
+        "column": "tenant_id",
+        "operator": "eq",
+        "value": "tenant-a"
+      },
+      "expected_deal_ids": [
+        "deal-001",
+        "deal-002"
+      ]
+    },
+    {
+      "name": "probe_null_status_rows",
+      "shape": "select_is_null",
+      "predicate": {
+        "column": "status",
+        "operator": "is_null"
+      },
+      "expected_deal_ids": [
+        "deal-001"
+      ]
+    }
+  ]
+}

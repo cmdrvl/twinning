@@ -12,8 +12,10 @@ Current state:
 
 - the manifest is checked in now
 - the corresponding harness layout exists under `tests/canaries/`
-- the live pgwire runtime is not implemented yet, so those harnesses are still
-  scaffolded and ignored by default
+- the runtime-backed compatibility suite executes through
+  `tests/compatibility_suite.rs`
+- unsupported session, SQL, and reflection shapes stay explicit through the
+  checked-in harness assertions and fixtures
 
 The manifest is still normative. A compatibility claim is only valid once the
 corresponding harness passes.

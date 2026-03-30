@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{cli::Engine, config::TwinConfig};
+use crate::{cli::Engine, config::TwinConfig, report::LiveVerifyArtifact};
 
 pub const VERSION: &str = "twinning.v0";
 pub type RefusalResult<T> = Result<T, Box<RefusalEnvelope>>;
@@ -116,6 +116,18 @@ pub fn run_mode_unimplemented(config: &TwinConfig) -> RefusalEnvelope {
     )
 }
 
+pub fn runtime_io(stage: &str, error: impl Into<String>) -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_RUNTIME_IO",
+        format!("Live runtime failed during `{stage}`."),
+        json!({
+            "stage": stage,
+            "error": error.into(),
+        }),
+        None,
+    )
+}
+
 pub fn io_read(path: &Path, error: &std::io::Error) -> RefusalEnvelope {
     RefusalEnvelope::new(
         "E_IO_READ",
@@ -158,6 +170,30 @@ pub fn verify_artifact_parse(path: &Path, message: impl Into<String>) -> Refusal
     )
 }
 
+pub fn verify_batch_only_rule(artifact: &LiveVerifyArtifact) -> RefusalEnvelope {
+    let batch_only_rule = artifact
+        .batch_only_rule
+        .as_ref()
+        .expect("batch-only refusal requires a detected rule");
+
+    RefusalEnvelope::new(
+        "E_BATCH_ONLY_RULE",
+        "Embedded twin execution cannot evaluate batch-only verify rules.",
+        json!({
+            "execution_mode": "embedded",
+            "verify_artifact": {
+                "source": artifact.report.source,
+                "hash": artifact.report.hash,
+                "loaded": artifact.report.loaded,
+                "constraint_set_id": artifact.constraint_set_id,
+            },
+            "rule_id": batch_only_rule.rule_id,
+            "op": batch_only_rule.op,
+        }),
+        None,
+    )
+}
+
 pub fn snapshot_verify(path: &Path, message: impl Into<String>) -> RefusalEnvelope {
     RefusalEnvelope::new(
         "E_SNAPSHOT_VERIFY",
@@ -177,4 +213,48 @@ pub fn serialization(message: impl Into<String>) -> RefusalEnvelope {
         json!({ "error": message.into() }),
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+    use verify_core::constraint::ConstraintSet;
+
+    use crate::report::{BatchOnlyRule, LiveVerifyArtifact, VerifyArtifactReport};
+
+    use super::verify_batch_only_rule;
+
+    #[test]
+    fn batch_only_verify_refusal_preserves_artifact_identity() {
+        let artifact = LiveVerifyArtifact {
+            report: VerifyArtifactReport {
+                source: "constraints.verify.json".to_owned(),
+                hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_owned(),
+                loaded: 4,
+            },
+            constraint_set_id: "portfolio.loan_tape.v1".to_owned(),
+            batch_only_rule: Some(BatchOnlyRule {
+                rule_id: "ORPHAN_PROPERTY_TENANT".to_owned(),
+                op: "query_zero_rows".to_owned(),
+            }),
+            constraint_set: ConstraintSet::new("portfolio.loan_tape.v1"),
+        };
+
+        let rendered = verify_batch_only_rule(&artifact)
+            .render(true)
+            .expect("render refusal");
+        let json: Value = serde_json::from_str(&rendered).expect("parse refusal json");
+
+        assert_eq!(json["refusal"]["code"], "E_BATCH_ONLY_RULE");
+        assert_eq!(
+            json["refusal"]["detail"]["verify_artifact"]["constraint_set_id"],
+            "portfolio.loan_tape.v1"
+        );
+        assert_eq!(
+            json["refusal"]["detail"]["rule_id"],
+            "ORPHAN_PROPERTY_TENANT"
+        );
+        assert_eq!(json["refusal"]["detail"]["op"], "query_zero_rows");
+    }
 }

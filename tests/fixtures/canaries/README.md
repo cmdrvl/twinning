@@ -2,6 +2,10 @@
 
 Each subdirectory here matches one canary ID from `canaries/manifest.v0.json`.
 
-These directories are intentionally present before the real harness contents
-arrive so that manifest names, harness module names, and fixture locations stay
-aligned.
+The checked-in fixture files pin the declared bootstrap-era contract for that
+canary. Current fixture types include:
+
+- `ir_equivalence.json` for cross-client expected-IR equivalence and refusal
+  near-miss coverage
+- `fixture.json` / companion assets for canaries that already have a frozen
+  corpus, such as `extractor_canary`

@@ -1,0 +1,72 @@
+{
+  "version": "twinning.ir-equivalence.fixture.v0",
+  "client": "psql",
+  "supported_cases": [
+    {
+      "case_id": "psql_begin_simple_query",
+      "equivalence_group": "tx_begin",
+      "covers_shape": "tx_begin",
+      "surface": {
+        "transport": "simple_query",
+        "sql": "BEGIN"
+      },
+      "expected_ir": {
+        "op_type": "session",
+        "session_id": "canonical-session",
+        "op": "begin",
+        "tracked_params": {}
+      }
+    },
+    {
+      "case_id": "psql_set_application_name",
+      "equivalence_group": "set_application_name",
+      "covers_shape": "set_application_name",
+      "surface": {
+        "transport": "simple_query",
+        "sql": "SET application_name = 'psql'"
+      },
+      "expected_ir": {
+        "op_type": "session",
+        "session_id": "canonical-session",
+        "op": "set_param",
+        "tracked_params": {
+          "application_name": "psql"
+        }
+      }
+    },
+    {
+      "case_id": "psql_rollback_simple_query",
+      "equivalence_group": "tx_rollback",
+      "covers_shape": "tx_rollback",
+      "surface": {
+        "transport": "simple_query",
+        "sql": "ROLLBACK"
+      },
+      "expected_ir": {
+        "op_type": "session",
+        "session_id": "canonical-session",
+        "op": "rollback",
+        "tracked_params": {}
+      }
+    }
+  ],
+  "refusal_cases": [
+    {
+      "case_id": "psql_show_all_refusal",
+      "near_miss_shape": "show_all",
+      "surface": {
+        "transport": "simple_query",
+        "sql": "SHOW ALL"
+      },
+      "expected_ir": {
+        "op_type": "refusal",
+        "scope": "session",
+        "code": "unsupported_shape",
+        "detail": {
+          "shape": "show_all",
+          "client": "psql"
+        }
+      }
+    }
+  ]
+}

@@ -2,13 +2,19 @@
 
 use clap::Parser;
 
+pub mod backend;
 pub mod catalog;
 pub mod cli;
 pub mod config;
+pub mod ir;
+pub mod kernel;
+pub mod protocol;
 pub mod refusal;
 pub mod report;
+pub mod result;
 pub mod runtime;
 pub mod snapshot;
+pub mod verify_bridge;
 
 const OPERATOR_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/operator.json"));
 

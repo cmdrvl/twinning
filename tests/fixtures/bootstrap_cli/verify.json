@@ -1,0 +1,11 @@
+{
+  "version": "verify.constraint.v1",
+  "rules": [
+    {
+      "id": "TENANT_EXISTS"
+    },
+    {
+      "id": "DEAL_AMOUNT_NONNEGATIVE"
+    }
+  ]
+}

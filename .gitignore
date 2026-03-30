@@ -26,3 +26,6 @@ target
 
 # ntm runtime state
 .ntm/
+
+# Local UBS gate output
+.ubs-gate-summary.json

@@ -7,7 +7,8 @@ Current state:
 
 - the manifest is checked in
 - the harness module names line up one-to-one with manifest canary IDs
-- the tests are marked `#[ignore]` until the live pgwire runtime exists
+- the runtime-backed canary tests execute in `tests/compatibility_suite.rs`
+- unsupported shapes stay explicit through the checked-in canary assertions and fixtures
 
-When the runtime work starts, these harnesses should grow into real compatibility
-tests instead of creating a parallel naming scheme elsewhere in the repo.
+Future canary work should extend these harnesses and fixtures directly instead of
+creating a parallel naming scheme elsewhere in the repo.

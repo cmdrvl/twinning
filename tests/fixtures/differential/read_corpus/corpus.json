@@ -1,0 +1,99 @@
+{
+  "version": "twinning.differential.read-corpus.v0",
+  "cases": [
+    {
+      "id": "select_by_pk",
+      "description": "Declared point lookup returns the expected single row by primary key.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT deal_id, deal_name FROM public.deals WHERE deal_id = 'deal-001'",
+      "expected": {
+        "outcome_class": "success",
+        "columns": ["deal_id", "deal_name"],
+        "rows": [
+          {
+            "deal_id": "deal-001",
+            "deal_name": "Alpha"
+          }
+        ]
+      }
+    },
+    {
+      "id": "select_filtered_scan",
+      "description": "Declared filtered scan returns the expected committed row for a non-primary-key predicate.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT deal_id, tenant_id FROM public.deals WHERE tenant_id = 'tenant-b'",
+      "expected": {
+        "outcome_class": "success",
+        "columns": ["deal_id", "tenant_id"],
+        "rows": [
+          {
+            "deal_id": "deal-003",
+            "tenant_id": "tenant-b"
+          }
+        ]
+      }
+    },
+    {
+      "id": "select_is_null",
+      "description": "Declared IS NULL scan returns the committed row with null status.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT deal_id FROM public.deals WHERE status IS NULL",
+      "expected": {
+        "outcome_class": "success",
+        "columns": ["deal_id"],
+        "rows": [
+          {
+            "deal_id": "deal-001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unsupported_select_for_update",
+      "description": "Out-of-subset locking reads stay explicitly classified as protocol-visible refusals.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)"
+      ],
+      "sql": "SELECT deal_id FROM public.deals FOR UPDATE",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
+      }
+    },
+    {
+      "id": "aggregate_count_skip",
+      "description": "Aggregate count is outside the current manifest-backed differential read subset, so parity stays SKIP-classified here for now.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT COUNT(*) AS row_count FROM public.deals WHERE tenant_id = 'tenant-a'",
+      "expected": {
+        "outcome_class": "skip"
+      }
+    }
+  ]
+}

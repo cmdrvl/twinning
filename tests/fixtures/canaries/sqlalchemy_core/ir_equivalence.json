@@ -1,0 +1,133 @@
+{
+  "version": "twinning.ir-equivalence.fixture.v0",
+  "client": "sqlalchemy_core",
+  "supported_cases": [
+    {
+      "case_id": "sqlalchemy_begin_transaction",
+      "equivalence_group": "tx_begin",
+      "covers_shape": "tx_begin",
+      "surface": {
+        "transport": "simple_query",
+        "api": "Connection.begin",
+        "sql": "BEGIN"
+      },
+      "expected_ir": {
+        "op_type": "session",
+        "session_id": "canonical-session",
+        "op": "begin",
+        "tracked_params": {}
+      }
+    },
+    {
+      "case_id": "sqlalchemy_commit_transaction",
+      "equivalence_group": "tx_commit",
+      "covers_shape": "tx_commit",
+      "surface": {
+        "transport": "simple_query",
+        "api": "Transaction.commit",
+        "sql": "COMMIT"
+      },
+      "expected_ir": {
+        "op_type": "session",
+        "session_id": "canonical-session",
+        "op": "commit",
+        "tracked_params": {}
+      }
+    },
+    {
+      "case_id": "sqlalchemy_insert_values_execute",
+      "equivalence_group": "insert_values",
+      "covers_shape": "insert_values",
+      "surface": {
+        "transport": "extended_query",
+        "api": "Connection.execute",
+        "expression": "insert(deals).values(deal_id=:deal_id, deal_name=:deal_name)",
+        "compiled_sql": "INSERT INTO public.deals (deal_id, deal_name) VALUES (%(deal_id)s, %(deal_name)s)",
+        "params": {
+          "deal_id": "deal-1",
+          "deal_name": "Alpha"
+        }
+      },
+      "expected_ir": {
+        "op_type": "mutation",
+        "session_id": "canonical-session",
+        "table": "public.deals",
+        "kind": "insert",
+        "columns": [
+          "deal_id",
+          "deal_name"
+        ],
+        "rows": [
+          [
+            {
+              "text": "deal-1"
+            },
+            {
+              "text": "Alpha"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "case_id": "sqlalchemy_select_by_pk_execute",
+      "equivalence_group": "select_by_pk",
+      "covers_shape": "select_by_pk",
+      "surface": {
+        "transport": "extended_query",
+        "api": "Connection.execute",
+        "expression": "select(deals.c.deal_id, deals.c.deal_name).where(deals.c.deal_id == bindparam('deal_id'))",
+        "compiled_sql": "SELECT public.deals.deal_id, public.deals.deal_name FROM public.deals WHERE public.deals.deal_id = %(deal_id)s",
+        "params": {
+          "deal_id": "deal-1"
+        }
+      },
+      "expected_ir": {
+        "op_type": "read",
+        "session_id": "canonical-session",
+        "table": "public.deals",
+        "shape": "point_lookup",
+        "projection": [
+          "deal_id",
+          "deal_name"
+        ],
+        "predicate": {
+          "comparison": {
+            "column": "deal_id",
+            "operator": "eq",
+            "values": [
+              {
+                "text": "deal-1"
+              }
+            ]
+          }
+        },
+        "aggregate": {
+          "kind": "none"
+        },
+        "group_by": []
+      }
+    }
+  ],
+  "refusal_cases": [
+    {
+      "case_id": "sqlalchemy_select_for_update_refusal",
+      "near_miss_shape": "select_for_update",
+      "surface": {
+        "transport": "extended_query",
+        "api": "Select.with_for_update",
+        "expression": "select(deals).with_for_update()",
+        "compiled_sql": "SELECT public.deals.deal_id, public.deals.deal_name FROM public.deals FOR UPDATE"
+      },
+      "expected_ir": {
+        "op_type": "refusal",
+        "scope": "read",
+        "code": "unsupported_shape",
+        "detail": {
+          "shape": "select_for_update",
+          "client": "sqlalchemy_core"
+        }
+      }
+    }
+  ]
+}

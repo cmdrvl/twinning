@@ -1,0 +1,205 @@
+{
+  "version": "twinning.ir-equivalence.fixture.v0",
+  "client": "psycopg2",
+  "supported_cases": [
+    {
+      "case_id": "psycopg2_begin_execute",
+      "equivalence_group": "tx_begin",
+      "covers_shape": "tx_begin",
+      "surface": {
+        "transport": "simple_query",
+        "api": "cursor.execute",
+        "sql": "BEGIN"
+      },
+      "expected_ir": {
+        "op_type": "session",
+        "session_id": "canonical-session",
+        "op": "begin",
+        "tracked_params": {}
+      }
+    },
+    {
+      "case_id": "psycopg2_commit_execute",
+      "equivalence_group": "tx_commit",
+      "covers_shape": "tx_commit",
+      "surface": {
+        "transport": "simple_query",
+        "api": "connection.commit",
+        "sql": "COMMIT"
+      },
+      "expected_ir": {
+        "op_type": "session",
+        "session_id": "canonical-session",
+        "op": "commit",
+        "tracked_params": {}
+      }
+    },
+    {
+      "case_id": "psycopg2_insert_values_execute",
+      "equivalence_group": "insert_values",
+      "covers_shape": "insert_values",
+      "surface": {
+        "transport": "extended_query",
+        "api": "cursor.execute",
+        "sql": "INSERT INTO public.deals (deal_id, deal_name) VALUES (%s, %s)",
+        "params": [
+          "deal-1",
+          "Alpha"
+        ]
+      },
+      "expected_ir": {
+        "op_type": "mutation",
+        "session_id": "canonical-session",
+        "table": "public.deals",
+        "kind": "insert",
+        "columns": [
+          "deal_id",
+          "deal_name"
+        ],
+        "rows": [
+          [
+            {
+              "text": "deal-1"
+            },
+            {
+              "text": "Alpha"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "case_id": "psycopg2_insert_returning_execute",
+      "equivalence_group": "insert_returning",
+      "covers_shape": "insert_returning",
+      "surface": {
+        "transport": "extended_query",
+        "api": "cursor.execute",
+        "sql": "INSERT INTO public.deals (deal_id, deal_name) VALUES (%s, %s) RETURNING deal_name",
+        "params": [
+          "deal-2",
+          "Beta"
+        ]
+      },
+      "expected_ir": {
+        "op_type": "mutation",
+        "session_id": "canonical-session",
+        "table": "public.deals",
+        "kind": "insert",
+        "columns": [
+          "deal_id",
+          "deal_name"
+        ],
+        "rows": [
+          [
+            {
+              "text": "deal-2"
+            },
+            {
+              "text": "Beta"
+            }
+          ]
+        ],
+        "returning": [
+          "deal_name"
+        ]
+      }
+    },
+    {
+      "case_id": "psycopg2_upsert_pk_execute",
+      "equivalence_group": "upsert_pk",
+      "covers_shape": "upsert_pk",
+      "surface": {
+        "transport": "extended_query",
+        "api": "cursor.execute",
+        "sql": "INSERT INTO public.deals (deal_id, deal_name) VALUES (%s, %s) ON CONFLICT (deal_id) DO UPDATE SET deal_name = EXCLUDED.deal_name RETURNING deal_name",
+        "params": [
+          "deal-1",
+          "Alpha Updated"
+        ]
+      },
+      "expected_ir": {
+        "op_type": "mutation",
+        "session_id": "canonical-session",
+        "table": "public.deals",
+        "kind": "upsert",
+        "columns": [
+          "deal_id",
+          "deal_name"
+        ],
+        "rows": [
+          [
+            {
+              "text": "deal-1"
+            },
+            {
+              "text": "Alpha Updated"
+            }
+          ]
+        ],
+        "conflict_target": "primary_key",
+        "returning": [
+          "deal_name"
+        ]
+      }
+    },
+    {
+      "case_id": "psycopg2_select_by_pk_execute",
+      "equivalence_group": "select_by_pk",
+      "covers_shape": "select_by_pk",
+      "surface": {
+        "transport": "extended_query",
+        "api": "cursor.execute",
+        "sql": "SELECT deal_id, deal_name FROM public.deals WHERE deal_id = %s",
+        "params": [
+          "deal-1"
+        ]
+      },
+      "expected_ir": {
+        "op_type": "read",
+        "session_id": "canonical-session",
+        "table": "public.deals",
+        "shape": "point_lookup",
+        "projection": [
+          "deal_id",
+          "deal_name"
+        ],
+        "predicate": {
+          "comparison": {
+            "column": "deal_id",
+            "operator": "eq",
+            "values": [
+              {
+                "text": "deal-1"
+              }
+            ]
+          }
+        },
+        "aggregate": {
+          "kind": "none"
+        },
+        "group_by": []
+      }
+    }
+  ],
+  "refusal_cases": [
+    {
+      "case_id": "psycopg2_savepoint_refusal",
+      "near_miss_shape": "savepoint",
+      "surface": {
+        "transport": "simple_query",
+        "api": "cursor.execute",
+        "sql": "SAVEPOINT before_retry"
+      },
+      "expected_ir": {
+        "op_type": "refusal",
+        "scope": "session",
+        "code": "unsupported_shape",
+        "detail": {
+          "shape": "savepoint",
+          "client": "psycopg2"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "version": "twinning.extractor-canary.fixture.v0",
+  "entrypoint": "tests/fixtures/canaries/extractor_canary/representative_extractor.py",
+  "input_corpus": "tests/fixtures/canaries/extractor_canary/input_rows.json",
+  "client": "factory_extractor",
+  "session_shapes": [
+    "startup_auth_v3",
+    "parameter_status_baseline",
+    "tx_begin",
+    "tx_commit",
+    "extended_query_parse_bind_execute_sync"
+  ],
+  "write_shapes": [
+    "insert_values",
+    "upsert_pk",
+    "upsert_unique"
+  ],
+  "read_shapes": [
+    "select_filtered_scan",
+    "select_is_null"
+  ],
+  "required_sqlstates": [
+    "23502",
+    "23503",
+    "23505",
+    "23514",
+    "22P02"
+  ],
+  "unsupported_policy": "refusal",
+  "subset_notes": [
+    "The runtime-backed canary runs the pinned representative extractor path unchanged.",
+    "The frozen corpus covers one insert seed path, one primary-key upsert, one unique-key upsert, and focused constraint/type failure cases.",
+    "Read coverage stays limited to one filtered scan and one IS NULL probe until later canaries prove more."
+  ]
+}

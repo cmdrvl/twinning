@@ -12,14 +12,16 @@ It answers one narrow question:
 
 Current status:
 
-- repository status: Phase 0 bootstrap-only implementation
+- repository status: Phase 0 bootstrap + live `run_once` shell for the proven Postgres subset
 - source of truth: [docs/PLAN_TWINNING.md](./docs/PLAN_TWINNING.md)
 - current repo contents: plan + execution graph + Rust bootstrap crate + report/snapshot schemas
 - first deferred direction after the v0 center: twin-pair migration proof
 
-The live wire/runtime path is not implemented yet. The current repo is
-intentionally honest: it defines the artifact contract and refusal behavior now
-instead of pretending to be a working database.
+The repo is still intentionally narrow and honest. Bootstrap mode remains the
+default artifact-validation lane, and live mode currently runs as a single
+`run_once` shell: twinning binds pgwire on `--host`/`--port`, runs one child
+command, then shuts down and freezes committed-state artifacts for the proven
+subset. It is not yet a long-lived general-purpose database server.
 
 ---
 
@@ -38,11 +40,16 @@ cargo run -- postgres --schema schema.sql --verify schema.verify.json \
 # Restore a prior snapshot and re-emit bootstrap status
 cargo run -- postgres --restore out/bootstrap.twin --json
 
+# Run one child command against the live run_once shell
+# The child must connect to the configured --host/--port.
+cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
+
 # Print the operator manifest
 cargo run -- --describe
 ```
 
-The examples above describe the implemented Phase 0 bootstrap contract only.
+The first three examples cover bootstrap mode. The `--run` example uses the
+current live `run_once` shell and final artifact path.
 
 ### Example Output
 
@@ -113,17 +120,40 @@ next: Live pgwire execution is not implemented yet. Use this build to validate s
 }
 ```
 
-**Refusal mode** (unimplemented path):
+Bootstrap reports still show the current bootstrap-only `next_step` string above.
+When `--run` is present, the report switches to `mode: "run_once"` and points
+operators at the final `run` metadata instead.
+
+**Run-once mode** (`--run <COMMAND>`):
+
+```json
+{
+  "version": "twinning.v0",
+  "outcome": "FAIL",
+  "mode": "run_once",
+  "engine": "postgres",
+  "host": "127.0.0.1",
+  "port": 5432,
+  "run": {
+    "command": "exit 7",
+    "exit_code": 7,
+    "timed_out": false
+  },
+  "next_step": "Inspect the run metadata, fix the child failure or drift, and rerun the candidate against the twin."
+}
+```
+
+**Refusal mode** (bootstrap/configuration failure):
 
 ```json
 {
   "version": "twinning.v0",
   "outcome": "REFUSAL",
   "refusal": {
-    "code": "E_RUN_MODE_UNIMPLEMENTED",
-    "message": "Live command execution depends on the wire-protocol server, which is not implemented in this build.",
-    "detail": { "engine": "postgres", "host": "127.0.0.1", "port": 5432 },
-    "next_command": "twinning postgres --schema schema.sql --report bootstrap.json --json"
+    "code": "E_AMBIGUOUS_BOOTSTRAP_SOURCE",
+    "message": "Use exactly one bootstrap source: --schema or --restore, not both.",
+    "detail": { "engine": "postgres" },
+    "next_command": "twinning postgres --schema schema.sql --json"
   }
 }
 ```
@@ -165,20 +195,25 @@ Implemented now:
 - verify-artifact loading and hashing
 - bootstrap report generation
 - bootstrap snapshot hashing and restore verification
+- pgwire listener + startup/session shell for the declared live subset
+- normalized read/mutation IR plus row-store execution for the canary-defined SQL shapes
+- constraint enforcement and single-writer overlay behavior for committed-state snapshots
+- live `--run` child orchestration, run metadata capture, and final artifact emission
+- embedded verify execution over committed twin state
 - storage-boundary reporting for tournament mode vs replay/proof mode
-- refusal envelopes for unimplemented live paths
+- refusal envelopes for process-level failures and protocol-visible live subset boundaries
 
 Not implemented yet:
 
-- pgwire listener
-- SQL execution engine
-- row materialization and constraint enforcement
-- bounded-memory overlay backend
-- live `--run` orchestration
-- embedded verify execution over materialized twin state
+- long-lived standalone server mode beyond `run_once`
+- SQL/session shapes outside the checked-in canary manifest
+- concurrent writers or multi-writer semantics
+- non-Postgres runtime engines
+- replay/proof backends beyond the current tournament-mode live shell
 
-This means the repo can currently validate bootstrap assets, but it cannot yet
-run an agent's script against a live twin.
+This means the repo can validate bootstrap assets and run one child command
+against a live twin shell for the proven subset, but it still refuses broader
+live traffic instead of pretending to be a complete database.
 
 ---
 
@@ -196,7 +231,7 @@ Current options:
 - `--verify <FILE>`: compiled `verify.constraint.v1` artifact
 - `--host <HOST>`: bind host (default `127.0.0.1`)
 - `--port <PORT>`: bind port (default `5432`)
-- `--run <COMMAND>`: planned one-shot live mode; currently refused
+- `--run <COMMAND>`: run one child command against the live pgwire shell, then freeze final artifacts
 - `--report <FILE>`: write `twinning.v0`
 - `--snapshot <FILE>`: write `twinning.snapshot.v0`
 - `--restore <FILE>`: restore a prior `twinning.snapshot.v0`
@@ -207,11 +242,11 @@ Exit codes:
 
 | Exit | Meaning |
 |------|---------|
-| `0` | clean bootstrap |
-| `1` | reserved for future live verify-violation exits |
+| `0` | clean bootstrap, or `run_once` completion without embedded verify failure |
+| `1` | `run_once` completed but embedded verify reported `FAIL` |
 | `2` | refusal / bootstrap failure / CLI error |
 
-Live-shape discipline when runtime lands:
+Live-shape discipline:
 
 - bootstrap/configuration failures stay process-level refusals
 - unsupported live protocol or SQL shapes become client-visible errors
@@ -297,7 +332,7 @@ Snapshot contract highlights:
 
 - hashes include committed-state identity and canonical relation ordering
 - hashes exclude timestamps, live sessions, warnings, and debug strings
-- bootstrap snapshots today are catalog-only; live committed relation contents come later
+- bootstrap snapshots remain catalog-only; `run_once` snapshots freeze committed relation contents for the executed subset
 
 ---
 
@@ -310,7 +345,6 @@ Refusals are structured errors with exit code `2`. Each includes a code, message
 | `E_BOOTSTRAP_SOURCE_REQUIRED` | Neither `--schema` nor `--restore` provided | Add `--schema schema.sql` |
 | `E_AMBIGUOUS_BOOTSTRAP_SOURCE` | Both `--schema` and `--restore` provided | Use exactly one |
 | `E_ENGINE_UNIMPLEMENTED` | Non-Postgres engine requested | Use `twinning postgres ...` |
-| `E_RUN_MODE_UNIMPLEMENTED` | `--run` requested (pgwire not built yet) | Use bootstrap mode without `--run` |
 | `E_IO_READ` | Input file not readable | Check path and permissions |
 | `E_IO_WRITE` | Output file not writable | Check path and permissions |
 | `E_SCHEMA_PARSE` | DDL parsing failed | Fix SQL syntax in schema file |
@@ -349,7 +383,7 @@ cargo build --release
 # Binary at target/release/twinning
 ```
 
-No Homebrew tap or pre-built binaries yet. These will be added with the v0.1.0 release once the pgwire runtime is functional.
+No Homebrew tap or pre-built binaries yet. These will be added with the v0.1.0 release once the current run-once runtime contract settles.
 
 ---
 
@@ -363,7 +397,7 @@ result=$(cargo run -- postgres --schema schema.sql --json 2>/dev/null)
 outcome=$(echo "$result" | jq -r '.outcome')
 
 case $outcome in
-  READY)    echo "Twin ready for live runtime (when implemented)" ;;
+  READY)    echo "Twin ready for bootstrap or live run_once mode" ;;
   REFUSAL)  echo "Refused: $(echo "$result" | jq -r '.refusal.code')" ;;
 esac
 
@@ -380,9 +414,11 @@ esac
 
 ## Troubleshooting
 
-**`E_RUN_MODE_UNIMPLEMENTED` when using `--run`**
+**`FAIL` outcome in `run_once` mode**
 
-The pgwire server is not implemented yet. Use bootstrap mode to validate schema assets and emit artifacts. Live twin execution is the next major milestone.
+The child command completed with a non-success exit, timeout, signal, or an
+embedded verify failure. Inspect the `run` metadata and any attached `verify`
+payload in `twinning.v0`, fix the candidate or supported-shape drift, and rerun.
 
 **`E_SCHEMA_PARSE` on valid-looking SQL**
 
@@ -401,7 +437,7 @@ Only the Postgres engine is implemented. MySQL and Oracle are declared in the CL
 ## Limitations (v0)
 
 - **Postgres only.** MySQL, Oracle, VSAM, IMS are deferred.
-- **Bootstrap only.** No live pgwire server, no SQL execution, no row materialization.
+- **Run-once shell only.** Live mode binds pgwire for one child command and then exits; there is no standalone long-lived server mode yet.
 - **Canary-defined subset.** Only SQL shapes named in the [canary manifest](./canaries/manifest.v0.json) will be supported.
 - **No concurrent writers.** The intended live model is single-writer admission with explicit contention refusal.
 - **Tournament mode only.** Replay/proof backends are deferred to the first post-v0 artifact.
