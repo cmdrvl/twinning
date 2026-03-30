@@ -66,6 +66,27 @@ Deferred beyond v0:
 
 ---
 
+## Nomenclature
+
+This plan uses three different version axes. They need to stay explicit:
+
+- `twinning.v0` and `twinning.snapshot.v0` are artifact schema versions.
+- **Phase 0** is the current bootstrap-only implementation state in this repo.
+- **v1 working** is the first end-to-end live Postgres tournament milestone
+  defined later in this document.
+
+Rules:
+
+- artifact version bumps track report/snapshot semantic changes, not delivery
+  phases
+- phase transitions track implementation maturity, not artifact IDs
+- the first live tournament milestone may still emit `twinning.v0` and
+  `twinning.snapshot.v0` if their artifact semantics do not change
+- "v0 scope" refers to the first narrow product wedge, not only to the current
+  Phase-0 bootstrap build
+
+---
+
 ## Non-goals
 
 `twinning` is NOT:
@@ -196,10 +217,12 @@ Rules:
   semantics and never a process-wide refusal after startup.
 - Process-level `REFUSAL` is reserved for bootstrap/configuration boundaries.
 
-Recommended SQLSTATE for unsupported live features:
+Default SQLSTATE for unsupported live features in v0:
 
-- `0A000` (`feature_not_supported`) unless the canary contract explicitly
-  requires a narrower Postgres code.
+- `0A000` (`feature_not_supported`)
+
+Any different SQLSTATE must be named in the canary manifest and proven by the
+corresponding canary.
 
 ---
 
@@ -256,6 +279,10 @@ Twin-pair migration proof and the broader non-SQL interface-emulator roadmap
 are intentionally out of the v0 implementation center. They now live in
 [PLAN_TWINNING_FUTURES.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING_FUTURES.md).
 
+Among those deferred directions, the first post-v0 artifact mode should be
+twin-pair migration proof over the same Postgres kernel and snapshot contract.
+Non-SQL adapters remain later work after that bridge is real.
+
 The stable v0 primitive remains:
 
 - one Postgres tournament twin
@@ -302,11 +329,15 @@ wish-casting.
 
 The manifest itself must be a checked-in artifact, not an implicit test folder.
 
-Recommended location:
+Required checked-in location before phase-1 runtime work begins:
 
 - `canaries/manifest.v0.json`
 
-Recommended schema:
+Authoritative machine schema:
+
+- [schemas/twinning.canary-manifest.v0.schema.json](/Users/zac/Source/cmdrvl/twinning/schemas/twinning.canary-manifest.v0.schema.json)
+
+Required fields:
 
 | Field | Meaning |
 |------|---------|
@@ -327,6 +358,16 @@ Claim rule:
   support it.
 - The manifest, fixtures, and harness names must line up one-to-one.
 - A compatibility claim is valid only if the corresponding canary passes.
+
+Normative companion artifacts:
+
+- every canary listed in the manifest must have one runnable compatibility
+  harness in the repo
+- v0 must also ship one checked-in differential write corpus and one checked-in
+  differential read corpus against real Postgres for the claimed subset
+- any client-visible catalog or reflection behavior is in scope only if a
+  canary or differential case proves it; there is no separate blanket claim for
+  `pg_catalog` compatibility
 
 Controlled vocabulary for v0:
 
@@ -391,7 +432,7 @@ Admission behavior:
 - If a second session attempts to enter a write transaction while another write
   transaction is active, the twin returns a protocol-visible error and leaves
   both sessions alive.
-- Recommended SQLSTATE for this v0 writer-admission failure: `55P03`
+- SQLSTATE for this v0 writer-admission failure is `55P03`
   (`lock_not_available`).
 
 ---
@@ -448,11 +489,11 @@ The stable boundary is:
 - `benchmark` owns correctness against gold data
 - `assess` owns policy decisions
 
-So the `twinning` report should surface raw twin-native metrics and attach a
-`verify.report.v1` artifact or embedded equivalent. It should not collapse those
-signals into a new pseudo-score.
+So the `twinning` report must surface raw twin-native metrics and attach a
+`verify.report.v1` payload. It must not collapse those signals into a new
+pseudo-score.
 
-For v0, `twinning` should execute `verify` through the embedded library surface,
+For v0, `twinning` must execute `verify` through the embedded library surface,
 not by exporting state and shelling out to batch `verify`. If a provided
 constraint artifact contains batch-only rules, live `twinning` must refuse them
 explicitly instead of silently degrading into a second execution path.
@@ -979,6 +1020,9 @@ must not re-interpret backend state directly.
 Replay/proof mode and non-SQL expansion continue in
 [PLAN_TWINNING_FUTURES.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING_FUTURES.md)
 once the v0 center above is real.
+
+The first deferred consumer of that replay/proof lane should be twin-pair
+migration proof, not a second protocol family.
 
 ### Concrete acceptance budgets
 

@@ -1,0 +1,14 @@
+id: snapshot-hash-stable
+language: rust
+message: |
+  R-020: Snapshot hash surface must not include timestamps or session state.
+  Utc::now() in snapshot construction code risks breaking determinism.
+  Ensure the hash is computed over a clone with created_at cleared.
+severity: warning
+note: "Golden Rule R-020 (Snapshot determinism)"
+rule:
+  all:
+    - pattern: Utc::now()
+    - inside:
+        pattern: $$$
+        stopBy: end

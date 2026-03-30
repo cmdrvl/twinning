@@ -1,0 +1,92 @@
+{
+  "version": "twinning.canary-manifest.v0",
+  "engine": "postgres",
+  "canaries": [
+    {
+      "id": "psql_smoke",
+      "client": "psql",
+      "session_shapes": [
+        "startup_auth_v3",
+        "parameter_status_baseline",
+        "set_application_name",
+        "tx_begin",
+        "tx_rollback",
+        "simple_query"
+      ],
+      "write_shapes": [],
+      "read_shapes": [],
+      "required_sqlstates": [],
+      "unsupported_policy": "refusal"
+    },
+    {
+      "id": "psycopg2_params",
+      "client": "psycopg2",
+      "session_shapes": [
+        "startup_auth_v3",
+        "parameter_status_baseline",
+        "tx_begin",
+        "tx_commit",
+        "extended_query_parse_bind_execute_sync"
+      ],
+      "write_shapes": [
+        "insert_values",
+        "insert_returning",
+        "upsert_pk"
+      ],
+      "read_shapes": [
+        "select_by_pk"
+      ],
+      "required_sqlstates": [
+        "23505"
+      ],
+      "unsupported_policy": "refusal"
+    },
+    {
+      "id": "sqlalchemy_core",
+      "client": "sqlalchemy_core",
+      "session_shapes": [
+        "startup_auth_v3",
+        "parameter_status_baseline",
+        "tx_begin",
+        "tx_commit",
+        "extended_query_parse_bind_execute_sync"
+      ],
+      "write_shapes": [
+        "insert_values"
+      ],
+      "read_shapes": [
+        "select_by_pk"
+      ],
+      "required_sqlstates": [],
+      "unsupported_policy": "refusal"
+    },
+    {
+      "id": "extractor_canary",
+      "client": "factory_extractor",
+      "session_shapes": [
+        "startup_auth_v3",
+        "parameter_status_baseline",
+        "tx_begin",
+        "tx_commit",
+        "extended_query_parse_bind_execute_sync"
+      ],
+      "write_shapes": [
+        "insert_values",
+        "upsert_pk",
+        "upsert_unique"
+      ],
+      "read_shapes": [
+        "select_filtered_scan",
+        "select_is_null"
+      ],
+      "required_sqlstates": [
+        "23502",
+        "23503",
+        "23505",
+        "23514",
+        "22P02"
+      ],
+      "unsupported_policy": "refusal"
+    }
+  ]
+}

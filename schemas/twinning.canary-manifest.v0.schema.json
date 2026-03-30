@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.canary-manifest.v0.schema.json",
+  "title": "twinning.canary-manifest.v0",
+  "description": "Normative canary manifest for twinning v0 compatibility claims.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "engine",
+    "canaries"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "twinning.canary-manifest.v0"
+    },
+    "engine": {
+      "type": "string",
+      "const": "postgres"
+    },
+    "canaries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/canary"
+      }
+    }
+  },
+  "$defs": {
+    "sqlstate": {
+      "type": "string",
+      "pattern": "^[0-9A-Z]{5}$"
+    },
+    "client": {
+      "type": "string",
+      "enum": [
+        "psql",
+        "psycopg2",
+        "sqlalchemy_core",
+        "factory_extractor"
+      ]
+    },
+    "session_shape": {
+      "type": "string",
+      "enum": [
+        "startup_auth_v3",
+        "parameter_status_baseline",
+        "set_application_name",
+        "tx_begin",
+        "tx_commit",
+        "tx_rollback",
+        "simple_query",
+        "extended_query_parse_bind_execute_sync"
+      ]
+    },
+    "write_shape": {
+      "type": "string",
+      "enum": [
+        "insert_values",
+        "insert_returning",
+        "upsert_pk",
+        "upsert_unique",
+        "update_by_predicate",
+        "delete_by_predicate"
+      ]
+    },
+    "read_shape": {
+      "type": "string",
+      "enum": [
+        "select_by_pk",
+        "select_filtered_scan",
+        "select_is_null",
+        "select_in_list",
+        "select_between",
+        "aggregate_count",
+        "aggregate_basic_group_by"
+      ]
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "client",
+        "session_shapes",
+        "write_shapes",
+        "read_shapes",
+        "required_sqlstates",
+        "unsupported_policy"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "minLength": 1
+        },
+        "client": {
+          "$ref": "#/$defs/client"
+        },
+        "session_shapes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/session_shape"
+          }
+        },
+        "write_shapes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/write_shape"
+          }
+        },
+        "read_shapes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/read_shape"
+          }
+        },
+        "required_sqlstates": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/sqlstate"
+          }
+        },
+        "unsupported_policy": {
+          "type": "string",
+          "enum": [
+            "refusal",
+            "skip"
+          ]
+        }
+      }
+    }
+  }
+}
