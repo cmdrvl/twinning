@@ -64,6 +64,30 @@ jobs:
           repository: cmdrvl/verify
           path: verify
 
+      - name: Mirror verify workspace into release tree
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import shutil
+          from pathlib import Path
+
+          src = Path("../verify")
+          dst = Path(".release-vendor/verify")
+          if dst.exists():
+              shutil.rmtree(dst)
+          shutil.copytree(
+              src,
+              dst,
+              ignore=shutil.ignore_patterns(".git", "target"),
+          )
+
+          cargo = Path("Cargo.toml")
+          text = cargo.read_text()
+          text = text.replace("../verify/crates/verify-core", ".release-vendor/verify/crates/verify-core")
+          text = text.replace("../verify/crates/verify-engine", ".release-vendor/verify/crates/verify-engine")
+          cargo.write_text(text)
+          PY
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -172,6 +196,30 @@ jobs:
         with:
           repository: cmdrvl/verify
           path: verify
+
+      - name: Mirror verify workspace into release tree
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import shutil
+          from pathlib import Path
+
+          src = Path("../verify")
+          dst = Path(".release-vendor/verify")
+          if dst.exists():
+              shutil.rmtree(dst)
+          shutil.copytree(
+              src,
+              dst,
+              ignore=shutil.ignore_patterns(".git", "target"),
+          )
+
+          cargo = Path("Cargo.toml")
+          text = cargo.read_text()
+          text = text.replace("../verify/crates/verify-core", ".release-vendor/verify/crates/verify-core")
+          text = text.replace("../verify/crates/verify-engine", ".release-vendor/verify/crates/verify-engine")
+          cargo.write_text(text)
+          PY
 
       - name: Fetch tags
         run: git fetch --tags
