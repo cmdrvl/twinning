@@ -153,6 +153,7 @@ fn force_kill_process_tree(child: &mut Child) -> io::Result<()> {
 fn signal_process_group(pid: u32, signal: &str) -> io::Result<()> {
     let status = Command::new("kill")
         .arg(format!("-{signal}"))
+        .arg("--")
         .arg(format!("-{pid}"))
         .status()?;
 
