@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cli::{Cli, Engine},
+    cli::{Cli, Engine, TwinArgs},
     refusal,
     refusal::RefusalResult,
 };
@@ -24,39 +24,52 @@ pub struct TwinConfig {
 
 impl TwinConfig {
     pub fn from_cli(cli: &Cli) -> RefusalResult<Self> {
-        if cli.schema.is_none() && cli.restore.is_none() {
-            return Err(Box::new(refusal::missing_bootstrap_source(cli.engine)));
+        let Some(command) = &cli.command else {
+            return Err(Box::new(refusal::missing_command()));
+        };
+        let engine = command
+            .engine()
+            .ok_or_else(|| Box::new(refusal::missing_command()))?;
+        let args = command
+            .twin_args()
+            .ok_or_else(|| Box::new(refusal::missing_command()))?;
+
+        Self::from_engine_args(engine, args, cli.json)
+    }
+
+    pub fn from_engine_args(engine: Engine, args: &TwinArgs, json: bool) -> RefusalResult<Self> {
+        if args.schema.is_none() && args.restore.is_none() {
+            return Err(Box::new(refusal::missing_bootstrap_source(engine)));
         }
 
-        if cli.schema.is_some() && cli.restore.is_some() {
+        if args.schema.is_some() && args.restore.is_some() {
             return Err(Box::new(refusal::ambiguous_bootstrap_source()));
         }
 
         Ok(Self {
-            engine: cli.engine,
-            host: cli.host.clone(),
-            port: cli.port.unwrap_or_else(|| cli.engine.default_port()),
-            schema_path: cli.schema.clone(),
-            verify_path: cli.verify.clone(),
-            run_command: cli.run.clone(),
-            report_path: cli.report.clone(),
-            snapshot_path: cli.snapshot.clone(),
-            restore_path: cli.restore.clone(),
-            json: cli.json,
+            engine,
+            host: args.host.clone(),
+            port: args.port.unwrap_or_else(|| engine.default_port()),
+            schema_path: args.schema.clone(),
+            verify_path: args.verify.clone(),
+            run_command: args.run.clone(),
+            report_path: args.report.clone(),
+            snapshot_path: args.snapshot.clone(),
+            restore_path: args.restore.clone(),
+            json,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::{Cli, Engine};
+    use crate::cli::{Engine, TwinArgs};
 
     use super::TwinConfig;
 
     #[test]
     fn config_uses_engine_default_port() {
-        let cli = Cli {
-            engine: Engine::Mysql,
+        let args = TwinArgs {
             schema: Some("schema.sql".into()),
             verify: None,
             host: "127.0.0.1".to_owned(),
@@ -65,11 +78,10 @@ mod tests {
             report: None,
             snapshot: None,
             restore: None,
-            json: false,
-            describe: false,
         };
 
-        let config = TwinConfig::from_cli(&cli).expect("config should build");
+        let config =
+            TwinConfig::from_engine_args(Engine::Mysql, &args, false).expect("config should build");
         assert_eq!(config.port, 3306);
     }
 }

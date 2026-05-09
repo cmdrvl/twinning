@@ -46,6 +46,11 @@ cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
 
 # Print the operator manifest
 cargo run -- --describe
+
+# Inspect the read-only doctor surface
+cargo run -- doctor health --json
+cargo run -- doctor capabilities --json
+cargo run -- doctor --robot-triage
 ```
 
 The first three examples cover bootstrap mode. The `--run` example uses the
@@ -237,6 +242,19 @@ Current options:
 - `--restore <FILE>`: restore a prior `twinning.snapshot.v0`
 - `--json`: emit machine-readable status
 - `--describe`: print `operator.json`
+
+Read-only doctor surface:
+
+- `doctor health --json`: emit `twinning.v0` health diagnostics without reading
+  schema, snapshot, or verify files
+- `doctor capabilities --json`: list machine-readable commands, output
+  contracts, and safety boundaries
+- `doctor robot-docs`: print concise agent-facing command notes
+- `doctor --robot-triage`: emit structured follow-up findings
+
+`doctor --fix` is intentionally not available. Any future fix mode needs
+detector fixtures, verbatim backups, explicit inverses, and undo tests before it
+is exposed.
 
 Exit codes:
 

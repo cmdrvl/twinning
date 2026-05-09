@@ -116,6 +116,8 @@ Short version: **memory-resident behavior, not memory-resident universe**.
 
 ```
 twinning postgres [OPTIONS]
+twinning doctor <health|capabilities|robot-docs>
+twinning doctor --robot-triage
 
 Options:
   --schema <FILE>        SQL DDL file defining tables, constraints, indexes
@@ -128,6 +130,20 @@ Options:
   --restore <FILE>       Restore twin state from a snapshot before accepting connections
   --json                 JSON output for status messages
 ```
+
+Read-only doctor commands:
+
+- `twinning doctor health --json` emits doctor availability, side-effect
+  guarantees, and next diagnostic steps as `twinning.v0`.
+- `twinning doctor capabilities --json` reflects agent-facing command,
+  artifact, and safety capabilities.
+- `twinning doctor robot-docs` prints concise command notes for headless agents.
+- `twinning doctor --robot-triage` emits structured follow-up findings.
+
+Doctor mode does not read schema, snapshot, or verify files; it does not bind
+pgwire, run child commands, write reports/snapshots, create `.doctor/`, or alter
+the working directory. No `doctor --fix` surface exists until detector fixtures,
+verbatim backups, inverses, and undo tests are implemented.
 
 ### Exit codes
 

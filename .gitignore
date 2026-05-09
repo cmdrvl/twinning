@@ -29,3 +29,6 @@ target
 
 # Local UBS gate output
 .ubs-gate-summary.json
+
+# Doctor-mode run artifacts stay local until a future fix mode exists.
+.doctor/

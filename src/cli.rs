@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
@@ -39,12 +39,52 @@ impl std::fmt::Display for Engine {
 #[command(
     name = "twinning",
     version,
-    about = "Prepare a Postgres-first interface twin from schema assets"
+    about = "Prepare a Postgres-first interface twin from schema assets",
+    arg_required_else_help = true
 )]
 pub struct Cli {
-    #[arg(value_enum)]
-    pub engine: Engine,
+    #[arg(long, global = true)]
+    pub json: bool,
 
+    #[arg(long, global = true)]
+    pub describe: bool,
+
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum Command {
+    #[command(about = "Prepare a Postgres interface twin")]
+    Postgres(TwinArgs),
+    #[command(about = "Declared but refused until the Postgres v0 center is real")]
+    Mysql(TwinArgs),
+    #[command(about = "Declared but refused until the Postgres v0 center is real")]
+    Oracle(TwinArgs),
+    #[command(about = "Inspect the CLI's read-only health and agent-facing capabilities")]
+    Doctor(DoctorArgs),
+}
+
+impl Command {
+    pub fn engine(&self) -> Option<Engine> {
+        match self {
+            Self::Postgres(_) => Some(Engine::Postgres),
+            Self::Mysql(_) => Some(Engine::Mysql),
+            Self::Oracle(_) => Some(Engine::Oracle),
+            Self::Doctor(_) => None,
+        }
+    }
+
+    pub fn twin_args(&self) -> Option<&TwinArgs> {
+        match self {
+            Self::Postgres(args) | Self::Mysql(args) | Self::Oracle(args) => Some(args),
+            Self::Doctor(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct TwinArgs {
     #[arg(long, value_name = "FILE")]
     pub schema: Option<PathBuf>,
 
@@ -68,10 +108,23 @@ pub struct Cli {
 
     #[arg(long, value_name = "FILE")]
     pub restore: Option<PathBuf>,
+}
 
+#[derive(Debug, Args, Clone)]
+pub struct DoctorArgs {
     #[arg(long)]
-    pub json: bool,
+    pub robot_triage: bool,
 
-    #[arg(long)]
-    pub describe: bool,
+    #[command(subcommand)]
+    pub command: Option<DoctorCommand>,
+}
+
+#[derive(Debug, Subcommand, Clone, Copy, PartialEq, Eq)]
+pub enum DoctorCommand {
+    #[command(about = "Emit read-only health checks")]
+    Health,
+    #[command(about = "Emit machine-readable capability metadata")]
+    Capabilities,
+    #[command(name = "robot-docs", about = "Print concise agent-facing usage notes")]
+    RobotDocs,
 }

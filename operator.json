@@ -1,7 +1,7 @@
 {
   "schema_version": "operator.v0",
   "name": "twinning",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Interface twin bootstrap: parse DDL, prepare deterministic twin artifacts, and stage bounded-memory tournament twins plus heavier replay backends",
   "repository": "https://github.com/cmdrvl/twinning",
   "license": "MIT",
@@ -9,7 +9,11 @@
   "invocation": {
     "binary": "twinning",
     "usage": [
-      "twinning postgres [OPTIONS]"
+      "twinning postgres [OPTIONS]",
+      "twinning doctor health --json",
+      "twinning doctor capabilities --json",
+      "twinning doctor robot-docs",
+      "twinning doctor --robot-triage"
     ],
     "output_mode": "status",
     "output_schema": "twinning.v0",
@@ -86,6 +90,35 @@
       "description": "Print the compiled operator manifest and exit 0"
     }
   ],
+  "doctor": {
+    "read_only": true,
+    "commands": [
+      {
+        "name": "health",
+        "usage": "twinning doctor health --json",
+        "description": "Emit read-only doctor health checks in the twinning.v0 envelope"
+      },
+      {
+        "name": "capabilities",
+        "usage": "twinning doctor capabilities --json",
+        "description": "Emit machine-readable command and safety capabilities"
+      },
+      {
+        "name": "robot-docs",
+        "usage": "twinning doctor robot-docs",
+        "description": "Print concise agent-facing command notes"
+      },
+      {
+        "name": "robot-triage",
+        "usage": "twinning doctor --robot-triage",
+        "description": "Emit structured follow-up findings without reading or writing artifacts"
+      }
+    ],
+    "fix_mode": {
+      "available": false,
+      "reason": "No doctor --fix mode is exposed until detector, backup, inverse, fixture, and undo coverage exists."
+    }
+  },
   "exit_codes": {
     "0": {
       "meaning": "READY",
@@ -111,7 +144,8 @@
       "compiled verify artifact hashing",
       "bootstrap report generation",
       "snapshot write/restore with hash verification",
-      "storage-boundary reporting for tournament vs replay modes"
+      "storage-boundary reporting for tournament vs replay modes",
+      "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
     "deferred_surface": [
       "pgwire server",

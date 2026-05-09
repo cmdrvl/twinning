@@ -6,6 +6,7 @@ pub mod backend;
 pub mod catalog;
 pub mod cli;
 pub mod config;
+pub mod doctor;
 pub mod ir;
 pub mod kernel;
 pub mod protocol;
@@ -34,6 +35,12 @@ pub fn run() -> Result<u8, Box<dyn std::error::Error>> {
     if cli.describe {
         print!("{OPERATOR_JSON}");
         return Ok(0);
+    }
+
+    if let Some(cli::Command::Doctor(args)) = &cli.command {
+        let execution = doctor::execute(args, cli.json)?;
+        print!("{}", execution.stdout);
+        return Ok(execution.exit_code);
     }
 
     let config = match config::TwinConfig::from_cli(&cli) {

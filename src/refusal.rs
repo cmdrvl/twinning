@@ -75,6 +75,15 @@ pub fn missing_bootstrap_source(engine: Engine) -> RefusalEnvelope {
     )
 }
 
+pub fn missing_command() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_COMMAND_REQUIRED",
+        "Choose `postgres`, `mysql`, `oracle`, or `doctor`.",
+        json!({}),
+        Some("twinning doctor health --json".to_owned()),
+    )
+}
+
 pub fn ambiguous_bootstrap_source() -> RefusalEnvelope {
     RefusalEnvelope::new(
         "E_AMBIGUOUS_BOOTSTRAP_SOURCE",
