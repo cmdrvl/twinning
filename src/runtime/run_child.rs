@@ -184,7 +184,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn signal_exit_is_reported_without_timeout() {
-        let child = RunChild::launch("sleep 30").expect("launch child");
+        let child = RunChild::launch("exec sleep 30").expect("launch child");
         let pid = child.pid();
 
         let status = std::process::Command::new("kill")
@@ -198,7 +198,7 @@ mod tests {
             .wait_with_timeout(Duration::from_secs(1))
             .expect("wait for signal exit");
 
-        assert_eq!(outcome.command, "sleep 30");
+        assert_eq!(outcome.command, "exec sleep 30");
         assert_eq!(outcome.exit_code, None);
         assert_eq!(outcome.signal, Some(15));
         assert!(!outcome.timed_out);
@@ -207,10 +207,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn timeout_marks_outcome_and_forces_termination_when_needed() {
-        let outcome = orchestrate("trap '' TERM; sleep 30", Duration::from_millis(50))
+        let outcome = orchestrate("trap '' TERM; exec sleep 30", Duration::from_millis(50))
             .expect("orchestrate timeout");
 
-        assert_eq!(outcome.command, "trap '' TERM; sleep 30");
+        assert_eq!(outcome.command, "trap '' TERM; exec sleep 30");
         assert_eq!(outcome.exit_code, None);
         assert_eq!(outcome.signal, Some(9));
         assert!(outcome.timed_out);

@@ -90,16 +90,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install UBS (pinned)
         run: |
-          UBS_URL="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/af5a03b13c305ef2d9b484fa49421f2a18877355/ubs"
-          UBS_SHA256="3d0f2e8d59362a96253bee83d8e0bfc79ac8a71729442cfca0338bc53782810f"
+          UBS_URL="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/4320d660b376758d764467e1d29b18dec03db31e/ubs"
+          UBS_SHA256="88c126334769c0422ee71781c8ebf340af99aa3d307ab3c03a207118aff5547e"
           curl -fsSL "$UBS_URL" -o /tmp/ubs
           echo "$UBS_SHA256  /tmp/ubs" | sha256sum -c -
           install -m 0755 /tmp/ubs /usr/local/bin/ubs
           ubs --version
       - name: Run UBS critical-only gate (Rust scoped)
-        run: ./scripts/ubs_gate.sh
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+            ./scripts/ubs_gate.sh src
+            exit 0
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only --diff-filter=ACMRT "$base" "$GITHUB_SHA")
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No changed files for UBS."
+            exit 0
+          fi
+
+          ./scripts/ubs_gate.sh "${changed_files[@]}"
       - name: Upload UBS summary artifact
         if: always()
         uses: actions/upload-artifact@v4
