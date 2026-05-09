@@ -170,7 +170,7 @@ fn signal_process_group(pid: u32, signal: &str) -> io::Result<()> {
 mod tests {
     use std::time::Duration;
 
-    use super::{RunChild, orchestrate};
+    use super::{RunChild, orchestrate, signal_process_group};
 
     #[test]
     fn normal_exit_is_reported_without_timeout() {
@@ -188,12 +188,7 @@ mod tests {
         let child = RunChild::launch("exec sleep 30").expect("launch child");
         let pid = child.pid();
 
-        let status = std::process::Command::new("kill")
-            .arg("-TERM")
-            .arg(format!("-{pid}"))
-            .status()
-            .expect("send term");
-        assert!(status.success(), "term failed with {status}");
+        signal_process_group(pid, "TERM").expect("send term");
 
         let outcome = child
             .wait_with_timeout(Duration::from_secs(1))
