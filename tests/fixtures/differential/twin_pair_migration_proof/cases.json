@@ -15,6 +15,35 @@
       "contract": "catalog declaration identity is preserved in reports and snapshots"
     }
   ],
+  "coverage_matrix": [
+    {
+      "shape": "point_lookup",
+      "policy": "pass",
+      "cases": [
+        "byte_identical_snapshot_pass",
+        "intentional_deal_name_divergence"
+      ]
+    },
+    {
+      "shape": "filtered_scan",
+      "policy": "pass",
+      "cases": [
+        "filtered_scan_parity"
+      ]
+    },
+    {
+      "shape": "aggregate_count",
+      "policy": "pass",
+      "cases": [
+        "aggregate_count_parity"
+      ]
+    },
+    {
+      "shape": "join_or_introspection",
+      "policy": "skip",
+      "reason": "not in the current migration-proof query fixture subset"
+    }
+  ],
   "queries": [
     {
       "id": "deal_lookup",
@@ -41,6 +70,33 @@
       "lookup_value": {
         "text": "audit-001"
       }
+    },
+    {
+      "id": "tenant_b_filtered_scan",
+      "table": "public.deals",
+      "shape": "filtered_scan",
+      "projection": [
+        "deal_id",
+        "deal_name",
+        "amount"
+      ],
+      "lookup_column": "tenant_id",
+      "lookup_value": {
+        "text": "tenant-b"
+      },
+      "limit": 5
+    },
+    {
+      "id": "tenant_b_deal_count",
+      "table": "public.deals",
+      "shape": "aggregate_count",
+      "projection": [],
+      "lookup_column": "tenant_id",
+      "lookup_value": {
+        "text": "tenant-b"
+      },
+      "count_column": "deal_id",
+      "aggregate_alias": "deal_count"
     }
   ],
   "cases": [
@@ -81,6 +137,38 @@
     {
       "id": "outside_subset_sqlstate_parity",
       "query_id": "outside_subset_lookup",
+      "expected_verdict": "pass",
+      "left": {
+        "endpoint_id": "legacy",
+        "role": "legacy-source",
+        "relations": "relations-pass-left.json"
+      },
+      "right": {
+        "endpoint_id": "candidate",
+        "role": "candidate-target",
+        "relations": "relations-pass-right.json"
+      },
+      "expected_mismatches": []
+    },
+    {
+      "id": "filtered_scan_parity",
+      "query_id": "tenant_b_filtered_scan",
+      "expected_verdict": "pass",
+      "left": {
+        "endpoint_id": "legacy",
+        "role": "legacy-source",
+        "relations": "relations-pass-left.json"
+      },
+      "right": {
+        "endpoint_id": "candidate",
+        "role": "candidate-target",
+        "relations": "relations-pass-right.json"
+      },
+      "expected_mismatches": []
+    },
+    {
+      "id": "aggregate_count_parity",
+      "query_id": "tenant_b_deal_count",
       "expected_verdict": "pass",
       "left": {
         "endpoint_id": "legacy",

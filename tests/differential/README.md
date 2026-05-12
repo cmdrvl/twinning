@@ -10,9 +10,9 @@ Current state:
 - the parity ledger test runs the twinning binary in `run_once` mode with a
   child pgwire client and records declared reference-vs-twin observations
 - the migration proof test restores two committed-state snapshots over the same
-  catalog declaration, runs the same Postgres-kernel read against both, and
-  emits a `twinning.twin-pair-proof.v0` receipt for pass, divergence, and
-  SQLSTATE-refusal cases
+  catalog declaration, runs the same Postgres-kernel reads against both, and
+  emits a `twinning.twin-pair-proof.v0` receipt for point lookup,
+  filtered-scan, aggregate-count, divergence, and SQLSTATE-refusal cases
 - the shared runner still carries `TWINNING_DIFF_POSTGRES_URL` so a future
   live-target comparison path can reuse the same checked-in corpora
 - fixture directories are checked in and exercised so layout drift shows up

@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -16,8 +16,8 @@ use twinning::{
     cli::Engine,
     declaration::{CatalogDeclarationIdentity, load_catalog_declaration},
     ir::{
-        AggregateSpec, PredicateComparison, PredicateExpr, PredicateOperator, ReadOp, ReadShape,
-        ScalarValue,
+        AggregateKind, AggregateSpec, PredicateComparison, PredicateExpr, PredicateOperator,
+        ReadOp, ReadShape, ScalarValue,
     },
     kernel::read::execute_read,
     migration_proof::{
@@ -55,6 +55,44 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
         );
     }
 
+    let coverage_by_shape = fixture
+        .coverage_matrix
+        .iter()
+        .map(|entry| (entry.shape.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(coverage_by_shape["point_lookup"].policy, "pass");
+    assert!(
+        coverage_by_shape["point_lookup"]
+            .cases
+            .iter()
+            .any(|case| case == "byte_identical_snapshot_pass")
+    );
+    assert!(
+        coverage_by_shape["point_lookup"]
+            .cases
+            .iter()
+            .any(|case| case == "intentional_deal_name_divergence")
+    );
+    assert_eq!(coverage_by_shape["filtered_scan"].policy, "pass");
+    assert_eq!(
+        coverage_by_shape["filtered_scan"].cases,
+        vec![String::from("filtered_scan_parity")]
+    );
+    assert_eq!(coverage_by_shape["aggregate_count"].policy, "pass");
+    assert_eq!(
+        coverage_by_shape["aggregate_count"].cases,
+        vec![String::from("aggregate_count_parity")]
+    );
+    assert_eq!(coverage_by_shape["join_or_introspection"].policy, "skip");
+    assert!(coverage_by_shape["join_or_introspection"].cases.is_empty());
+    assert!(
+        !coverage_by_shape["join_or_introspection"]
+            .reason
+            .as_deref()
+            .expect("skip reason")
+            .is_empty()
+    );
+
     let query_ids = fixture
         .queries
         .iter()
@@ -62,7 +100,12 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         query_ids,
-        BTreeSet::from(["deal_lookup", "outside_subset_lookup"])
+        BTreeSet::from([
+            "deal_lookup",
+            "outside_subset_lookup",
+            "tenant_b_filtered_scan",
+            "tenant_b_deal_count",
+        ])
     );
 
     let expected_verdicts = fixture
@@ -82,6 +125,8 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     let pass_case = fixture.case("byte_identical_snapshot_pass");
     let fail_case = fixture.case("intentional_deal_name_divergence");
     let refusal_case = fixture.case("outside_subset_sqlstate_parity");
+    let filtered_case = fixture.case("filtered_scan_parity");
+    let aggregate_case = fixture.case("aggregate_count_parity");
 
     let pass_report = build_report(&fixture, pass_case);
     assert_eq!(pass_report.version, TWIN_PAIR_PROOF_VERSION);
@@ -133,6 +178,24 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     assert_eq!(
         refusal_report.cases[0].left.result["code"],
         json!("unknown_table")
+    );
+
+    let filtered_report = build_report(&fixture, filtered_case);
+    assert_eq!(filtered_report.outcome, TwinPairProofOutcome::Pass);
+    assert_eq!(
+        filtered_report.cases[0].left.result["rows"][0][0],
+        json!({ "text": "deal-002" })
+    );
+
+    let aggregate_report = build_report(&fixture, aggregate_case);
+    assert_eq!(aggregate_report.outcome, TwinPairProofOutcome::Pass);
+    assert_eq!(
+        aggregate_report.cases[0].left.result["columns"],
+        json!(["deal_count"])
+    );
+    assert_eq!(
+        aggregate_report.cases[0].left.result["rows"][0][0],
+        json!({ "integer": 1 })
     );
 
     let workspace = tempdir().expect("proof report workspace");
@@ -229,7 +292,10 @@ fn observe_query(
     backend: &BaseSnapshotBackend,
     query: &ProofQuery,
 ) -> TwinPairObservation {
-    let result = match execute_read(catalog, backend, &query.read_op()) {
+    let read_op = query
+        .read_op()
+        .expect("proof query shape should be declared in the replay fixture subset");
+    let result = match execute_read(catalog, backend, &read_op) {
         KernelResult::Read(read) => json!({
             "outcome_class": "success",
             "columns": read.columns,
@@ -323,6 +389,7 @@ struct ProofFixture {
     version: String,
     proof_version: String,
     dependencies: Vec<ProofDependency>,
+    coverage_matrix: Vec<CoverageEntry>,
     queries: Vec<ProofQuery>,
     cases: Vec<FixtureCase>,
 }
@@ -350,6 +417,16 @@ struct ProofDependency {
 }
 
 #[derive(Debug, Deserialize)]
+struct CoverageEntry {
+    shape: String,
+    policy: String,
+    #[serde(default)]
+    cases: Vec<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ProofQuery {
     id: String,
     table: String,
@@ -357,28 +434,61 @@ struct ProofQuery {
     projection: Vec<String>,
     lookup_column: String,
     lookup_value: ScalarValue,
+    #[serde(default)]
+    count_column: Option<String>,
+    #[serde(default)]
+    aggregate_alias: Option<String>,
+    #[serde(default)]
+    limit: Option<u64>,
 }
 
 impl ProofQuery {
-    fn read_op(&self) -> ReadOp {
-        assert_eq!(
-            self.shape, "point_lookup",
-            "prototype migration proof only declares point lookup reads"
-        );
+    fn read_op(&self) -> Result<ReadOp, String> {
+        let predicate = Some(PredicateExpr::Comparison(PredicateComparison {
+            column: self.lookup_column.clone(),
+            operator: PredicateOperator::Eq,
+            values: vec![self.lookup_value.clone()],
+        }));
 
-        ReadOp {
-            session_id: String::from("migration-proof"),
-            table: self.table.clone(),
-            shape: ReadShape::PointLookup,
-            projection: self.projection.clone(),
-            predicate: Some(PredicateExpr::Comparison(PredicateComparison {
-                column: self.lookup_column.clone(),
-                operator: PredicateOperator::Eq,
-                values: vec![self.lookup_value.clone()],
-            })),
-            aggregate: AggregateSpec::default(),
-            group_by: Vec::new(),
-            limit: None,
+        match self.shape.as_str() {
+            "point_lookup" => Ok(ReadOp {
+                session_id: String::from("migration-proof"),
+                table: self.table.clone(),
+                shape: ReadShape::PointLookup,
+                projection: self.projection.clone(),
+                predicate,
+                aggregate: AggregateSpec::default(),
+                group_by: Vec::new(),
+                limit: None,
+            }),
+            "filtered_scan" => Ok(ReadOp {
+                session_id: String::from("migration-proof"),
+                table: self.table.clone(),
+                shape: ReadShape::FilteredScan,
+                projection: self.projection.clone(),
+                predicate,
+                aggregate: AggregateSpec::default(),
+                group_by: Vec::new(),
+                limit: self.limit,
+            }),
+            "aggregate_count" => Ok(ReadOp {
+                session_id: String::from("migration-proof"),
+                table: self.table.clone(),
+                shape: ReadShape::AggregateScan,
+                projection: Vec::new(),
+                predicate,
+                aggregate: AggregateSpec {
+                    kind: AggregateKind::Count,
+                    column: self.count_column.clone(),
+                    alias: self.aggregate_alias.clone(),
+                },
+                group_by: Vec::new(),
+                limit: None,
+            }),
+            other => Err(format!(
+                "query `{}` uses unsupported fixture shape `{}`",
+                self.id, other
+            )),
         }
     }
 }

@@ -58,8 +58,30 @@ fn proof_cli_writes_report_for_matching_snapshots() {
     assert_eq!(report["version"], "twinning.twin-pair-proof.v0");
     assert_eq!(report["outcome"], "PASS");
     assert_eq!(report["endpoints"].as_array().expect("endpoints").len(), 2);
-    assert_eq!(report["cases"].as_array().expect("cases").len(), 2);
-    assert_eq!(report["cases"][1]["left"]["result"]["sqlstate"], "42P01");
+    let cases = report["cases"].as_array().expect("cases");
+    assert_eq!(cases.len(), 4);
+
+    let sqlstate_case = cases
+        .iter()
+        .find(|case| case["case_id"] == "outside_subset_lookup")
+        .expect("outside-subset SQLSTATE case");
+    assert_eq!(sqlstate_case["left"]["result"]["sqlstate"], "42P01");
+
+    let filtered_case = cases
+        .iter()
+        .find(|case| case["case_id"] == "tenant_b_filtered_scan")
+        .expect("filtered-scan replay case");
+    assert_eq!(
+        filtered_case["left"]["result"]["rows"][0][0]["text"],
+        "deal-002"
+    );
+
+    let aggregate_case = cases
+        .iter()
+        .find(|case| case["case_id"] == "tenant_b_deal_count")
+        .expect("aggregate-count replay case");
+    assert_eq!(aggregate_case["left"]["result"]["columns"][0], "deal_count");
+    assert_eq!(aggregate_case["left"]["result"]["rows"][0][0]["integer"], 1);
 }
 
 #[test]

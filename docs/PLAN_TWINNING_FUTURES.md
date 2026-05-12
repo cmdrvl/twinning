@@ -100,10 +100,12 @@ The remaining blocking gaps are:
   CLI that runs a shared query fixture and emits `twinning.twin-pair-proof.v0`.
   Production proof still needs an operator surface for booting, loading,
   naming, and sealing live twins as one coherent run.
-- **Replay corpus gap.** The current proof fixture has one translated
-  Postgres-compatible point lookup. Twin A still needs a broader checked-in
+- **Replay corpus gap.** The current proof fixture covers translated
+  Postgres-compatible point lookup, filtered scan, aggregate count, intentional
+  divergence, and SQLSTATE parity. Twin A still needs a broader checked-in
   replay manifest and fixtures with explicit PASS / FAIL / SKIP rules for
-  migration proof.
+  joins, introspection, and historical-query families beyond this prototype
+  subset.
 - **Legacy-query boundary gap.** This futures doc talks about replaying
   historical queries verbatim while the v0 center remains Postgres-only. The
   first migration-proof cut needs an explicit rule: either replay a translated

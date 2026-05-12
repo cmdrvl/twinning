@@ -8,3 +8,8 @@ keeps the same schema/declaration but changes one committed row so the proof
 report records an intentional `query_result` mismatch. A refusal case proves
 that both endpoints surface the same protocol-visible SQLSTATE for an
 out-of-subset relation.
+
+The replay matrix currently exercises translated Postgres-compatible point
+lookup, filtered scan, and aggregate count reads. Join and introspection replay
+remain explicit SKIP entries until the live v0 center declares and proves those
+shapes.

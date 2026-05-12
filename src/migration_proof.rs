@@ -10,8 +10,8 @@ use crate::{
     cli::{Engine, ProofArgs, ProofCommand, TwinPairProofArgs},
     declaration::CatalogDeclarationIdentity,
     ir::{
-        AggregateSpec, PredicateComparison, PredicateExpr, PredicateOperator, ReadOp, ReadShape,
-        ScalarValue,
+        AggregateKind, AggregateSpec, PredicateComparison, PredicateExpr, PredicateOperator,
+        ReadOp, ReadShape, ScalarValue,
     },
     kernel::read::execute_read,
     refusal::{self, RefusalEnvelope, RefusalResult},
@@ -415,30 +415,61 @@ struct TwinPairProofQuery {
     projection: Vec<String>,
     lookup_column: String,
     lookup_value: ScalarValue,
+    #[serde(default)]
+    count_column: Option<String>,
+    #[serde(default)]
+    aggregate_alias: Option<String>,
+    #[serde(default)]
+    limit: Option<u64>,
 }
 
 impl TwinPairProofQuery {
     fn read_op(&self) -> Result<ReadOp, String> {
-        if self.shape != "point_lookup" {
-            return Err(format!(
-                "query `{}` uses unsupported shape `{}` (supported: point_lookup)",
-                self.id, self.shape
-            ));
-        }
+        let predicate = Some(PredicateExpr::Comparison(PredicateComparison {
+            column: self.lookup_column.clone(),
+            operator: PredicateOperator::Eq,
+            values: vec![self.lookup_value.clone()],
+        }));
 
-        Ok(ReadOp {
-            session_id: String::from("twin-pair-proof"),
-            table: self.table.clone(),
-            shape: ReadShape::PointLookup,
-            projection: self.projection.clone(),
-            predicate: Some(PredicateExpr::Comparison(PredicateComparison {
-                column: self.lookup_column.clone(),
-                operator: PredicateOperator::Eq,
-                values: vec![self.lookup_value.clone()],
-            })),
-            aggregate: AggregateSpec::default(),
-            group_by: Vec::new(),
-            limit: None,
-        })
+        match self.shape.as_str() {
+            "point_lookup" => Ok(ReadOp {
+                session_id: String::from("twin-pair-proof"),
+                table: self.table.clone(),
+                shape: ReadShape::PointLookup,
+                projection: self.projection.clone(),
+                predicate,
+                aggregate: AggregateSpec::default(),
+                group_by: Vec::new(),
+                limit: None,
+            }),
+            "filtered_scan" => Ok(ReadOp {
+                session_id: String::from("twin-pair-proof"),
+                table: self.table.clone(),
+                shape: ReadShape::FilteredScan,
+                projection: self.projection.clone(),
+                predicate,
+                aggregate: AggregateSpec::default(),
+                group_by: Vec::new(),
+                limit: self.limit,
+            }),
+            "aggregate_count" => Ok(ReadOp {
+                session_id: String::from("twin-pair-proof"),
+                table: self.table.clone(),
+                shape: ReadShape::AggregateScan,
+                projection: Vec::new(),
+                predicate,
+                aggregate: AggregateSpec {
+                    kind: AggregateKind::Count,
+                    column: self.count_column.clone(),
+                    alias: self.aggregate_alias.clone(),
+                },
+                group_by: Vec::new(),
+                limit: None,
+            }),
+            _ => Err(format!(
+                "query `{}` uses unsupported shape `{}` (supported: point_lookup, filtered_scan, aggregate_count)",
+                self.id, self.shape
+            )),
+        }
     }
 }
