@@ -9,6 +9,10 @@ reference observations for the same schema and SQL against a scratch Postgres
 database. A live Postgres executor can replace those pinned observations when
 `TWINNING_DIFF_POSTGRES_URL` points at a disposable database.
 
+Live mode shells out to `psql`, resets the target database's `public` schema,
+loads `schema.sql`, and executes the same cases before the twin-side run. Use it
+only with a scratch database.
+
 Requirement matrix:
 
 | Requirement | Completion criterion | Fixture cases |
@@ -21,4 +25,5 @@ Run:
 
 ```bash
 cargo test --test differential_suite parity_ledger
+TWINNING_DIFF_POSTGRES_URL='postgres://...' cargo test --test differential_suite parity_ledger -- --nocapture
 ```
