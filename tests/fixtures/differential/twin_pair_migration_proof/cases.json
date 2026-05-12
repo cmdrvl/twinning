@@ -29,6 +29,18 @@
       "lookup_value": {
         "text": "deal-002"
       }
+    },
+    {
+      "id": "outside_subset_lookup",
+      "table": "public.audit_log",
+      "shape": "point_lookup",
+      "projection": [
+        "id"
+      ],
+      "lookup_column": "id",
+      "lookup_value": {
+        "text": "audit-001"
+      }
     }
   ],
   "cases": [
@@ -65,6 +77,22 @@
       "expected_mismatches": [
         "query_result"
       ]
+    },
+    {
+      "id": "outside_subset_sqlstate_parity",
+      "query_id": "outside_subset_lookup",
+      "expected_verdict": "pass",
+      "left": {
+        "endpoint_id": "legacy",
+        "role": "legacy-source",
+        "relations": "relations-pass-left.json"
+      },
+      "right": {
+        "endpoint_id": "candidate",
+        "role": "candidate-target",
+        "relations": "relations-pass-right.json"
+      },
+      "expected_mismatches": []
     }
   ]
 }

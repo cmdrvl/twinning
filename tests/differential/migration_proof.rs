@@ -60,7 +60,10 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
         .iter()
         .map(|query| query.id.as_str())
         .collect::<BTreeSet<_>>();
-    assert_eq!(query_ids, BTreeSet::from(["deal_lookup"]));
+    assert_eq!(
+        query_ids,
+        BTreeSet::from(["deal_lookup", "outside_subset_lookup"])
+    );
 
     let expected_verdicts = fixture
         .cases
@@ -78,6 +81,7 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     let fixture = load_fixture();
     let pass_case = fixture.case("byte_identical_snapshot_pass");
     let fail_case = fixture.case("intentional_deal_name_divergence");
+    let refusal_case = fixture.case("outside_subset_sqlstate_parity");
 
     let pass_report = build_report(&fixture, pass_case);
     assert_eq!(pass_report.version, TWIN_PAIR_PROOF_VERSION);
@@ -113,6 +117,22 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     assert_ne!(
         fail_report.cases[0].left.result,
         fail_report.cases[0].right.result
+    );
+
+    let refusal_report = build_report(&fixture, refusal_case);
+    assert_eq!(refusal_report.outcome, TwinPairProofOutcome::Pass);
+    assert_eq!(refusal_report.cases[0].verdict, TwinPairCaseVerdict::Pass);
+    assert_eq!(
+        refusal_report.cases[0].left.result["sqlstate"],
+        json!("42P01")
+    );
+    assert_eq!(
+        refusal_report.cases[0].right.result["sqlstate"],
+        json!("42P01")
+    );
+    assert_eq!(
+        refusal_report.cases[0].left.result["code"],
+        json!("unknown_table")
     );
 
     let workspace = tempdir().expect("proof report workspace");
