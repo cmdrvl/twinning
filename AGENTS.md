@@ -45,7 +45,8 @@ What `twinning` does not own:
 
 ## Current Repository State
 
-The current repo is **Phase 0 bootstrap-only**.
+The current repo is **Phase 0 bootstrap plus a live `run_once` shell for the
+proven Postgres subset**.
 
 Implemented now:
 
@@ -53,16 +54,19 @@ Implemented now:
 - `twinning.v0` bootstrap reports
 - `twinning.snapshot.v0` bootstrap snapshots with hash verification
 - verify-artifact loading and hashing
-- explicit refusal behavior for unimplemented live runtime paths
+- live `run_once` orchestration for one child command against the configured
+  Postgres listener
+- committed-state run reports and snapshots for the proven subset
+- embedded verify execution over `run_once` committed state
+- explicit refusal behavior for unsupported runtime paths
 
 Not implemented yet:
 
-- pgwire listener
-- SQL execution
-- row materialization and constraint enforcement
-- bounded-memory overlays
-- live `--run` orchestration
-- embedded verify execution over materialized state
+- long-lived standalone pgwire server mode
+- broad SQL execution beyond the canary-defined subset
+- replay/proof backends and shared base snapshot economics
+- multi-client live orchestration beyond the current one-child `run_once` shell
+- twin-pair migration proof
 
 Key references:
 
@@ -70,10 +74,11 @@ Key references:
 - [docs/PLAN_TWINNING_FUTURES.md](./docs/PLAN_TWINNING_FUTURES.md) — deferred futures, with twin-pair migration proof first
 - [.beads/issues.jsonl](./.beads/issues.jsonl) — execution graph
 - [README.md](./README.md) — operator-facing contract and quickstart
+- [CODEX.md](./CODEX.md), [CLAUDE.md](./CLAUDE.md), and [GEMINI.md](./GEMINI.md) — harness-specific caveats
 
 Implication for new work:
 
-- do not pretend the live twin exists when it does not
+- do not pretend a long-lived general twin exists when only `run_once` is proven
 - do not widen scope beyond the canary-defined Postgres subset
 - do not start non-SQL or second-engine work before the Postgres tournament wedge is real
 
@@ -86,15 +91,20 @@ Implication for new work:
 sed -n '1,260p' docs/PLAN_TWINNING.md
 
 # See the execution graph
-br ready
-br blocked
-br show <id>
+br ready --json
+br blocked --json
+br show <id> --json
 
 # Current bootstrap path
 cargo run -- postgres --schema schema.sql --json
 cargo run -- postgres --schema schema.sql --verify schema.verify.json \
   --report out/bootstrap.json --snapshot out/bootstrap.twin --json
 cargo run -- --describe
+
+# Current live run_once path
+cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
+cargo run -- doctor health --json
+cargo run -- doctor --robot-triage
 
 # Quality gates
 cargo fmt --check
@@ -103,9 +113,9 @@ cargo test
 ./scripts/ubs_gate.sh
 
 # Beads workflow
-br update <id> --status in_progress
+br update <id> --status in_progress --json
 # ... implement ...
-br close <id> --reason "Completed"
+br close <id> --reason "Completed" --json
 br sync --flush-only
 git add .beads/
 git commit -m "sync beads"
@@ -121,6 +131,7 @@ cass search "twinning" --robot --limit 5
 - **Spec:** [docs/PLAN_TWINNING.md](./docs/PLAN_TWINNING.md)
 - **Deferred direction:** [docs/PLAN_TWINNING_FUTURES.md](./docs/PLAN_TWINNING_FUTURES.md)
 - **Execution graph:** [.beads/issues.jsonl](./.beads/issues.jsonl)
+- **Harness notes:** [CODEX.md](./CODEX.md), [CLAUDE.md](./CLAUDE.md), [GEMINI.md](./GEMINI.md)
 
 If code, README, and plan disagree, the plan wins.
 
@@ -173,8 +184,8 @@ Current exit domain:
 
 | Exit | Meaning |
 |------|---------|
-| `0` | clean bootstrap |
-| `1` | reserved for future live verify-violation exits |
+| `0` | clean bootstrap or `run_once` without embedded verify failure |
+| `1` | embedded verify failure in live `run_once` mode |
 | `2` | refusal / bootstrap failure / CLI error |
 
 Current artifacts:
@@ -207,14 +218,16 @@ Do not:
 - start VSAM / IMS / CICS work in this repo's main lane
 - broaden SQL claims beyond the manifest and canaries
 
-### 2. Bootstrap honesty matters
+### 2. Bootstrap and run_once honesty matter
 
-The current repo is bootstrap-only.
+The current repo supports bootstrap plus one-child live `run_once` for the
+proven subset. It is not a long-lived general database server.
 
 Do not:
 
-- imply `--run` works when it still refuses
-- fake pgwire compatibility
+- imply standalone live server mode exists
+- imply `--run` covers shapes outside the manifest-backed subset
+- fake broad pgwire compatibility
 - ship placeholder execution paths that look like success
 
 ### 3. Canary-defined support only
@@ -361,10 +374,10 @@ Beads is the execution source of truth in this repo.
 - Agent Mail = coordination, reservations, audit trail
 
 ```bash
-br ready
-br show <id>
-br update <id> --status in_progress
-br close <id> --reason "Completed"
+br ready --json
+br show <id> --json
+br update <id> --status in_progress --json
+br close <id> --reason "Completed" --json
 br sync --flush-only
 git add .beads/
 git commit -m "sync beads"

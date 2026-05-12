@@ -479,6 +479,7 @@ Only the Postgres engine is implemented. MySQL and Oracle are declared in the CL
 - Main plan: [docs/PLAN_TWINNING.md](./docs/PLAN_TWINNING.md)
 - Futures: [docs/PLAN_TWINNING_FUTURES.md](./docs/PLAN_TWINNING_FUTURES.md)
 - Agent guidance: [AGENTS.md](./AGENTS.md)
+- Harness notes: [CODEX.md](./CODEX.md), [CLAUDE.md](./CLAUDE.md), [GEMINI.md](./GEMINI.md)
 - Canary manifest: [canaries/manifest.v0.json](./canaries/manifest.v0.json)
 - Crucible master plan: [PLAN_FACTORY.md](../cmdrvl-context/docs/09-plans/epistemic-spine/PLAN_FACTORY.md)
 

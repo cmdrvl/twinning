@@ -71,7 +71,9 @@ Deferred beyond v0:
 This plan uses three different version axes. They need to stay explicit:
 
 - `twinning.v0` and `twinning.snapshot.v0` are artifact schema versions.
-- **Phase 0** is the current bootstrap-only implementation state in this repo.
+- **Phase 0** was the bootstrap-only starting state in this repo; the current
+  repo keeps that lane and has a narrow live `run_once` shell for the proven
+  Postgres subset.
 - **v1 working** is the first end-to-end live Postgres tournament milestone
   defined later in this document.
 
