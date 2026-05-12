@@ -67,7 +67,7 @@ fn unsupported_frontend_message_stays_protocol_visible_and_session_recovers() {
     write_startup_packet(&mut client, &[("user", "postgres")]);
     let _ = read_until_ready(&mut client).expect("startup frames");
 
-    write_unsupported_message(&mut client, b'P');
+    write_unsupported_message(&mut client, b'Y');
     let refusal_frames = read_until_ready(&mut client).expect("refusal frames");
     assert_eq!(
         decode_error_sqlstate(&refusal_frames[0]).expect("SQLSTATE field"),
