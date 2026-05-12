@@ -222,6 +222,7 @@ Not implemented yet:
 - concurrent writers or multi-writer semantics
 - non-Postgres runtime engines
 - replay/proof backends beyond the current tournament-mode live shell
+- production dual-twin proof orchestration beyond the snapshot-pair prototype
 
 This means the repo can validate bootstrap assets and run one child command
 against a live twin shell for the proven subset, but it still refuses broader

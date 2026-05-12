@@ -161,7 +161,7 @@
     "deferred_surface": [
       "heavier replay/proof backends",
       "long-lived general-purpose database server mode",
-      "production dual-twin migration proof orchestration",
+      "production dual-twin migration proof orchestration manifest and runner",
       "non-Postgres protocol families"
     ]
   },

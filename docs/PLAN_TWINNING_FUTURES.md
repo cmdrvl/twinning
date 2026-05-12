@@ -82,6 +82,57 @@ pack seal replay-results/ benchmark.json verify.json decision.json \
   --output evidence/loan-performance-mart/
 ```
 
+### Production twin-pair orchestration surface
+
+The current `twinning proof twin-pair` command is a snapshot-pair prototype: it
+compares two already-frozen `twinning.snapshot.v0` artifacts over one query
+fixture. Production migration proof should add a manifest-first orchestration
+surface instead of stretching the prototype flags into a second runtime mode.
+
+Proposed later command:
+
+```bash
+twinning proof twin-pair orchestrate \
+  --manifest proof-run.json \
+  --report out/twin-pair-proof.json \
+  --bundle-dir out/twin-pair-proof/
+```
+
+The manifest should be the single operator contract for a paired proof run:
+
+| Field | Owner | Contract |
+|-------|-------|----------|
+| `proof_id` | operator / orchestrator | Stable run identity used in reports and evidence bundles |
+| `catalog_declaration` | catalog / declaration layer | Same subset identity both twins must share |
+| `left_endpoint` | twinning | Legacy/source twin bootstrap or restore input, endpoint id, role, engine |
+| `right_endpoint` | twinning | Candidate/target twin bootstrap or restore input, endpoint id, role, engine |
+| `replay_manifest` | replay harness | Query families, PASS / FAIL / SKIP policy, expected SQLSTATE parity |
+| `target_evidence` | verify / benchmark / assess | Raw artifact identities only; no policy meaning is interpreted by twinning |
+| `artifact_outputs` | pack / operator | Report path, snapshot paths, bundle directory, optional seal handoff |
+
+The orchestrator phases should be deterministic and restartable:
+
+1. Preflight both endpoint specs before binding any listener.
+2. Materialize or restore each endpoint and freeze committed-state snapshots.
+3. Verify both snapshots share the declared schema/catalog/declaration identity.
+4. Replay the manifest against both twins through the declared protocol surface.
+5. Emit `twinning.twin-pair-proof.v0` with endpoint identities, result parity,
+   target evidence identities, and no pseudo-score aggregation.
+6. Hand report/snapshot paths to `pack`; sealing remains outside `twinning`.
+
+Refusal boundaries:
+
+- incompatible schema hashes, normalized catalogs, declarations, engines, or
+  snapshot versions are process-level proof refusals
+- malformed manifests or target evidence identity records are process-level
+  proof refusals
+- unsupported replay shapes inside a declared SKIP row are accounting entries,
+  not success
+- unsupported replay shapes that are executed must surface as protocol-visible
+  errors and be recorded as observations, not process exits
+- `verify`, `benchmark`, and `assess` outcomes never change the twin-pair proof
+  verdict; their identities are attached so downstream policy can consume them
+
 ### Gaps from current repo to first twin-pair proof
 
 Current repo status now has the Postgres `run_once` shell, committed-state
@@ -96,10 +147,10 @@ twin-pair proof is:
 
 The remaining blocking gaps are:
 
-- **Live dual-endpoint orchestration gap.** The prototype has a snapshot-pair
-  CLI that runs a shared query fixture and emits `twinning.twin-pair-proof.v0`.
-  Production proof still needs an operator surface for booting, loading,
-  naming, and sealing live twins as one coherent run.
+- **Live dual-endpoint orchestration implementation gap.** The proposed
+  manifest-first operator surface above names how production proof should boot,
+  load, name, and hand off paired twins. The code still needs to implement that
+  orchestration without widening the v0 Postgres subset.
 - **Replay corpus gap.** The current proof fixture covers translated
   Postgres-compatible point lookup, filtered scan, aggregate count, intentional
   divergence, and SQLSTATE parity. Twin A still needs a broader checked-in
