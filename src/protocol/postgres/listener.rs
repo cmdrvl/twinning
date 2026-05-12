@@ -29,6 +29,7 @@ use super::{
     session::{SessionLoop, ready_for_query_frame},
     simple_query::dispatch_simple_query_result,
     startup::{StartupOutcome, encode_startup_response, negotiate_startup, parse_startup_packet},
+    writer_gate::WRITER_CONTENTION_SQLSTATE,
 };
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -461,17 +462,32 @@ fn apply_live_session_side_effect(
 }
 
 fn overlay_refusal_result(error: OverlayError) -> KernelResult {
-    KernelResult::Refusal(RefusalResult {
-        code: String::from("live_state_error"),
-        message: format!("live session state update failed: {error}"),
-        sqlstate: String::from("55000"),
-        detail: [
-            (String::from("scope"), String::from("state_backend")),
-            (String::from("error"), error.to_string()),
-        ]
-        .into_iter()
-        .collect(),
-    })
+    match error {
+        OverlayError::WriterBusy { active_session } => KernelResult::Refusal(RefusalResult {
+            code: String::from("writer_contention"),
+            message: format!(
+                "cannot acquire the mutable writer slot while `{active_session}` owns it"
+            ),
+            sqlstate: String::from(WRITER_CONTENTION_SQLSTATE),
+            detail: [
+                (String::from("scope"), String::from("state_backend")),
+                (String::from("active_session"), active_session),
+            ]
+            .into_iter()
+            .collect(),
+        }),
+        other => KernelResult::Refusal(RefusalResult {
+            code: String::from("live_state_error"),
+            message: format!("live session state update failed: {other}"),
+            sqlstate: String::from("55000"),
+            detail: [
+                (String::from("scope"), String::from("state_backend")),
+                (String::from("error"), other.to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        }),
+    }
 }
 
 fn backend_error_from_overlay(error: OverlayError) -> BackendError {
@@ -503,18 +519,23 @@ fn accept_until_shutdown_loop(
     live_state: Option<SharedPgwireState>,
 ) -> io::Result<()> {
     let mut connection_count = 0_u64;
+    let mut connection_threads = Vec::new();
 
     while !shutdown.is_shutdown_requested() {
         match listener.accept() {
             Ok((stream, _)) => {
                 connection_count += 1;
                 let session_id = format!("{session_id_prefix}-{connection_count}");
-                serve_connection_until_shutdown_with_state(
-                    stream,
-                    session_id,
-                    shutdown,
-                    live_state.clone(),
-                )?;
+                let connection_shutdown = shutdown.clone();
+                let connection_state = live_state.clone();
+                connection_threads.push(thread::spawn(move || {
+                    serve_connection_until_shutdown_with_state(
+                        stream,
+                        session_id,
+                        &connection_shutdown,
+                        connection_state,
+                    )
+                }));
             }
             Err(error) if error.kind().eq(&io::ErrorKind::WouldBlock) => {
                 thread::sleep(ACCEPT_POLL_INTERVAL);
@@ -523,7 +544,32 @@ fn accept_until_shutdown_loop(
         }
     }
 
-    Ok(())
+    join_connection_threads(connection_threads)
+}
+
+fn join_connection_threads(handles: Vec<thread::JoinHandle<io::Result<()>>>) -> io::Result<()> {
+    let mut first_error = None;
+
+    for handle in handles {
+        match handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+            Err(_) => {
+                if first_error.is_none() {
+                    first_error = Some(io::Error::other("pgwire connection thread panicked"));
+                }
+            }
+        }
+    }
+
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn serve_connection_until_shutdown_with_state(

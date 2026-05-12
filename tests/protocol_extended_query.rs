@@ -14,7 +14,7 @@ use twinning::{
     protocol::postgres::{
         extended_execute::{DescribeTarget, ExecuteRequest, ExtendedExecuteState},
         extended_parse::{BindRequest, ExtendedParseState, ParseRequest},
-        listener::PgwireListener,
+        listener::{PgwireListener, SharedPgwireState, ShutdownHook},
         session::SessionLoop,
     },
 };
@@ -287,6 +287,92 @@ fn live_listener_dispatches_extended_query_messages_over_socket() {
         .join()
         .expect("listener thread")
         .expect("serve extended connection");
+}
+
+#[test]
+fn live_listener_allows_concurrent_readers_and_refuses_second_writer() {
+    let (catalog, backend) = widgets_catalog_and_backend();
+    let state = SharedPgwireState::from_backend(catalog, backend);
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let shutdown = ShutdownHook::new();
+    let server_shutdown = shutdown.clone();
+    let handle = thread::spawn(move || {
+        listener.accept_until_shutdown_with_state("concurrent", &server_shutdown, state)
+    });
+
+    let mut first = TcpStream::connect(addr).expect("connect first");
+    let mut second = TcpStream::connect(addr).expect("connect second");
+    first
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set first timeout");
+    second
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set second timeout");
+
+    write_startup_packet(&mut first, &[("user", "postgres")]);
+    write_startup_packet(&mut second, &[("user", "postgres")]);
+    assert_eq!(
+        decode_ready_status(
+            read_until_ready(&mut first)
+                .expect("first startup")
+                .last()
+                .expect("first ready")
+        ),
+        b'I'
+    );
+    assert_eq!(
+        decode_ready_status(
+            read_until_ready(&mut second)
+                .expect("second startup")
+                .last()
+                .expect("second ready")
+        ),
+        b'I'
+    );
+
+    write_query_message(&mut first, "SELECT version()");
+    let first_read = read_until_ready(&mut first).expect("first read");
+    assert_eq!(decode_command_complete(&first_read[2]), "SELECT 1");
+
+    write_query_message(&mut second, "SELECT current_schema()");
+    let second_read = read_until_ready(&mut second).expect("second read");
+    assert_eq!(decode_command_complete(&second_read[2]), "SELECT 1");
+
+    write_query_message(&mut first, "BEGIN");
+    let first_begin = read_until_ready(&mut first).expect("first begin");
+    assert_eq!(decode_command_complete(&first_begin[0]), "BEGIN");
+    assert_eq!(
+        decode_ready_status(first_begin.last().expect("first begin ready")),
+        b'T'
+    );
+
+    write_query_message(&mut second, "BEGIN");
+    let second_begin = read_until_ready(&mut second).expect("second begin refusal");
+    assert_eq!(
+        decode_error_sqlstate(&second_begin[0]).expect("second begin SQLSTATE"),
+        "55P03"
+    );
+    assert_eq!(
+        decode_ready_status(second_begin.last().expect("second refusal ready")),
+        b'I'
+    );
+
+    write_query_message(&mut first, "ROLLBACK");
+    let first_rollback = read_until_ready(&mut first).expect("first rollback");
+    assert_eq!(decode_command_complete(&first_rollback[0]), "ROLLBACK");
+    assert_eq!(
+        decode_ready_status(first_rollback.last().expect("first rollback ready")),
+        b'I'
+    );
+
+    write_terminate_message(&mut first);
+    write_terminate_message(&mut second);
+    shutdown.request_shutdown();
+    handle
+        .join()
+        .expect("listener thread")
+        .expect("serve concurrent connections");
 }
 
 fn widgets_catalog_and_backend() -> (Catalog, BaseSnapshotBackend) {
