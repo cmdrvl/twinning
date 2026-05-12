@@ -157,11 +157,12 @@
       "run_once pgwire listener for the declared Postgres subset",
       "prototype twin-pair proof report model, fixture harness, target evidence identities, and snapshot-pair CLI",
       "restore-backed twin-pair orchestration runner, manifest parser, and schema",
+      "replay/proof backend policy for snapshot-backed, disk-backed, and delegated storage boundaries",
       "storage-boundary reporting for tournament vs replay modes",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
     "deferred_surface": [
-      "heavier replay/proof backends",
+      "snapshot-backed, disk-backed, and delegated replay/proof backend implementations behind policy gates",
       "schema-load materialization inside production twin-pair orchestration",
       "long-lived general-purpose database server mode",
       "non-Postgres protocol families"

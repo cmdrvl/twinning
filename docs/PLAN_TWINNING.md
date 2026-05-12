@@ -308,7 +308,9 @@ The stable v0 primitive remains:
 - one Postgres tournament twin
 - one canary-defined client/session subset
 - one embedded `verify` validation attachment path
-- one bounded-memory tournament / heavier-backend storage boundary
+- one bounded-memory tournament / heavier-backend storage boundary, with
+  replay/proof backend policy in
+  [REPLAY_PROOF_BACKEND_POLICY.md](./REPLAY_PROOF_BACKEND_POLICY.md)
 
 ---
 

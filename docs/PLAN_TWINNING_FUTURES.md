@@ -191,9 +191,10 @@ The remaining blocking gaps are:
   needs more query-family coverage and pack-facing bundle layout.
 - **Heavier-backend gap.** Twin-pair migration proof is the first consumer that
   may genuinely need the snapshot-backed, disk-backed, or delegated backend
-  path. The backend boundary exists in prose, but the first migration-proof cut
-  still needs an explicit policy for when Twin A can delegate storage without
-  changing protocol-visible behavior.
+  path. [REPLAY_PROOF_BACKEND_POLICY.md](./REPLAY_PROOF_BACKEND_POLICY.md)
+  now states the allowed backend classes and the rule for Twin A delegation.
+  Implementing those heavier backends remains deferred behind deterministic
+  replay, reset, provenance, and snapshot-hash gates.
 - **Target-side evidence orchestration gap.** The prototype proof report can
   attach raw `verify`, `benchmark`, and `assess` artifact identities to the
   target endpoint without interpreting their policy meaning. Production proof

@@ -219,6 +219,7 @@ Implemented now:
 - live `--run` child orchestration, run metadata capture, and final artifact emission
 - embedded verify execution over committed twin state
 - storage-boundary reporting for tournament mode vs replay/proof mode
+- explicit [replay/proof backend policy](./docs/REPLAY_PROOF_BACKEND_POLICY.md)
 - refusal envelopes for process-level failures and protocol-visible live subset boundaries
 - restore-backed twin-pair orchestration runner, manifest parser, and schema
 
@@ -496,7 +497,7 @@ Only the Postgres engine is implemented. MySQL and Oracle are declared in the CL
 - **Run-once shell only.** Live mode binds pgwire for one child command and then exits; there is no standalone long-lived server mode yet.
 - **Canary-defined subset.** Only SQL shapes named in the [canary manifest](./canaries/manifest.v0.json) will be supported.
 - **No concurrent writers.** The intended live model is single-writer admission with explicit contention refusal.
-- **Restore-backed proof orchestration only.** Schema-load materialization and heavier replay/proof backends remain deferred.
+- **Restore-backed proof orchestration only.** Schema-load materialization and heavier replay/proof backends remain deferred behind the [backend policy](./docs/REPLAY_PROOF_BACKEND_POLICY.md).
 
 ---
 
@@ -504,6 +505,7 @@ Only the Postgres engine is implemented. MySQL and Oracle are declared in the CL
 
 - Main plan: [docs/PLAN_TWINNING.md](./docs/PLAN_TWINNING.md)
 - Futures: [docs/PLAN_TWINNING_FUTURES.md](./docs/PLAN_TWINNING_FUTURES.md)
+- Replay/proof backend policy: [docs/REPLAY_PROOF_BACKEND_POLICY.md](./docs/REPLAY_PROOF_BACKEND_POLICY.md)
 - Agent guidance: [AGENTS.md](./AGENTS.md)
 - Harness notes: [CODEX.md](./CODEX.md), [CLAUDE.md](./CLAUDE.md), [GEMINI.md](./GEMINI.md)
 - Canary manifest: [canaries/manifest.v0.json](./canaries/manifest.v0.json)
