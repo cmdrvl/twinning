@@ -85,6 +85,46 @@ jobs:
       - name: Run tests
         run: cargo test
 
+  live-postgres-parity:
+    name: Live Postgres Parity
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: twinning
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: twinning
+      - uses: actions/checkout@v4
+        with:
+          repository: cmdrvl/verify
+          path: verify
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            twinning -> target
+      - name: Install psql client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y postgresql-client
+      - name: Run parity ledger against live Postgres
+        env:
+          TWINNING_DIFF_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: cargo test --test differential_suite parity_ledger
+
   ubs:
     name: UBS (critical-only)
     runs-on: ubuntu-latest
@@ -167,7 +207,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, test, ubs, build]
+    needs: [fmt, clippy, test, live-postgres-parity, ubs, build]
     if: always()
     steps:
       - name: Check all jobs succeeded
@@ -182,6 +222,10 @@ jobs:
           fi
           if [[ "${{ needs.test.result }}" != "success" ]]; then
             echo "Test job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.live-postgres-parity.result }}" != "success" ]]; then
+            echo "Live Postgres parity job failed"
             exit 1
           fi
           if [[ "${{ needs.ubs.result }}" != "success" ]]; then
