@@ -1,6 +1,26 @@
 {
   "version": "twinning.twin-pair-proof-fixture.v0",
   "proof_version": "twinning.twin-pair-proof.v0",
+  "target_evidence": [
+    {
+      "artifact_kind": "verify",
+      "artifact_id": "verify:loan-performance-candidate:v1",
+      "version": "verify.report.v1",
+      "hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "artifact_kind": "benchmark",
+      "artifact_id": "benchmark:loan-performance-candidate:v1",
+      "version": "benchmark.report.v1",
+      "hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "artifact_kind": "assess",
+      "artifact_id": "assess:loan-performance-candidate:v1",
+      "version": "assess.decision.v1",
+      "hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
   "dependencies": [
     {
       "bead": "bd-2bh",

@@ -13,3 +13,7 @@ The replay matrix currently exercises translated Postgres-compatible point
 lookup, filtered scan, and aggregate count reads. Join and introspection replay
 remain explicit SKIP entries until the live v0 center declares and proves those
 shapes.
+
+The fixture also attaches target-side evidence identities for raw `verify`,
+`benchmark`, and `assess` artifacts. Those identities are references only: the
+proof report does not read, score, or reinterpret the target artifacts.

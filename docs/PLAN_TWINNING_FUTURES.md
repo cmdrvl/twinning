@@ -121,10 +121,11 @@ The remaining blocking gaps are:
   path. The backend boundary exists in prose, but the first migration-proof cut
   still needs an explicit policy for when Twin A can delegate storage without
   changing protocol-visible behavior.
-- **Target-side evidence gap.** Twin B assumes attached `verify`,
-  `benchmark`, and `assess` outputs, but the paired proof workflow still needs a
-  tighter statement of which artifact each tool owns and how those artifacts are
-  linked back to the twin snapshots and replay outputs.
+- **Target-side evidence orchestration gap.** The prototype proof report can
+  attach raw `verify`, `benchmark`, and `assess` artifact identities to the
+  target endpoint without interpreting their policy meaning. Production proof
+  still needs operator orchestration for collecting, sealing, and linking those
+  artifacts back to the twin snapshots and replay outputs.
 
 None of those gaps justify widening the v0 center itself. They are the bridge
 to build immediately after the main Postgres tournament wedge is real.

@@ -154,7 +154,7 @@
       "snapshot write/restore with hash verification",
       "committed-state snapshot freeze/restore",
       "run_once pgwire listener for the declared Postgres subset",
-      "prototype twin-pair proof report model, fixture harness, and snapshot-pair CLI",
+      "prototype twin-pair proof report model, fixture harness, target evidence identities, and snapshot-pair CLI",
       "storage-boundary reporting for tournament vs replay modes",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
@@ -179,7 +179,7 @@
     {
       "name": "twinning.twin-pair-proof.v0",
       "kind": "proof_report",
-      "description": "Prototype interface-equivalence receipt for comparing two Postgres twins over one declared subset"
+      "description": "Prototype interface-equivalence receipt for comparing two Postgres twins over one declared subset, with optional raw target evidence identities"
     }
   ]
 }

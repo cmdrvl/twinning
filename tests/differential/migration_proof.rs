@@ -22,7 +22,8 @@ use twinning::{
     kernel::read::execute_read,
     migration_proof::{
         TWIN_PAIR_PROOF_VERSION, TwinPairCaseVerdict, TwinPairEndpointIdentity,
-        TwinPairObservation, TwinPairProofCase, TwinPairProofOutcome, TwinPairProofReport,
+        TwinPairEvidenceIdentity, TwinPairEvidenceKind, TwinPairObservation, TwinPairProofCase,
+        TwinPairProofOutcome, TwinPairProofReport,
     },
     result::KernelResult,
     snapshot::{SnapshotRelations, TwinSnapshot, restore},
@@ -40,6 +41,19 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
     assert!(schema_path().exists());
     assert!(declaration_path().exists());
     assert!(proof_schema_path().exists());
+    assert_eq!(fixture.target_evidence.len(), 3);
+    assert_eq!(
+        fixture
+            .target_evidence
+            .iter()
+            .map(|identity| identity.artifact_kind)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            TwinPairEvidenceKind::Assess,
+            TwinPairEvidenceKind::Benchmark,
+            TwinPairEvidenceKind::Verify,
+        ])
+    );
 
     let dependencies = fixture
         .dependencies
@@ -150,6 +164,20 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
             "metadata-catalog.v2026-05-12",
         ))
     );
+    assert!(pass_report.endpoints[0].evidence_identities.is_empty());
+    assert_eq!(pass_report.endpoints[1].evidence_identities.len(), 3);
+    assert_eq!(
+        pass_report.endpoints[1]
+            .evidence_identities
+            .iter()
+            .map(|identity| identity.artifact_kind)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            TwinPairEvidenceKind::Assess,
+            TwinPairEvidenceKind::Benchmark,
+            TwinPairEvidenceKind::Verify,
+        ])
+    );
 
     let fail_report = build_report(&fixture, fail_case);
     assert_eq!(fail_report.outcome, TwinPairProofOutcome::Fail);
@@ -220,13 +248,25 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
         rendered_fail["cases"][0]["mismatches"],
         json!(["query_result"])
     );
+    assert_eq!(
+        rendered_fail["endpoints"][1]["evidence_identities"][0]["artifact_kind"],
+        json!("verify")
+    );
+
+    let proof_schema: Value =
+        serde_json::from_str(&fs::read_to_string(proof_schema_path()).expect("read proof schema"))
+            .expect("parse proof schema");
+    assert_eq!(
+        proof_schema["$defs"]["evidence_identity"]["properties"]["artifact_kind"]["enum"],
+        json!(["verify", "benchmark", "assess"])
+    );
 }
 
 fn build_report(fixture: &ProofFixture, case: &FixtureCase) -> TwinPairProofReport {
     let (catalog, schema_hash, declaration) = load_declared_catalog();
     let query = fixture.query(&case.query_id);
-    let left = build_endpoint(&catalog, &schema_hash, &declaration, &case.left);
-    let right = build_endpoint(&catalog, &schema_hash, &declaration, &case.right);
+    let left = build_endpoint(&catalog, &schema_hash, &declaration, fixture, &case.left);
+    let right = build_endpoint(&catalog, &schema_hash, &declaration, fixture, &case.right);
 
     let proof_case = TwinPairProofCase::compare(
         case.id.clone(),
@@ -248,6 +288,7 @@ fn build_endpoint(
     catalog: &Catalog,
     schema_hash: &str,
     declaration: &CatalogDeclarationIdentity,
+    fixture: &ProofFixture,
     endpoint: &FixtureEndpoint,
 ) -> BuiltEndpoint {
     let relations: SnapshotRelations =
@@ -281,6 +322,11 @@ fn build_endpoint(
             snapshot_hash: snapshot.snapshot_hash,
             committed_state_hash,
             catalog_declaration_hash: Some(declaration.hash.clone()),
+            evidence_identities: if endpoint.role == "candidate-target" {
+                fixture.target_evidence.clone()
+            } else {
+                Vec::new()
+            },
         },
         backend,
     }
@@ -388,6 +434,8 @@ struct BuiltEndpoint {
 struct ProofFixture {
     version: String,
     proof_version: String,
+    #[serde(default)]
+    target_evidence: Vec<TwinPairEvidenceIdentity>,
     dependencies: Vec<ProofDependency>,
     coverage_matrix: Vec<CoverageEntry>,
     queries: Vec<ProofQuery>,

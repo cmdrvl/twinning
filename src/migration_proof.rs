@@ -49,6 +49,27 @@ pub struct TwinPairEndpointIdentity {
     pub committed_state_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catalog_declaration_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_identities: Vec<TwinPairEvidenceIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TwinPairEvidenceIdentity {
+    pub artifact_kind: TwinPairEvidenceKind,
+    pub artifact_id: String,
+    pub version: String,
+    pub hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TwinPairEvidenceKind {
+    Verify,
+    Benchmark,
+    Assess,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,8 +177,13 @@ fn execute_twin_pair(args: &TwinPairProofArgs, json_mode: bool) -> RefusalResult
 
     let left_backend = restore::restore_base_backend(&left_snapshot)?;
     let right_backend = restore::restore_base_backend(&right_snapshot)?;
-    let left_endpoint = endpoint_identity("left", "left-snapshot", &left_snapshot)?;
-    let right_endpoint = endpoint_identity("right", "right-snapshot", &right_snapshot)?;
+    let left_endpoint = endpoint_identity("left", "left-snapshot", &left_snapshot, Vec::new())?;
+    let right_endpoint = endpoint_identity(
+        "right",
+        "right-snapshot",
+        &right_snapshot,
+        query_file.target_evidence.clone(),
+    )?;
 
     let cases = query_file
         .queries
@@ -261,6 +287,7 @@ fn endpoint_identity(
     endpoint_id: &str,
     role: &str,
     snapshot: &TwinSnapshot,
+    evidence_identities: Vec<TwinPairEvidenceIdentity>,
 ) -> RefusalResult<TwinPairEndpointIdentity> {
     Ok(TwinPairEndpointIdentity {
         endpoint_id: endpoint_id.to_owned(),
@@ -272,6 +299,7 @@ fn endpoint_identity(
             .catalog_declaration
             .as_ref()
             .map(|declaration| declaration.hash.clone()),
+        evidence_identities,
     })
 }
 
@@ -404,6 +432,8 @@ struct TwinPairProofQueryFile {
     proof_id: Option<String>,
     #[serde(default)]
     proof_version: Option<String>,
+    #[serde(default)]
+    target_evidence: Vec<TwinPairEvidenceIdentity>,
     queries: Vec<TwinPairProofQuery>,
 }
 

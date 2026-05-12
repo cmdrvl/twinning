@@ -303,6 +303,8 @@ Critical boundary:
 - the live twin must execute embedded `verify`
 - it must attach raw `verify.report.v1` payloads
 - it must not export state and shell out to batch `verify`
+- twin-pair proof reports may reference raw `verify`/`benchmark`/`assess`
+  artifact identities, but must not score or reinterpret them
 
 ---
 

@@ -57,7 +57,38 @@ fn proof_cli_writes_report_for_matching_snapshots() {
     assert_eq!(report, written_report);
     assert_eq!(report["version"], "twinning.twin-pair-proof.v0");
     assert_eq!(report["outcome"], "PASS");
+    assert!(report.get("score").is_none());
     assert_eq!(report["endpoints"].as_array().expect("endpoints").len(), 2);
+    assert_eq!(
+        report["endpoints"][0]["evidence_identities"]
+            .as_array()
+            .map(Vec::len),
+        None
+    );
+    assert_eq!(
+        report["endpoints"][1]["evidence_identities"]
+            .as_array()
+            .expect("right endpoint evidence identities")
+            .len(),
+        3
+    );
+    assert_eq!(
+        report["endpoints"][1]["evidence_identities"][0]["artifact_kind"],
+        "verify"
+    );
+    let verify_identity = report["endpoints"][1]["evidence_identities"][0]
+        .as_object()
+        .expect("verify evidence identity");
+    assert!(!verify_identity.contains_key("score"));
+    assert!(!verify_identity.contains_key("outcome"));
+    assert_eq!(
+        report["endpoints"][1]["evidence_identities"][1]["artifact_kind"],
+        "benchmark"
+    );
+    assert_eq!(
+        report["endpoints"][1]["evidence_identities"][2]["artifact_kind"],
+        "assess"
+    );
     let cases = report["cases"].as_array().expect("cases");
     assert_eq!(cases.len(), 4);
 

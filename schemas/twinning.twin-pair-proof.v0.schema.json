@@ -136,6 +136,47 @@
         },
         "catalog_declaration_hash": {
           "$ref": "#/$defs/sha256"
+        },
+        "evidence_identities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_identity"
+          }
+        }
+      }
+    },
+    "evidence_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_kind",
+        "artifact_id",
+        "version",
+        "hash"
+      ],
+      "properties": {
+        "artifact_kind": {
+          "type": "string",
+          "enum": [
+            "verify",
+            "benchmark",
+            "assess"
+          ]
+        },
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
