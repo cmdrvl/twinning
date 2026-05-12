@@ -1,0 +1,60 @@
+{
+  "version": "twinning.twin-pair-orchestration-manifest.v0",
+  "proof_id": "loan-performance-migration-proof:v0",
+  "catalog_declaration": {
+    "path": "tests/fixtures/differential/twin_pair_migration_proof/declaration.json",
+    "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "left_endpoint": {
+    "endpoint_id": "legacy",
+    "role": "legacy-source",
+    "engine": "postgres",
+    "bootstrap": {
+      "kind": "restore",
+      "snapshot": "out/legacy.twin"
+    }
+  },
+  "right_endpoint": {
+    "endpoint_id": "candidate",
+    "role": "candidate-target",
+    "engine": "postgres",
+    "bootstrap": {
+      "kind": "schema",
+      "schema": "tests/fixtures/differential/twin_pair_migration_proof/schema.sql",
+      "declaration": "tests/fixtures/differential/twin_pair_migration_proof/declaration.json",
+      "load": [
+        "load/candidate.sql"
+      ]
+    }
+  },
+  "replay_manifest": {
+    "path": "tests/fixtures/differential/twin_pair_migration_proof/cases.json",
+    "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "target_evidence": [
+    {
+      "artifact_kind": "verify",
+      "artifact_id": "verify:loan-performance-candidate:v1",
+      "version": "verify.report.v1",
+      "hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "artifact_kind": "benchmark",
+      "artifact_id": "benchmark:loan-performance-candidate:v1",
+      "version": "benchmark.report.v1",
+      "hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "artifact_kind": "assess",
+      "artifact_id": "assess:loan-performance-candidate:v1",
+      "version": "assess.decision.v1",
+      "hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "artifact_outputs": {
+    "report": "out/twin-pair-proof.json",
+    "bundle_dir": "out/twin-pair-proof",
+    "left_snapshot": "out/legacy.twin",
+    "right_snapshot": "out/candidate.twin"
+  }
+}

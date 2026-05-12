@@ -11,6 +11,7 @@ pub mod doctor;
 pub mod ir;
 pub mod kernel;
 pub mod migration_proof;
+pub mod orchestration_manifest;
 pub mod protocol;
 pub mod refusal;
 pub mod report;

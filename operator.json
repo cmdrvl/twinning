@@ -155,13 +155,14 @@
       "committed-state snapshot freeze/restore",
       "run_once pgwire listener for the declared Postgres subset",
       "prototype twin-pair proof report model, fixture harness, target evidence identities, and snapshot-pair CLI",
+      "twin-pair orchestration manifest parser and schema",
       "storage-boundary reporting for tournament vs replay modes",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
     "deferred_surface": [
       "heavier replay/proof backends",
       "long-lived general-purpose database server mode",
-      "production dual-twin migration proof orchestration manifest and runner",
+      "production dual-twin migration proof orchestration runner",
       "non-Postgres protocol families"
     ]
   },

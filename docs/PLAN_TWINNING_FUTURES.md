@@ -136,9 +136,9 @@ Refusal boundaries:
 ### Gaps from current repo to first twin-pair proof
 
 Current repo status now has the Postgres `run_once` shell, committed-state
-snapshot hashing, catalog declaration identity, and a prototype fixture-backed
-`twinning.twin-pair-proof.v0` receipt. The shortest path to a production
-twin-pair proof is:
+snapshot hashing, catalog declaration identity, a prototype fixture-backed
+`twinning.twin-pair-proof.v0` receipt, and a typed parser for the proposed
+orchestration manifest. The shortest path to a production twin-pair proof is:
 
 1. finish the v0 center from
    [PLAN_TWINNING.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING.md)
@@ -147,10 +147,10 @@ twin-pair proof is:
 
 The remaining blocking gaps are:
 
-- **Live dual-endpoint orchestration implementation gap.** The proposed
-  manifest-first operator surface above names how production proof should boot,
-  load, name, and hand off paired twins. The code still needs to implement that
-  orchestration without widening the v0 Postgres subset.
+- **Live dual-endpoint orchestration runner gap.** The proposed manifest-first
+  operator surface above names how production proof should boot, load, name,
+  and hand off paired twins, and the manifest parser exists. The code still
+  needs to implement the runner without widening the v0 Postgres subset.
 - **Replay corpus gap.** The current proof fixture covers translated
   Postgres-compatible point lookup, filtered scan, aggregate count, intentional
   divergence, and SQLSTATE parity. Twin A still needs a broader checked-in

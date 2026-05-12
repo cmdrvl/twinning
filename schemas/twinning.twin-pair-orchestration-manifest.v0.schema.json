@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.twin-pair-orchestration-manifest.v0.schema.json",
+  "title": "twinning.twin-pair-orchestration-manifest.v0",
+  "description": "Manifest contract for future production twin-pair proof orchestration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "proof_id",
+    "catalog_declaration",
+    "left_endpoint",
+    "right_endpoint",
+    "replay_manifest",
+    "artifact_outputs"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "twinning.twin-pair-orchestration-manifest.v0"
+    },
+    "proof_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "catalog_declaration": {
+      "$ref": "#/$defs/artifact_ref"
+    },
+    "left_endpoint": {
+      "$ref": "#/$defs/endpoint"
+    },
+    "right_endpoint": {
+      "$ref": "#/$defs/endpoint"
+    },
+    "replay_manifest": {
+      "$ref": "#/$defs/artifact_ref"
+    },
+    "target_evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence_identity"
+      }
+    },
+    "artifact_outputs": {
+      "$ref": "#/$defs/artifact_outputs"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{64}$"
+    },
+    "artifact_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint_id",
+        "role",
+        "engine",
+        "bootstrap"
+      ],
+      "properties": {
+        "endpoint_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engine": {
+          "type": "string",
+          "const": "postgres"
+        },
+        "bootstrap": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/restore_bootstrap"
+            },
+            {
+              "$ref": "#/$defs/schema_bootstrap"
+            }
+          ]
+        }
+      }
+    },
+    "restore_bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "snapshot"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "restore"
+        },
+        "snapshot": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "schema_bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "schema"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "schema"
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        },
+        "declaration": {
+          "type": "string",
+          "minLength": 1
+        },
+        "load": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "evidence_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_kind",
+        "artifact_id",
+        "version",
+        "hash"
+      ],
+      "properties": {
+        "artifact_kind": {
+          "type": "string",
+          "enum": [
+            "verify",
+            "benchmark",
+            "assess"
+          ]
+        },
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "artifact_outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report",
+        "bundle_dir",
+        "left_snapshot",
+        "right_snapshot"
+      ],
+      "properties": {
+        "report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bundle_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_snapshot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "right_snapshot": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
