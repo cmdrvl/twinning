@@ -1,5 +1,9 @@
 use crate::{
-    ir::{Operation, RefusalOp, RefusalScope, normalize_session_sql},
+    catalog::Catalog,
+    ir::{
+        Operation, RefusalOp, RefusalScope, UNDEFINED_TABLE_CODE, UNDEFINED_TABLE_SQLSTATE,
+        normalize_mutation_sql, normalize_read_sql, normalize_session_sql,
+    },
     result::{AckResult, KernelResult, RefusalResult, ResultTag},
 };
 
@@ -19,8 +23,23 @@ pub fn dispatch_simple_query(
 }
 
 pub fn dispatch_simple_query_result(session_id: impl Into<String>, sql: &str) -> KernelResult {
+    dispatch_simple_query_result_with_catalog(session_id, sql, None)
+}
+
+pub fn dispatch_simple_query_result_with_catalog(
+    session_id: impl Into<String>,
+    sql: &str,
+    catalog: Option<&Catalog>,
+) -> KernelResult {
+    let session_id = session_id.into();
     if let Some(metadata_result) = metadata_query_result(sql) {
         return metadata_result;
+    }
+
+    if let Some(catalog) = catalog
+        && let Some(result) = declared_subset_relation_refusal(catalog, session_id.as_str(), sql)
+    {
+        return result;
     }
 
     match normalize_session_sql(session_id, sql) {
@@ -35,6 +54,44 @@ pub fn dispatch_simple_query_result(session_id: impl Into<String>, sql: &str) ->
     }
 }
 
+fn declared_subset_relation_refusal(
+    catalog: &Catalog,
+    session_id: &str,
+    sql: &str,
+) -> Option<KernelResult> {
+    let operation = match simple_statement_kind(sql) {
+        Some(SimpleStatementKind::Read) => normalize_read_sql(catalog, session_id, sql),
+        Some(SimpleStatementKind::Mutation) => normalize_mutation_sql(catalog, session_id, sql),
+        None => return None,
+    };
+
+    match operation {
+        Operation::Refusal(refusal) if is_undefined_table_refusal(&refusal) => {
+            Some(KernelResult::Refusal(refusal_into_result(refusal)))
+        }
+        _ => None,
+    }
+}
+
+fn simple_statement_kind(sql: &str) -> Option<SimpleStatementKind> {
+    match sql
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "select" => Some(SimpleStatementKind::Read),
+        "insert" => Some(SimpleStatementKind::Mutation),
+        _ => None,
+    }
+}
+
+enum SimpleStatementKind {
+    Read,
+    Mutation,
+}
+
 fn metadata_query_result(sql: &str) -> Option<KernelResult> {
     classify_metadata_query(sql).map(|metadata_query| KernelResult::Read(metadata_query.result()))
 }
@@ -45,18 +102,30 @@ fn refusal_into_result(refusal: RefusalOp) -> RefusalResult {
         .get("shape")
         .cloned()
         .unwrap_or_else(|| refusal.code.clone());
+    let code = refusal.code.clone();
+    let message = refusal_message(&refusal, &shape);
+    let sqlstate = refusal_sqlstate(&refusal);
     let mut detail = refusal.detail;
     detail.insert(String::from("transport"), String::from("simple_query"));
 
     RefusalResult {
-        code: refusal.code,
-        message: refusal_message(refusal.scope, &shape),
-        sqlstate: String::from(DEFAULT_UNSUPPORTED_LIVE_SQLSTATE),
+        code,
+        message,
+        sqlstate,
         detail,
     }
 }
 
-fn refusal_message(scope: RefusalScope, shape: &str) -> String {
+fn refusal_message(refusal: &RefusalOp, shape: &str) -> String {
+    if is_undefined_table_refusal(refusal) {
+        let table = refusal
+            .detail
+            .get("table")
+            .map(String::as_str)
+            .unwrap_or("<unknown>");
+        return format!("simple query relation `{table}` is outside the declared subset");
+    }
+
     match shape {
         "parse_error" => String::from("simple query parse failed against the declared live subset"),
         "multiple_statements" => {
@@ -64,9 +133,21 @@ fn refusal_message(scope: RefusalScope, shape: &str) -> String {
         }
         other => format!(
             "simple query shape `{other}` is outside the declared {} subset",
-            refusal_scope_token(scope)
+            refusal_scope_token(refusal.scope)
         ),
     }
+}
+
+fn refusal_sqlstate(refusal: &RefusalOp) -> String {
+    if is_undefined_table_refusal(refusal) {
+        return String::from(UNDEFINED_TABLE_SQLSTATE);
+    }
+
+    String::from(DEFAULT_UNSUPPORTED_LIVE_SQLSTATE)
+}
+
+fn is_undefined_table_refusal(refusal: &RefusalOp) -> bool {
+    matches!(refusal.code.as_str(), UNDEFINED_TABLE_CODE)
 }
 
 fn refusal_scope_token(scope: RefusalScope) -> &'static str {

@@ -223,6 +223,8 @@ type NormalizationResult<T> = Result<T, RefusalOp>;
 type RefusalBuilder = fn(&str, &[(&str, String)]) -> RefusalOp;
 
 const UNSUPPORTED_SHAPE_CODE: &str = "unsupported_shape";
+pub const UNDEFINED_TABLE_CODE: &str = "undefined_table";
+pub const UNDEFINED_TABLE_SQLSTATE: &str = "42P01";
 const TRACKED_SESSION_PARAM_APPLICATION_NAME: &str = "application_name";
 
 pub fn normalize_session_sql(session_id: impl Into<SessionId>, sql: &str) -> Operation {
@@ -1395,7 +1397,46 @@ fn resolve_table_with<'a>(
         }
     }
 
-    Err(refusal("unknown_table", &[("table", rendered)]))
+    if is_system_catalog_relation(&rendered) {
+        return Err(refusal("unknown_table", &[("table", rendered)]));
+    }
+
+    Err(relation_outside_declared_subset_refusal(
+        catalog, rendered, refusal,
+    ))
+}
+
+fn is_system_catalog_relation(table_name: &str) -> bool {
+    table_name.starts_with("information_schema.") || table_name.starts_with("pg_catalog.")
+}
+
+fn relation_outside_declared_subset_refusal(
+    catalog: &Catalog,
+    table: String,
+    refusal: RefusalBuilder,
+) -> RefusalOp {
+    let mut refusal = refusal(
+        "unknown_table",
+        &[
+            ("table", table),
+            ("declared_tables", declared_tables_detail(catalog)),
+        ],
+    );
+    refusal.code = String::from(UNDEFINED_TABLE_CODE);
+    refusal.detail.insert(
+        String::from("shape"),
+        String::from("relation_outside_declared_subset"),
+    );
+    refusal
+}
+
+fn declared_tables_detail(catalog: &Catalog) -> String {
+    catalog
+        .tables
+        .iter()
+        .map(|table| table.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn resolve_insert_columns(

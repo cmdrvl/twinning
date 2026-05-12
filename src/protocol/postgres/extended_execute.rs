@@ -3,7 +3,7 @@ use crate::{
     catalog::{Catalog, ColumnCatalog},
     ir::{
         AggregateKind, MutationKind, Operation, ReadOp, RefusalOp, RefusalScope,
-        normalize_mutation_sql, normalize_read_sql,
+        UNDEFINED_TABLE_CODE, UNDEFINED_TABLE_SQLSTATE, normalize_mutation_sql, normalize_read_sql,
     },
     kernel::{mutation::execute_insert, read::execute_read},
     result::{AckResult, KernelResult, RefusalResult, ResultTag},
@@ -597,6 +597,9 @@ fn operation_refusal_result(
         .get("shape")
         .cloned()
         .unwrap_or_else(|| refusal.code.clone());
+    let code = refusal.code.clone();
+    let message = operation_refusal_message(&refusal, phase, &shape);
+    let sqlstate = operation_refusal_sqlstate(&refusal);
     let mut detail = refusal.detail;
     detail.insert(String::from("phase"), phase.to_owned());
     detail.insert(String::from("transport"), String::from("extended_query"));
@@ -605,14 +608,35 @@ fn operation_refusal_result(
     }
 
     RefusalResult {
-        code: refusal.code,
-        message: format!(
-            "extended query {phase} shape `{shape}` is outside the declared {} subset",
-            refusal_scope_token(refusal.scope)
-        ),
-        sqlstate: String::from("0A000"),
+        code,
+        message,
+        sqlstate,
         detail,
     }
+}
+
+fn operation_refusal_message(refusal: &RefusalOp, phase: &str, shape: &str) -> String {
+    if refusal.code == UNDEFINED_TABLE_CODE {
+        let table = refusal
+            .detail
+            .get("table")
+            .map(String::as_str)
+            .unwrap_or("<unknown>");
+        return format!("extended query {phase} relation `{table}` is outside the declared subset");
+    }
+
+    format!(
+        "extended query {phase} shape `{shape}` is outside the declared {} subset",
+        refusal_scope_token(refusal.scope)
+    )
+}
+
+fn operation_refusal_sqlstate(refusal: &RefusalOp) -> String {
+    if refusal.code == UNDEFINED_TABLE_CODE {
+        return String::from(UNDEFINED_TABLE_SQLSTATE);
+    }
+
+    String::from("0A000")
 }
 
 fn unsupported_execute_refusal(shape: &str, extras: &[(&str, String)]) -> RefusalResult {

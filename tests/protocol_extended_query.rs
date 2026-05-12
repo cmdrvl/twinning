@@ -375,6 +375,127 @@ fn live_listener_allows_concurrent_readers_and_refuses_second_writer() {
         .expect("serve concurrent connections");
 }
 
+#[test]
+fn simple_query_relation_outside_declared_subset_returns_42p01_and_recovers() {
+    let (catalog, backend) = widgets_catalog_and_backend();
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let handle =
+        thread::spawn(move || listener.accept_with_backend("simple-outside", catalog, backend));
+
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set timeout");
+
+    write_startup_packet(&mut client, &[("user", "postgres")]);
+    let _ = read_until_ready(&mut client).expect("startup frames");
+
+    write_query_message(&mut client, "BEGIN");
+    let begin = read_until_ready(&mut client).expect("begin frames");
+    assert_eq!(decode_command_complete(&begin[0]), "BEGIN");
+
+    write_query_message(&mut client, "SELECT * FROM public.audit_log");
+    let refusal = read_until_ready(&mut client).expect("outside relation refusal");
+    assert_eq!(
+        decode_error_sqlstate(&refusal[0]).expect("SQLSTATE field"),
+        "42P01"
+    );
+    assert_eq!(
+        decode_error_code(&refusal[0]).expect("code field"),
+        "undefined_table"
+    );
+    let detail = decode_error_detail(&refusal[0]).expect("detail field");
+    assert!(detail.contains("table=public.audit_log"));
+    assert!(detail.contains("declared_tables=public.widgets"));
+    assert_eq!(
+        decode_ready_status(refusal.last().expect("refusal ready")),
+        b'E'
+    );
+
+    write_query_message(&mut client, "ROLLBACK");
+    let rollback = read_until_ready(&mut client).expect("rollback frames");
+    assert_eq!(decode_command_complete(&rollback[0]), "ROLLBACK");
+    assert_eq!(
+        decode_ready_status(rollback.last().expect("rollback ready")),
+        b'I'
+    );
+
+    write_terminate_message(&mut client);
+    handle
+        .join()
+        .expect("listener thread")
+        .expect("serve simple outside relation connection");
+}
+
+#[test]
+fn extended_query_relation_outside_declared_subset_returns_42p01_and_recovers() {
+    let (catalog, backend) = widgets_catalog_and_backend();
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let handle =
+        thread::spawn(move || listener.accept_with_backend("extended-outside", catalog, backend));
+
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set timeout");
+
+    write_startup_packet(&mut client, &[("user", "postgres")]);
+    let _ = read_until_ready(&mut client).expect("startup frames");
+
+    write_query_message(&mut client, "BEGIN");
+    let begin = read_until_ready(&mut client).expect("begin frames");
+    assert_eq!(decode_command_complete(&begin[0]), "BEGIN");
+
+    write_parse_message(
+        &mut client,
+        "select_audit_log",
+        "SELECT id FROM public.audit_log WHERE id = $1",
+        &[INT4_OID],
+    );
+    write_bind_message(
+        &mut client,
+        "select_audit_log_portal",
+        "select_audit_log",
+        &[Some("1")],
+    );
+    write_execute_message(&mut client, "select_audit_log_portal", 0);
+    write_sync_message(&mut client);
+    let refusal = read_until_ready(&mut client).expect("outside relation refusal");
+    assert_eq!(refusal[0], parse_complete_frame());
+    assert_eq!(refusal[1], bind_complete_frame());
+    assert_eq!(
+        decode_error_sqlstate(&refusal[2]).expect("SQLSTATE field"),
+        "42P01"
+    );
+    assert_eq!(
+        decode_error_code(&refusal[2]).expect("code field"),
+        "undefined_table"
+    );
+    let detail = decode_error_detail(&refusal[2]).expect("detail field");
+    assert!(detail.contains("table=public.audit_log"));
+    assert!(detail.contains("declared_tables=public.widgets"));
+    assert_eq!(
+        decode_ready_status(refusal.last().expect("refusal ready")),
+        b'E'
+    );
+
+    write_query_message(&mut client, "ROLLBACK");
+    let rollback = read_until_ready(&mut client).expect("rollback frames");
+    assert_eq!(decode_command_complete(&rollback[0]), "ROLLBACK");
+    assert_eq!(
+        decode_ready_status(rollback.last().expect("rollback ready")),
+        b'I'
+    );
+
+    write_terminate_message(&mut client);
+    handle
+        .join()
+        .expect("listener thread")
+        .expect("serve extended outside relation connection");
+}
+
 fn widgets_catalog_and_backend() -> (Catalog, BaseSnapshotBackend) {
     let catalog = parse_postgres_schema(
         r#"
@@ -422,6 +543,18 @@ fn decode_ready_status(frame: &[u8]) -> u8 {
 }
 
 fn decode_error_sqlstate(frame: &[u8]) -> Result<String, &'static str> {
+    decode_error_field(frame, b'C')
+}
+
+fn decode_error_code(frame: &[u8]) -> Result<String, &'static str> {
+    decode_error_field(frame, b'V')
+}
+
+fn decode_error_detail(frame: &[u8]) -> Result<String, &'static str> {
+    decode_error_field(frame, b'D')
+}
+
+fn decode_error_field(frame: &[u8], wanted_field: u8) -> Result<String, &'static str> {
     assert_eq!(frame[0], b'E');
     let mut cursor = 5usize;
     while cursor < frame.len() {
@@ -439,12 +572,12 @@ fn decode_error_sqlstate(frame: &[u8]) -> Result<String, &'static str> {
             .map_err(|_| "field value")?;
         cursor += value_end + 1;
 
-        if field_type == b'C' {
+        if field_type == wanted_field {
             return Ok(value);
         }
     }
 
-    Err("missing SQLSTATE field")
+    Err("missing error field")
 }
 
 fn decode_parameter_description(frame: &[u8]) -> Vec<u32> {

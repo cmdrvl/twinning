@@ -27,7 +27,7 @@ use super::{
     extended_parse::{BindRequest, ExtendedParseState, ParseRequest},
     frames::{ResultFrameMetadata, unsupported_live_shape_result},
     session::{SessionLoop, ready_for_query_frame},
-    simple_query::dispatch_simple_query_result,
+    simple_query::{dispatch_simple_query_result, dispatch_simple_query_result_with_catalog},
     startup::{StartupOutcome, encode_startup_response, negotiate_startup, parse_startup_packet},
     writer_gate::WRITER_CONTENTION_SQLSTATE,
 };
@@ -317,7 +317,14 @@ fn serve_connection_with_shutdown(
                 write_frames(stream, &cycle.frames)?;
             }
             FrontendMessage::Query(sql) => {
-                let result = dispatch_simple_query_result(session_id.as_str(), &sql);
+                let result = match live_state.as_ref() {
+                    Some(state) => dispatch_simple_query_result_with_catalog(
+                        session_id.as_str(),
+                        &sql,
+                        Some(&state.catalog),
+                    ),
+                    None => dispatch_simple_query_result(session_id.as_str(), &sql),
+                };
                 let result = apply_live_session_side_effect(
                     live_state.as_ref(),
                     session_id.as_str(),
