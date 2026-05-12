@@ -1,0 +1,149 @@
+{
+  "version": "twinning.differential.parity-ledger.v0",
+  "requirement_matrix": [
+    {
+      "id": "process_run_once_twin",
+      "completion_criterion": "2. live run_once pgwire shell is reliable end-to-end",
+      "coverage": "The ledger harness launches the twinning binary in run_once mode and drives a real child process over pgwire.",
+      "cases": [
+        "write_insert_basic",
+        "read_select_by_pk",
+        "outside_subset_relation"
+      ]
+    },
+    {
+      "id": "declared_success_parity",
+      "completion_criterion": "3. parity ledger for declared subset queries",
+      "coverage": "One declared write and one declared read record Postgres-reference expectations and twin observations in the same ledger shape.",
+      "cases": [
+        "write_insert_basic",
+        "read_select_by_pk"
+      ]
+    },
+    {
+      "id": "subset_refusal_parity",
+      "completion_criterion": "3. out-of-subset queries return protocol-faithful errors",
+      "coverage": "A relation outside the declared subset records SQLSTATE 42P01 plus twin detail naming the declared subset.",
+      "cases": [
+        "outside_subset_relation"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "write_insert_basic",
+      "operation": "write",
+      "client_surface": "extended_query_parse_bind_execute_sync",
+      "description": "Declared INSERT path writes one committed row when the parent tenant exists.",
+      "setup": [
+        {
+          "sql": "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ($1, $2)",
+          "params": [
+            "tenant-a",
+            "Tenant A"
+          ]
+        }
+      ],
+      "sql": "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ($1, $2, $3, $4, $5, $6)",
+      "params": [
+        "deal-001",
+        "tenant-a",
+        "ext-001",
+        "Alpha",
+        "open",
+        "100"
+      ],
+      "postgres_observed": {
+        "outcome_class": "success",
+        "command_tag": "INSERT 0 1",
+        "rows_affected": 1
+      },
+      "twin_expected": {
+        "outcome_class": "success",
+        "command_tag": "INSERT 0 1",
+        "rows_affected": 1
+      }
+    },
+    {
+      "id": "read_select_by_pk",
+      "operation": "read",
+      "client_surface": "extended_query_parse_bind_execute_sync",
+      "description": "Declared point lookup returns the expected single row by primary key.",
+      "setup": [
+        {
+          "sql": "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ($1, $2)",
+          "params": [
+            "tenant-read",
+            "Tenant Read"
+          ]
+        },
+        {
+          "sql": "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ($1, $2, $3, $4, $5, $6)",
+          "params": [
+            "deal-read-001",
+            "tenant-read",
+            "ext-read-001",
+            "Alpha",
+            "open",
+            "100"
+          ]
+        }
+      ],
+      "sql": "SELECT deal_id, deal_name FROM public.deals WHERE deal_id = $1",
+      "params": [
+        "deal-read-001"
+      ],
+      "postgres_observed": {
+        "outcome_class": "success",
+        "columns": [
+          "deal_id",
+          "deal_name"
+        ],
+        "rows": [
+          {
+            "deal_id": "deal-read-001",
+            "deal_name": "Alpha"
+          }
+        ]
+      },
+      "twin_expected": {
+        "outcome_class": "success",
+        "columns": [
+          "deal_id",
+          "deal_name"
+        ],
+        "rows": [
+          {
+            "deal_id": "deal-read-001",
+            "deal_name": "Alpha"
+          }
+        ]
+      }
+    },
+    {
+      "id": "outside_subset_relation",
+      "operation": "read",
+      "client_surface": "extended_query_parse_bind_execute_sync",
+      "description": "A relation outside the declared subset maps to protocol-visible undefined_table.",
+      "setup": [],
+      "sql": "SELECT id FROM public.audit_log WHERE id = $1",
+      "params": [
+        "audit-001"
+      ],
+      "postgres_observed": {
+        "outcome_class": "refusal",
+        "sqlstate": "42P01"
+      },
+      "twin_expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "42P01",
+        "code": "undefined_table",
+        "detail_contains": [
+          "shape=relation_outside_declared_subset",
+          "table=public.audit_log",
+          "declared_tables=public.deals, public.tenants"
+        ]
+      }
+    }
+  ]
+}
