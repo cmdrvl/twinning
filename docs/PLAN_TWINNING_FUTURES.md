@@ -53,6 +53,25 @@ That later mode is intentionally deferred because it pulls in replay harnesses,
 result diffing, and broader Crucible evidence flows that are not required to
 stabilize the v0 tournament boundary.
 
+### Legacy-query replay boundary
+
+The first migration-proof cut is **translated Postgres-compatible replay** over
+the catalog-declared subset. Historical query families may be derived from a
+legacy workload, but they must enter `twinning` as declared Postgres-compatible
+queries against the legacy-schema twin. True Oracle/TNS protocol fidelity is
+deferred to a later adapter and must not be implied by Twin A.
+
+This boundary is deliberate:
+
+- the v0 kernel and protocol surface remain Postgres-only
+- every replay shape must be named in the replay manifest as PASS, FAIL, or
+  SKIP
+- unsupported joins, introspection, Oracle syntax, and non-Postgres protocol
+  claims stay SKIP or process-level proof refusals until there is a manifest
+  and canary-backed implementation
+- successful proof means interface equivalence for the declared translated
+  Postgres subset, not whole legacy-database compatibility
+
 ### Later-mode migration proof example
 
 ```bash
@@ -66,9 +85,9 @@ psql -p 5433 -f load_oracle_slice.sql
 # Load transformed data into Twin B
 psql -p 5434 -f load_loan_perf_data.sql
 
-# Replay historical queries against Twin A (Crucible handles comparison)
-crucible replay --queries scan-results/queries/risk-app.sql \
-  --oracle oracle://prod-readonly \
+# Replay translated Postgres-compatible historical query families against Twin A
+crucible replay --queries replay-manifest.translated-postgres.json \
+  --reference postgres://legacy-readonly \
   --twin localhost:5433 \
   --output replay-results/
 
@@ -157,12 +176,10 @@ The remaining blocking gaps are:
   replay manifest and fixtures with explicit PASS / FAIL / SKIP rules for
   joins, introspection, and historical-query families beyond this prototype
   subset.
-- **Legacy-query boundary gap.** This futures doc talks about replaying
-  historical queries verbatim while the v0 center remains Postgres-only. The
-  first migration-proof cut needs an explicit rule: either replay a translated
-  Postgres-compatible corpus against the legacy-schema twin, or defer true
-  Oracle/TNS fidelity to a later phase. Without that rule, Twin A is
-  underspecified.
+- **Legacy-query breadth gap.** The first cut is explicitly translated
+  Postgres-compatible replay. True Oracle/TNS fidelity is deferred to a later
+  adapter. The remaining work is breadth: more translated replay families and
+  explicit SKIP/refusal accounting for shapes outside the current subset.
 - **Replay-result artifact gap.** `twinning.twin-pair-proof.v0` now pins the
   compact endpoint/case/result-hash receipt shape, but live replay still needs
   SQLSTATE parity, timing-independent diff inputs, and snapshot provenance at

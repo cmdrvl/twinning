@@ -2,6 +2,11 @@
 
 Prototype fixture for the first Postgres-kernel twin-pair migration proof.
 
+The first migration-proof cut uses translated Postgres-compatible replay. True
+Oracle/TNS protocol fidelity is explicitly deferred; non-Postgres protocol
+claims must be SKIP entries or process-level proof refusals, never successful
+proof rows.
+
 The fixture compares two endpoints over one catalog-declared subset. The pass
 case gives both endpoints byte-identical committed state. The divergence case
 keeps the same schema/declaration but changes one committed row so the proof

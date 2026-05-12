@@ -41,6 +41,19 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
     assert!(schema_path().exists());
     assert!(declaration_path().exists());
     assert!(proof_schema_path().exists());
+    assert_eq!(
+        fixture.legacy_query_boundary.first_cut,
+        "translated_postgres_compatible"
+    );
+    assert_eq!(fixture.legacy_query_boundary.reference_protocol, "postgres");
+    assert_eq!(
+        fixture.legacy_query_boundary.deferred_protocols,
+        vec![String::from("oracle_tns")]
+    );
+    assert_eq!(
+        fixture.legacy_query_boundary.unsupported_policy,
+        "skip_or_process_refusal_not_success"
+    );
     assert_eq!(fixture.target_evidence.len(), 3);
     assert_eq!(
         fixture
@@ -434,12 +447,21 @@ struct BuiltEndpoint {
 struct ProofFixture {
     version: String,
     proof_version: String,
+    legacy_query_boundary: LegacyQueryBoundary,
     #[serde(default)]
     target_evidence: Vec<TwinPairEvidenceIdentity>,
     dependencies: Vec<ProofDependency>,
     coverage_matrix: Vec<CoverageEntry>,
     queries: Vec<ProofQuery>,
     cases: Vec<FixtureCase>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyQueryBoundary {
+    first_cut: String,
+    reference_protocol: String,
+    deferred_protocols: Vec<String>,
+    unsupported_policy: String,
 }
 
 impl ProofFixture {

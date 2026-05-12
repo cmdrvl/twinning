@@ -1,6 +1,14 @@
 {
   "version": "twinning.twin-pair-proof-fixture.v0",
   "proof_version": "twinning.twin-pair-proof.v0",
+  "legacy_query_boundary": {
+    "first_cut": "translated_postgres_compatible",
+    "reference_protocol": "postgres",
+    "deferred_protocols": [
+      "oracle_tns"
+    ],
+    "unsupported_policy": "skip_or_process_refusal_not_success"
+  },
   "target_evidence": [
     {
       "artifact_kind": "verify",
