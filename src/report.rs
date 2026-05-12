@@ -8,7 +8,7 @@ use verify_core::{
     REPORT_VERSION as VERIFY_REPORT_VERSION, TOOL_NAME as VERIFY_TOOL_NAME, report::VerifyReport,
 };
 
-use crate::catalog::Catalog;
+use crate::{catalog::Catalog, declaration::CatalogDeclarationIdentity};
 
 pub const REPORT_VERSION: &str = "twinning.v0";
 const VERIFY_CONSTRAINT_VERSION: &str = "verify.constraint.v1";
@@ -23,6 +23,8 @@ pub struct TwinReport {
     pub port: u16,
     pub wire_protocol: String,
     pub schema: SchemaReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_declaration: Option<CatalogDeclarationIdentity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify_artifact: Option<VerifyArtifactReport>,
     pub catalog: CatalogReport,
@@ -136,6 +138,7 @@ pub struct TwinReportSeed<'a> {
     pub host: &'a str,
     pub port: u16,
     pub schema: SchemaReport,
+    pub catalog_declaration: Option<CatalogDeclarationIdentity>,
     pub verify_artifact: Option<VerifyArtifactReport>,
     pub verify: Option<Value>,
     pub catalog: &'a Catalog,
@@ -182,6 +185,7 @@ impl TwinReport {
             port: seed.port,
             wire_protocol: "planned.pgwire".to_owned(),
             schema: seed.schema,
+            catalog_declaration: seed.catalog_declaration,
             verify_artifact: seed.verify_artifact,
             catalog: CatalogReport {
                 dialect: seed.catalog.dialect.clone(),
@@ -452,6 +456,7 @@ mod tests {
                 index_count: 0,
                 constraint_count: 0,
             },
+            catalog_declaration: None,
             verify_artifact: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
@@ -517,6 +522,7 @@ mod tests {
                 index_count: 0,
                 constraint_count: 0,
             },
+            catalog_declaration: None,
             verify_artifact: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
@@ -590,6 +596,7 @@ mod tests {
                 index_count: catalog.index_count,
                 constraint_count: catalog.constraint_count,
             },
+            catalog_declaration: None,
             verify_artifact: None,
             verify: None,
             catalog: &catalog,
@@ -644,6 +651,7 @@ mod tests {
                 index_count: 2,
                 constraint_count: 2,
             },
+            catalog_declaration: None,
             verify_artifact: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
@@ -744,6 +752,7 @@ mod tests {
                 index_count: 0,
                 constraint_count: 0,
             },
+            catalog_declaration: None,
             verify_artifact: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
@@ -811,6 +820,7 @@ mod tests {
                 index_count: 0,
                 constraint_count: 0,
             },
+            catalog_declaration: None,
             verify_artifact: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),

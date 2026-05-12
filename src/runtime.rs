@@ -7,6 +7,7 @@ use crate::{
     catalog::{self, Catalog},
     cli::Engine,
     config::TwinConfig,
+    declaration::{CatalogDeclarationIdentity, load_catalog_declaration},
     kernel::storage::TableStorage,
     protocol::postgres::listener::{PgwireListener, SharedPgwireState, ShutdownHook},
     refusal,
@@ -35,6 +36,7 @@ struct BootstrapState {
     verify_artifact: Option<VerifyArtifactReport>,
     verify_report: Option<serde_json::Value>,
     live_verify_artifact: Option<LiveVerifyArtifact>,
+    catalog_declaration: Option<CatalogDeclarationIdentity>,
     catalog: Catalog,
     restored_from: Option<String>,
     restored_snapshot_hash: Option<String>,
@@ -211,10 +213,16 @@ fn load_state_from_schema(
         .map_err(|error| Box::new(refusal::schema_parse(schema_path, error.to_string())))?;
     let catalog = catalog::parse_postgres_schema(&schema_text)
         .map_err(|error| Box::new(refusal::schema_parse(schema_path, error.to_string())))?;
+    let schema_hash = sha256_prefixed(&schema_bytes);
+    let catalog_declaration = config
+        .declaration_path
+        .as_deref()
+        .map(|path| load_catalog_declaration(path, &schema_hash, &catalog))
+        .transpose()?;
 
     Ok(BootstrapState {
         schema_source: path_display(schema_path),
-        schema_hash: sha256_prefixed(&schema_bytes),
+        schema_hash,
         verify_artifact: if load_bootstrap_verify_artifact {
             load_verify_artifact(config.verify_path.as_deref())?
         } else {
@@ -222,6 +230,7 @@ fn load_state_from_schema(
         },
         verify_report: None,
         live_verify_artifact: None,
+        catalog_declaration,
         catalog,
         restored_from: None,
         restored_snapshot_hash: None,
@@ -239,6 +248,14 @@ fn restore_state(
 ) -> RefusalResult<BootstrapState> {
     let snapshot = snapshot::read_snapshot(restore_path)?;
     let restored_snapshot_hash = snapshot.snapshot_hash.clone();
+    let catalog_declaration = match config.declaration_path.as_deref() {
+        Some(path) => Some(load_catalog_declaration(
+            path,
+            &snapshot.schema_hash,
+            &snapshot.catalog,
+        )?),
+        None => snapshot.catalog_declaration.clone(),
+    };
     let verify_artifact = if load_bootstrap_verify_artifact {
         match config.verify_path.as_deref() {
             Some(path) => load_verify_artifact(Some(path))?,
@@ -256,6 +273,7 @@ fn restore_state(
         verify_artifact,
         verify_report: None,
         live_verify_artifact: None,
+        catalog_declaration,
         catalog: snapshot.catalog,
         restored_from: Some(path_display(restore_path)),
         restored_snapshot_hash: Some(restored_snapshot_hash),
@@ -512,6 +530,7 @@ mod tests {
             port: 5432,
             schema_path: Some(schema_path.clone()),
             verify_path: Some(verify_path.clone()),
+            declaration_path: None,
             run_command: None,
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
@@ -644,6 +663,7 @@ sock.close()
             port,
             schema_path: Some(schema_path),
             verify_path: None,
+            declaration_path: None,
             run_command: Some(format!(
                 "python3 \"{}\" 127.0.0.1 {port}",
                 child_path.display()
@@ -699,6 +719,7 @@ sock.close()
             port: 5432,
             schema_path: Some(schema_path),
             verify_path: Some(verify_path),
+            declaration_path: None,
             run_command: Some("python extract.py".to_owned()),
             report_path: Some(invalid_report_path),
             snapshot_path: None,
@@ -743,6 +764,7 @@ sock.close()
             port: 5432,
             schema_path: Some(schema_path),
             verify_path: Some(verify_path),
+            declaration_path: None,
             run_command: Some("python extract.py".to_owned()),
             report_path: None,
             snapshot_path: None,
@@ -771,6 +793,7 @@ sock.close()
             port: 5432,
             schema_path: Some(tempdir.path().join("missing.sql")),
             verify_path: None,
+            declaration_path: None,
             run_command: None,
             report_path: Some(report_path),
             snapshot_path: Some(snapshot_path.clone()),
@@ -810,6 +833,7 @@ sock.close()
             port: 5432,
             schema_path: Some(schema_path),
             verify_path: Some(malformed_verify_path),
+            declaration_path: None,
             run_command: None,
             report_path: Some(invalid_report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
@@ -830,6 +854,7 @@ sock.close()
             port: 5432,
             schema_path: None,
             verify_path: None,
+            declaration_path: None,
             run_command: None,
             report_path: Some(invalid_report_path),
             snapshot_path: Some(snapshot_path.clone()),
@@ -866,6 +891,7 @@ sock.close()
             port: 5432,
             schema_path: Some(schema_path.clone()),
             verify_path: None,
+            declaration_path: None,
             run_command: None,
             report_path: Some(invalid_report_path),
             snapshot_path: Some(blocked_snapshot_path.clone()),
@@ -893,6 +919,7 @@ sock.close()
             port: 5432,
             schema_path: Some(schema_path),
             verify_path: None,
+            declaration_path: None,
             run_command: None,
             report_path: Some(report_output_path.clone()),
             snapshot_path: Some(invalid_snapshot_path),
@@ -1006,6 +1033,7 @@ sock.close()
             port,
             schema_path: None,
             verify_path: Some(verify_path),
+            declaration_path: None,
             run_command: Some(String::from("true")),
             report_path: None,
             snapshot_path: None,

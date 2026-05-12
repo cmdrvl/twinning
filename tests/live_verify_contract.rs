@@ -45,6 +45,7 @@ fn seeded_report() -> TwinReport {
             index_count: catalog.index_count,
             constraint_count: catalog.constraint_count,
         },
+        catalog_declaration: None,
         verify_artifact: Some(VerifyArtifactReport {
             source: String::from("constraints.verify.json"),
             hash: String::from("sha256:artifact"),

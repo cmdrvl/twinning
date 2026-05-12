@@ -6,6 +6,7 @@ pub mod backend;
 pub mod catalog;
 pub mod cli;
 pub mod config;
+pub mod declaration;
 pub mod doctor;
 pub mod ir;
 pub mod kernel;

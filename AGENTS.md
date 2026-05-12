@@ -99,6 +99,7 @@ br show <id> --json
 cargo run -- postgres --schema schema.sql --json
 cargo run -- postgres --schema schema.sql --verify schema.verify.json \
   --report out/bootstrap.json --snapshot out/bootstrap.twin --json
+cargo run -- postgres --schema schema.sql --declaration declaration.json --json
 cargo run -- --describe
 
 # Current live run_once path
@@ -149,6 +150,7 @@ plan instead of silently changing the contract.
 | `src/lib.rs` | module root and CLI/runtime handoff |
 | `src/cli.rs` | clap surface and engine/flag definitions |
 | `src/config.rs` | validated runtime/bootstrap config |
+| `src/declaration.rs` | catalog-declared subset identity loading and validation |
 | `src/catalog.rs` | Postgres DDL parsing and normalized catalog construction |
 | `src/runtime.rs` | bootstrap lifecycle, load/restore, report/snapshot emission |
 | `src/report.rs` | `twinning.v0` report model and rendering |

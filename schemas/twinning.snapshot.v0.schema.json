@@ -49,6 +49,9 @@
     "verify_artifact": {
       "$ref": "#/$defs/verify_artifact"
     },
+    "catalog_declaration": {
+      "$ref": "#/$defs/catalog_declaration"
+    },
     "catalog": {
       "$ref": "#/$defs/catalog"
     },
@@ -95,6 +98,60 @@
         "loaded": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "catalog_declaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "hash",
+        "version",
+        "declaration_id",
+        "catalog_version",
+        "source_deployment_fingerprint",
+        "outcome_tags",
+        "table_keys"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "version": {
+          "type": "string",
+          "const": "twinning.catalog-declaration.v0"
+        },
+        "declaration_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "catalog_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_deployment_fingerprint": {
+          "$ref": "#/$defs/sha256"
+        },
+        "outcome_tags": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "table_keys": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },

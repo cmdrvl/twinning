@@ -124,6 +124,7 @@ twinning doctor --robot-triage
 Options:
   --schema <FILE>        SQL DDL file defining tables, constraints, indexes
   --verify <FILE>        Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation
+  --declaration <FILE>   Optional `twinning.catalog-declaration.v0` parent catalog subset identity
   --port <PORT>          Listen port (default: 5432)
   --host <HOST>          Listen address (default: 127.0.0.1)
   --run <COMMAND>        Run command against the twin, then report and exit
@@ -569,6 +570,7 @@ Required top-level fields:
 | `port` | bind port for the twin boundary |
 | `wire_protocol` | declared wire/runtime contract, e.g. `planned.pgwire` |
 | `schema` | normalized schema identity and hash |
+| `catalog_declaration` | optional parent catalog subset identity |
 | `catalog` | normalized catalog summary for the loaded schema |
 | `storage` | declared tournament / replay storage boundary |
 | `tables` | per-table structural/runtime metrics |
@@ -580,6 +582,7 @@ Optional top-level fields:
 
 | Field | Present when |
 |------|---------------|
+| `catalog_declaration` | `--declaration` was supplied or restored from a snapshot |
 | `verify_artifact` | `--verify` was supplied |
 | `verify` | embedded `verify.report.v1` is attached |
 | `run` | `--run` was used |
@@ -733,6 +736,7 @@ A live `twinning.snapshot.v0` hash surface must include:
 - snapshot format version
 - engine and twin mode
 - schema hash and normalized catalog identity
+- parent catalog declaration identity if supplied
 - base snapshot hash if the current twin was restored from one
 - verify artifact hash if one is attached
 - committed relation contents serialized in one canonical representation

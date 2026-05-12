@@ -15,6 +15,7 @@ pub struct TwinConfig {
     pub port: u16,
     pub schema_path: Option<PathBuf>,
     pub verify_path: Option<PathBuf>,
+    pub declaration_path: Option<PathBuf>,
     pub run_command: Option<String>,
     pub report_path: Option<PathBuf>,
     pub snapshot_path: Option<PathBuf>,
@@ -52,6 +53,7 @@ impl TwinConfig {
             port: args.port.unwrap_or_else(|| engine.default_port()),
             schema_path: args.schema.clone(),
             verify_path: args.verify.clone(),
+            declaration_path: args.declaration.clone(),
             run_command: args.run.clone(),
             report_path: args.report.clone(),
             snapshot_path: args.snapshot.clone(),
@@ -72,6 +74,7 @@ mod tests {
         let args = TwinArgs {
             schema: Some("schema.sql".into()),
             verify: None,
+            declaration: None,
             host: "127.0.0.1".to_owned(),
             port: None,
             run: None,

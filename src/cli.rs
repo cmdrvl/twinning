@@ -91,6 +91,9 @@ pub struct TwinArgs {
     #[arg(long, value_name = "FILE")]
     pub verify: Option<PathBuf>,
 
+    #[arg(long, value_name = "FILE")]
+    pub declaration: Option<PathBuf>,
+
     #[arg(long, default_value = "127.0.0.1")]
     pub host: String,
 

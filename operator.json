@@ -42,6 +42,12 @@
       "description": "Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation"
     },
     {
+      "name": "declaration",
+      "flag": "--declaration",
+      "type": "file_path",
+      "description": "Optional catalog-declared subset identity (`twinning.catalog-declaration.v0`)"
+    },
+    {
       "name": "host",
       "flag": "--host",
       "type": "string",

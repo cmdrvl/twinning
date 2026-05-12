@@ -1,0 +1,53 @@
+{
+  "version": "twinning.catalog-declaration.v0",
+  "declaration_id": "metadata-catalog:procurement-outcome:v0",
+  "catalog_version": "metadata-catalog.v2026-05-12",
+  "source_deployment_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "outcome_tags": [
+    "procurement"
+  ],
+  "schema_hash": "sha256:8138e546b7937a171917598b6a7d733b2fdca44cd02c4b9b61532fc399ef435b",
+  "tables": [
+    {
+      "name": "public.procurement_outcomes",
+      "catalog_table_key": "metadata.tables.public.procurement_outcomes",
+      "primary_key": [
+        "outcome_id"
+      ]
+    },
+    {
+      "name": "public.procurement_sources",
+      "catalog_table_key": "metadata.tables.public.procurement_sources",
+      "primary_key": [
+        "source_id"
+      ]
+    },
+    {
+      "name": "public.procurement_evidence",
+      "catalog_table_key": "metadata.tables.public.procurement_evidence",
+      "primary_key": [
+        "evidence_id"
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "outcome_id"
+          ],
+          "references_table": "public.procurement_outcomes",
+          "references_columns": [
+            "outcome_id"
+          ]
+        },
+        {
+          "columns": [
+            "source_id"
+          ],
+          "references_table": "public.procurement_sources",
+          "references_columns": [
+            "source_id"
+          ]
+        }
+      ]
+    }
+  ]
+}

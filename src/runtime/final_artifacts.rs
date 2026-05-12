@@ -87,6 +87,7 @@ impl FinalArtifactEmitter {
                     index_count: state.catalog.index_count,
                     constraint_count: state.catalog.constraint_count,
                 },
+                catalog_declaration: state.catalog_declaration.clone(),
                 verify_artifact: state.verify_artifact.clone(),
                 verify: verify_report,
                 catalog: &state.catalog,
@@ -169,7 +170,8 @@ fn freeze_snapshot(
         state.restored_snapshot_hash.clone(),
         state.verify_artifact.clone(),
         state.catalog.clone(),
-    )?;
+    )?
+    .with_catalog_declaration(state.catalog_declaration.clone())?;
 
     match committed_tables {
         Some(committed_tables) => snapshot.with_committed_tables(committed_tables),
@@ -638,6 +640,7 @@ mod tests {
                 verify_artifact: None,
                 verify_report: None,
                 live_verify_artifact: None,
+                catalog_declaration: None,
                 catalog,
                 restored_from: None,
                 restored_snapshot_hash: None,

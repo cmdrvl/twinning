@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     catalog::{Catalog, TableCatalog},
     cli::Engine,
+    declaration::CatalogDeclarationIdentity,
     kernel::{storage::TableStorage, value::KernelValue},
     refusal,
     refusal::RefusalResult,
@@ -36,6 +37,8 @@ pub struct TwinSnapshot {
     pub base_snapshot_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify_artifact: Option<VerifyArtifactReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_declaration: Option<CatalogDeclarationIdentity>,
     pub catalog: Catalog,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relations: Option<SnapshotRelations>,
@@ -63,6 +66,7 @@ impl TwinSnapshot {
             schema_hash,
             base_snapshot_hash,
             verify_artifact,
+            catalog_declaration: None,
             catalog,
             relations: None,
             table_rows,
@@ -85,6 +89,15 @@ impl TwinSnapshot {
     ) -> RefusalResult<Self> {
         let relations = relations_from_committed_tables(&self.catalog, committed_tables)?;
         self.with_relations(relations)
+    }
+
+    pub fn with_catalog_declaration(
+        mut self,
+        declaration: Option<CatalogDeclarationIdentity>,
+    ) -> RefusalResult<Self> {
+        self.catalog_declaration = declaration;
+        self.snapshot_hash = self.compute_hash()?;
+        Ok(self)
     }
 
     pub fn compute_hash(&self) -> RefusalResult<String> {
@@ -110,6 +123,7 @@ impl TwinSnapshot {
             mode: &clone.mode,
             schema_hash: &clone.schema_hash,
             verify_artifact: clone.verify_artifact.as_ref(),
+            catalog_declaration: clone.catalog_declaration.as_ref(),
             catalog: &clone.catalog,
             relations: clone.relations.as_ref(),
             table_rows: &clone.table_rows,
@@ -139,6 +153,8 @@ struct CanonicalCommittedStateSurface<'a> {
     schema_hash: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     verify_artifact: Option<&'a VerifyArtifactReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalog_declaration: Option<&'a CatalogDeclarationIdentity>,
     catalog: &'a Catalog,
     #[serde(skip_serializing_if = "Option::is_none")]
     relations: Option<&'a SnapshotRelations>,

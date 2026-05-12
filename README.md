@@ -234,6 +234,7 @@ Current options:
 
 - `--schema <FILE>`: SQL DDL file defining tables, constraints, and indexes
 - `--verify <FILE>`: compiled `verify.constraint.v1` artifact
+- `--declaration <FILE>`: optional `twinning.catalog-declaration.v0` parent catalog subset identity
 - `--host <HOST>`: bind host (default `127.0.0.1`)
 - `--port <PORT>`: bind port (default `5432`)
 - `--run <COMMAND>`: run one child command against the live pgwire shell, then freeze final artifacts
@@ -366,6 +367,7 @@ Refusals are structured errors with exit code `2`. Each includes a code, message
 | `E_IO_READ` | Input file not readable | Check path and permissions |
 | `E_IO_WRITE` | Output file not writable | Check path and permissions |
 | `E_SCHEMA_PARSE` | DDL parsing failed | Fix SQL syntax in schema file |
+| `E_DECLARATION_PARSE` | Catalog declaration malformed or mismatched | Regenerate the declaration for the selected schema |
 | `E_VERIFY_ARTIFACT_PARSE` | Verify artifact malformed | Regenerate with `verify` |
 | `E_SNAPSHOT_VERIFY` | Snapshot hash mismatch or version error | Re-emit from schema source |
 | `E_SERIALIZATION` | Internal JSON rendering failure | Report bug |
