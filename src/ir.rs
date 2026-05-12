@@ -409,7 +409,7 @@ fn normalize_tracked_set_statement(
     }
 
     let variable = object_name_to_string(&variables[0]);
-    if variable != TRACKED_SESSION_PARAM_APPLICATION_NAME {
+    if !variable.eq(TRACKED_SESSION_PARAM_APPLICATION_NAME) {
         return Err(session_refusal(
             &session_set_shape(&variable),
             &[("variable", variable)],
@@ -1025,7 +1025,7 @@ fn collect_predicate_comparisons(
     comparisons: &mut Vec<PredicateComparison>,
 ) -> NormalizationResult<()> {
     match strip_nested_expr(expr) {
-        Expr::BinaryOp { left, op, right } if op == operator => {
+        Expr::BinaryOp { left, op, right } if op.eq(operator) => {
             collect_predicate_comparisons(table, left, operator, comparisons)?;
             collect_predicate_comparisons(table, right, operator, comparisons)
         }
@@ -1222,7 +1222,7 @@ fn predicate_matches_primary_key(table: &TableCatalog, predicate: Option<&Predic
     let columns = comparisons
         .iter()
         .filter(|comparison| {
-            comparison.operator == PredicateOperator::Eq && comparison.values.len() == 1
+            comparison.operator.eq(&PredicateOperator::Eq) && comparison.values.len() == 1
         })
         .map(|comparison| comparison.column.as_str())
         .collect::<BTreeSet<_>>();
@@ -1232,7 +1232,7 @@ fn predicate_matches_primary_key(table: &TableCatalog, predicate: Option<&Predic
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
 
-    columns == primary_key_columns
+    columns.eq(&primary_key_columns)
 }
 
 fn binary_operator_to_predicate(operator: BinaryOperator) -> Option<PredicateOperator> {
@@ -1387,7 +1387,7 @@ fn resolve_table_with<'a>(
                 .name
                 .rsplit('.')
                 .next()
-                .is_some_and(|segment| segment == short_name)
+                .is_some_and(|segment| segment.eq(short_name))
         });
 
         if let (Some(table), None) = (matches.next(), matches.next()) {
@@ -1642,7 +1642,7 @@ fn normalize_conflict_target(
             if table
                 .primary_key
                 .as_ref()
-                .is_some_and(|key| key.columns == resolved)
+                .is_some_and(|key| key.columns.eq(&resolved))
             {
                 return Ok(ConflictTarget::PrimaryKey);
             }
@@ -1650,7 +1650,7 @@ fn normalize_conflict_target(
             if table
                 .unique_constraints
                 .iter()
-                .any(|constraint| constraint.columns == resolved)
+                .any(|constraint| constraint.columns.eq(&resolved))
             {
                 return Ok(ConflictTarget::Columns(resolved));
             }
@@ -1727,7 +1727,7 @@ fn validate_upsert_assignments(
         }
 
         let value_column = resolve_column(table, &parts[1].value)?;
-        if value_column != column {
+        if !value_column.eq(&column) {
             return Err(mutation_refusal(
                 "on_conflict_assignment",
                 &[("assignment", assignment.to_string())],
@@ -1853,7 +1853,11 @@ fn resolve_compound_column_with(
     }
 
     let table_parts = table.name.split('.').collect::<Vec<_>>();
-    if prefix == table_parts || prefix == vec![*table_parts.last().expect("table name segment")] {
+    if prefix.as_slice().eq(table_parts.as_slice())
+        || prefix
+            .as_slice()
+            .eq([*table_parts.last().expect("table name segment")].as_slice())
+    {
         return resolve_column_with(table, column, refusal);
     }
 
@@ -1882,7 +1886,7 @@ fn resolve_column_with(
     table
         .columns
         .iter()
-        .find(|column| column.name == name)
+        .find(|column| column.name.eq(name))
         .map(|column| column.name.clone())
         .ok_or_else(|| refusal("unknown_column", &[("column", name.to_owned())]))
 }

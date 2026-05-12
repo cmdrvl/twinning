@@ -30,7 +30,7 @@ impl SessionOverlayManager {
     pub fn begin_write(&mut self, session_id: impl Into<SessionId>) -> Result<(), OverlayError> {
         let session_id = session_id.into();
         match &self.active_writer {
-            Some(writer) if writer.session_id == session_id => Ok(()),
+            Some(writer) if writer.session_id.eq(&session_id) => Ok(()),
             Some(writer) => Err(OverlayError::WriterBusy {
                 active_session: writer.session_id.clone(),
             }),
@@ -43,7 +43,7 @@ impl SessionOverlayManager {
 
     pub fn visible_table(&self, session_id: &str, table_name: &str) -> Option<&TableStorage> {
         if let Some(writer) = &self.active_writer
-            && writer.session_id == session_id
+            && writer.session_id.as_str().eq(session_id)
             && let Some(table) = writer.overlay_tables.get(table_name)
         {
             return Some(table);
@@ -58,7 +58,7 @@ impl SessionOverlayManager {
         table_name: &str,
     ) -> Result<TableStorage, OverlayError> {
         if let Some(writer) = &self.active_writer
-            && writer.session_id == session_id
+            && writer.session_id.as_str().eq(session_id)
             && let Some(table) = writer.overlay_tables.get(table_name)
         {
             return Ok(table.clone());
@@ -112,7 +112,7 @@ impl SessionOverlayManager {
 
     fn require_writer(&mut self, session_id: &str) -> Result<&mut ActiveWriter, OverlayError> {
         match self.active_writer.as_mut() {
-            Some(writer) if writer.session_id == session_id => Ok(writer),
+            Some(writer) if writer.session_id.as_str().eq(session_id) => Ok(writer),
             Some(writer) => Err(OverlayError::SessionNotWriter {
                 session_id: session_id.to_owned(),
                 active_session: Some(writer.session_id.clone()),
@@ -126,7 +126,7 @@ impl SessionOverlayManager {
 
     fn take_writer(&mut self, session_id: &str) -> Result<ActiveWriter, OverlayError> {
         match self.active_writer.take() {
-            Some(writer) if writer.session_id == session_id => Ok(writer),
+            Some(writer) if writer.session_id.as_str().eq(session_id) => Ok(writer),
             Some(writer) => {
                 let active_session = writer.session_id.clone();
                 self.active_writer = Some(writer);

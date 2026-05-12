@@ -238,8 +238,8 @@ fn compare_kernel_to_scalar(
 
     match (left, right) {
         (ComparableValue::Boolean(left), ComparableValue::Boolean(right)) => match operator {
-            PredicateOperator::Eq => Ok(bool_to_truth(left == right)),
-            PredicateOperator::Neq => Ok(bool_to_truth(left != right)),
+            PredicateOperator::Eq => Ok(bool_to_truth(left.eq(&right))),
+            PredicateOperator::Neq => Ok(bool_to_truth(!left.eq(&right))),
             _ => Err(PredicateError::UnsupportedOperator {
                 table: table.name.clone(),
                 column: column.to_owned(),
@@ -336,8 +336,8 @@ where
     T: Ord,
 {
     bool_to_truth(match operator {
-        PredicateOperator::Eq => left == right,
-        PredicateOperator::Neq => left != right,
+        PredicateOperator::Eq => left.eq(&right),
+        PredicateOperator::Neq => !left.eq(&right),
         PredicateOperator::Lt => left < right,
         PredicateOperator::Lte => left <= right,
         PredicateOperator::Gt => left > right,
@@ -348,8 +348,8 @@ where
 
 fn compare_float(left: f64, right: f64, operator: PredicateOperator) -> TruthValue {
     bool_to_truth(match operator {
-        PredicateOperator::Eq => left == right,
-        PredicateOperator::Neq => left != right,
+        PredicateOperator::Eq => left.eq(&right),
+        PredicateOperator::Neq => !left.eq(&right),
         PredicateOperator::Lt => left < right,
         PredicateOperator::Lte => left <= right,
         PredicateOperator::Gt => left > right,

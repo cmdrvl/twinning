@@ -23,7 +23,7 @@ impl WriterGate {
     pub fn try_admit(&mut self, session_id: impl Into<String>) -> Result<(), WriterGateError> {
         let session_id = session_id.into();
         match self.active_writer.as_deref() {
-            Some(active_writer) if active_writer == session_id => Ok(()),
+            Some(active_writer) if active_writer.eq(session_id.as_str()) => Ok(()),
             Some(active_writer) => Err(WriterGateError::WriterBusy {
                 active_session: active_writer.to_owned(),
             }),
@@ -36,7 +36,7 @@ impl WriterGate {
 
     pub fn release(&mut self, session_id: &str) -> bool {
         match self.active_writer.as_deref() {
-            Some(active_writer) if active_writer == session_id => {
+            Some(active_writer) if active_writer.eq(session_id) => {
                 self.active_writer = None;
                 true
             }
