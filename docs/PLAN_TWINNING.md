@@ -772,13 +772,17 @@ slots, source file display paths, and restore lineage (`base_snapshot_hash`).
 Those excluded fields are operator metadata; they must not change whether two
 snapshots carry the same declared committed state.
 
-Phase-0 bootstrap note:
+Current implementation note:
 
-- The current bootstrap build emits normalized catalog identity plus deterministic
+- Bootstrap mode emits normalized catalog identity plus deterministic
   `table_rows` counts and optional restore lineage.
-- Live committed relation contents may be attached later through the optional
-  `relations` section declared in the schema, but only if the canonical ordering
-  rules below are preserved.
+- `--materialize-source-url` can attach committed relation contents through the
+  optional `relations` section declared in the schema; source rows are converted
+  into the kernel value model and canonicalized before hashing.
+- `committed_row_snapshot_canonical_bytes_survive_restore_and_refreeze` is the
+  release gate for the chosen equality contract: canonical committed-state bytes
+  must round-trip identically, while full artifact bytes are allowed to differ
+  when their operator metadata differs.
 - If a future live implementation cannot preserve those ordering rules under the
   existing schema surface, it must bump the snapshot version instead of silently
   changing the meaning of `twinning.snapshot.v0`.

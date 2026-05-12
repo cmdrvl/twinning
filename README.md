@@ -207,8 +207,10 @@ You provide:
 
 `twinning` returns:
 
-- one deterministic `twinning.v0` report
-- one deterministic `twinning.snapshot.v0` snapshot
+- one deterministic `twinning.v0` report over the declared committed state
+- one content-addressed `twinning.snapshot.v0` snapshot with canonical
+  committed-state bytes; envelope metadata such as creation time and restore
+  lineage remains explicit but is not the equality surface
 - explicit refusal behavior instead of silent partial semantics
 - later, protocol-visible runtime behavior for the canary-defined Postgres subset
 

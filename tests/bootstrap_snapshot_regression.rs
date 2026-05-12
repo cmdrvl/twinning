@@ -230,6 +230,11 @@ fn committed_row_snapshot_canonical_bytes_survive_restore_and_refreeze() {
             .expect("refrozen canonical bytes")
     );
     assert_ne!(
+        serde_json::to_vec(&frozen).expect("render frozen artifact"),
+        serde_json::to_vec(&refrozen).expect("render refrozen artifact"),
+        "full artifact bytes include operator metadata such as source display path and restore lineage"
+    );
+    assert_ne!(
         frozen.snapshot_hash, refrozen.snapshot_hash,
         "restore lineage remains explicit artifact metadata outside the committed-state byte surface"
     );
