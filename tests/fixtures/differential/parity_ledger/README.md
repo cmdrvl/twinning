@@ -18,7 +18,8 @@ Requirement matrix:
 | Requirement | Completion criterion | Fixture cases |
 | --- | --- | --- |
 | `process_run_once_twin` | live `run_once` pgwire shell is reliable end-to-end | all cases |
-| `declared_success_parity` | declared subset queries are ledgered against reference outcomes | `write_insert_basic`, `read_select_by_pk` |
+| `declared_success_parity` | declared subset queries are ledgered against reference outcomes | `write_insert_basic`, `read_select_by_pk`, `metadata_public_base_tables` |
+| `catalog_metadata_parity` | exact catalog-introspection behavior is ledgered against reference outcomes | `metadata_public_base_tables` |
 | `subset_refusal_parity` | out-of-subset relations return protocol-faithful errors | `outside_subset_relation` |
 
 Run:

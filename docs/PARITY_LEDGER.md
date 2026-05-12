@@ -35,7 +35,8 @@ Requirement matrix:
 | Requirement | Completion criterion | Current proof |
 | --- | --- | --- |
 | `process_run_once_twin` | run_once bind, child execution, shutdown, and report emission | `run_once_parity_ledger_records_success_and_protocol_refusal_entries` |
-| `declared_success_parity` | at least one declared read and one declared write are ledgered | `write_insert_basic`, `read_select_by_pk` |
+| `declared_success_parity` | at least one declared read and one declared write are ledgered | `write_insert_basic`, `read_select_by_pk`, `metadata_public_base_tables` |
+| `catalog_metadata_parity` | exact declared catalog-introspection behavior has a Postgres-reference observation | `metadata_public_base_tables` |
 | `subset_refusal_parity` | out-of-subset relation references produce protocol-visible `42P01` | `outside_subset_relation` |
 
 Ledger entries include:

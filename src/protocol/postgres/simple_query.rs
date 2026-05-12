@@ -32,7 +32,7 @@ pub fn dispatch_simple_query_result_with_catalog(
     catalog: Option<&Catalog>,
 ) -> KernelResult {
     let session_id = session_id.into();
-    if let Some(metadata_result) = metadata_query_result(sql) {
+    if let Some(metadata_result) = metadata_query_result(sql, catalog) {
         return metadata_result;
     }
 
@@ -92,8 +92,10 @@ enum SimpleStatementKind {
     Mutation,
 }
 
-fn metadata_query_result(sql: &str) -> Option<KernelResult> {
-    classify_metadata_query(sql).map(|metadata_query| KernelResult::Read(metadata_query.result()))
+fn metadata_query_result(sql: &str, catalog: Option<&Catalog>) -> Option<KernelResult> {
+    classify_metadata_query(sql)
+        .and_then(|metadata_query| metadata_query.result(catalog))
+        .map(KernelResult::Read)
 }
 
 fn refusal_into_result(refusal: RefusalOp) -> RefusalResult {
@@ -161,11 +163,14 @@ fn refusal_scope_token(scope: RefusalScope) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::ir::SessionOpKind;
+    use crate::protocol::postgres::frames::ResultFrameMetadata;
     use crate::protocol::postgres::session::TransactionStatus;
+    use crate::{catalog::parse_postgres_schema, ir::SessionOpKind};
 
     use super::dispatch_simple_query;
-    use super::{DEFAULT_UNSUPPORTED_LIVE_SQLSTATE, SessionLoop};
+    use super::{
+        DEFAULT_UNSUPPORTED_LIVE_SQLSTATE, SessionLoop, dispatch_simple_query_result_with_catalog,
+    };
 
     #[test]
     fn declared_session_simple_queries_render_command_complete_frames() {
@@ -342,6 +347,47 @@ mod tests {
         );
         assert_eq!(
             decode_ready_status(refusal.frames.last().expect("ready frame")),
+            b'I'
+        );
+    }
+
+    #[test]
+    fn catalog_backed_information_schema_simple_query_returns_declared_public_tables() {
+        let catalog = parse_postgres_schema(
+            r#"
+            CREATE TABLE public.deals (
+                deal_id TEXT PRIMARY KEY
+            );
+
+            CREATE TABLE public.tenants (
+                tenant_id TEXT PRIMARY KEY
+            );
+            "#,
+        )
+        .expect("schema should parse");
+        let mut session = SessionLoop::new();
+        let result = dispatch_simple_query_result_with_catalog(
+            "metadata-simple",
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name",
+            Some(&catalog),
+        );
+        let cycle = session.process_result(&result, ResultFrameMetadata::default());
+
+        assert_eq!(
+            decode_row_description(cycle.frames.first().expect("row description")),
+            vec![(String::from("table_name"), String::from("text"))]
+        );
+        assert_eq!(
+            decode_data_row(cycle.frames.get(1).expect("first row")),
+            vec![Some(String::from("deals"))]
+        );
+        assert_eq!(
+            decode_data_row(cycle.frames.get(2).expect("second row")),
+            vec![Some(String::from("tenants"))]
+        );
+        assert_eq!(decode_command_complete(&cycle.frames[3]), "SELECT 2");
+        assert_eq!(
+            decode_ready_status(cycle.frames.last().expect("ready frame")),
             b'I'
         );
     }

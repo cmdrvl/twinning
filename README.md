@@ -90,7 +90,7 @@ schema: schema.sql (4 tables, 28 columns, 3 indexes, hash sha256:a1b2c3...)
 storage: tournament=bounded-memory hot working set with per-twin overlay | replay=disk-backed, snapshot-backed, or delegated real-database backend
 verify: constraints.verify.json (12 loaded, hash sha256:d4e5f6...)
 snapshot: out/bootstrap.twin (sha256:7a8b9c...)
-next: Live pgwire execution is not implemented yet. Use this build to validate schema assets, emit deterministic bootstrap artifacts, and stage the runtime boundary cleanly.
+next: Bootstrap mode validated the schema assets and deterministic artifact path. Use --run to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands.
 ```
 
 **JSON mode** (`--json`):
@@ -144,12 +144,12 @@ next: Live pgwire execution is not implemented yet. Use this build to validate s
     "written_to": "out/bootstrap.twin",
     "snapshot_hash": "sha256:7a8b9c..."
   },
-  "next_step": "Live pgwire execution is not implemented yet. Use this build to validate schema assets, emit deterministic bootstrap artifacts, and stage the runtime boundary cleanly."
+  "next_step": "Bootstrap mode validated the schema assets and deterministic artifact path. Use --run to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands."
 }
 ```
 
-Bootstrap reports still show the current bootstrap-only `next_step` string above.
-When `--run` is present, the report switches to `mode: "run_once"` and points
+Bootstrap reports show the validation-oriented `next_step` string above. When
+`--run` is present, the report switches to `mode: "run_once"` and points
 operators at the final `run` metadata instead.
 
 **Run-once mode** (`--run <COMMAND>`):
@@ -227,6 +227,7 @@ Implemented now:
 - bootstrap snapshot hashing and restore verification
 - pgwire listener + startup/session shell for the declared live subset
 - normalized read/mutation IR plus row-store execution for the canary-defined SQL shapes
+- exact `information_schema.tables` public base-table introspection for the declared catalog
 - constraint enforcement and single-writer overlay behavior for committed-state snapshots
 - live `--run` child orchestration, run metadata capture, and final artifact emission
 - embedded verify execution over committed twin state
@@ -239,6 +240,7 @@ Not implemented yet:
 
 - long-lived standalone server mode beyond `run_once`
 - SQL/session shapes outside the checked-in canary manifest
+- joined reads; the current manifest pins these as explicit protocol-visible refusals
 - concurrent writers or multi-writer semantics
 - non-Postgres runtime engines
 - replay/proof backends beyond the current tournament-mode live shell

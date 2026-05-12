@@ -8,6 +8,7 @@
       "cases": [
         "write_insert_basic",
         "read_select_by_pk",
+        "metadata_public_base_tables",
         "outside_subset_relation"
       ]
     },
@@ -17,7 +18,16 @@
       "coverage": "One declared write and one declared read record Postgres-reference expectations and twin observations in the same ledger shape.",
       "cases": [
         "write_insert_basic",
-        "read_select_by_pk"
+        "read_select_by_pk",
+        "metadata_public_base_tables"
+      ]
+    },
+    {
+      "id": "catalog_metadata_parity",
+      "completion_criterion": "3. declared metadata introspection has a Postgres-reference observation",
+      "coverage": "The exact information_schema public base-table query returns the declared catalog table names in stable order.",
+      "cases": [
+        "metadata_public_base_tables"
       ]
     },
     {
@@ -116,6 +126,43 @@
           {
             "deal_id": "deal-read-001",
             "deal_name": "Alpha"
+          }
+        ]
+      }
+    },
+    {
+      "id": "metadata_public_base_tables",
+      "operation": "read",
+      "client_surface": "extended_query_parse_bind_execute_sync",
+      "description": "Exact information_schema public base-table introspection returns the declared catalog tables.",
+      "setup": [],
+      "sql": "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name",
+      "params": [],
+      "postgres_observed": {
+        "outcome_class": "success",
+        "columns": [
+          "table_name"
+        ],
+        "rows": [
+          {
+            "table_name": "deals"
+          },
+          {
+            "table_name": "tenants"
+          }
+        ]
+      },
+      "twin_expected": {
+        "outcome_class": "success",
+        "columns": [
+          "table_name"
+        ],
+        "rows": [
+          {
+            "table_name": "deals"
+          },
+          {
+            "table_name": "tenants"
           }
         ]
       }

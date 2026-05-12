@@ -61,6 +61,24 @@
       "unsupported_policy": "refusal"
     },
     {
+      "id": "metadata_join_conformance",
+      "client": "conformance_probe",
+      "session_shapes": [
+        "startup_auth_v3",
+        "parameter_status_baseline",
+        "extended_query_parse_bind_execute_sync"
+      ],
+      "write_shapes": [],
+      "read_shapes": [
+        "information_schema_public_base_tables",
+        "select_inner_join_eq_refusal"
+      ],
+      "required_sqlstates": [
+        "0A000"
+      ],
+      "unsupported_policy": "refusal"
+    },
+    {
       "id": "extractor_canary",
       "client": "factory_extractor",
       "session_shapes": [

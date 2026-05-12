@@ -16,6 +16,7 @@ fn manifest_lists_expected_canaries_and_matching_harness_files() {
             "psql_smoke",
             "psycopg2_params",
             "sqlalchemy_core",
+            "metadata_join_conformance",
             "extractor_canary",
         ]
     );

@@ -198,7 +198,11 @@ impl ExtendedExecuteState {
             .ok_or_else(|| missing_portal_refusal(&request.portal_name))?;
         if let Some(metadata_query) = portal.metadata_query {
             return Ok(PendingResult {
-                result: KernelResult::Read(metadata_query.result()),
+                result: KernelResult::Read(
+                    metadata_query
+                        .result(Some(catalog))
+                        .expect("extended metadata execution should have catalog state"),
+                ),
                 returning_columns: Vec::new(),
             });
         }

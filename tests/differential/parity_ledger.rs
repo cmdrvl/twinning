@@ -24,7 +24,7 @@ fn parity_ledger_fixture_is_checked_in_and_documents_requirement_matrix() {
     let fixture = load_fixture();
 
     assert_eq!(fixture.version, FIXTURE_VERSION);
-    assert_eq!(fixture.cases.len(), 3);
+    assert_eq!(fixture.cases.len(), 4);
     assert!(
         schema_path().exists(),
         "parity ledger schema fixture should be checked in"
@@ -40,6 +40,7 @@ fn parity_ledger_fixture_is_checked_in_and_documents_requirement_matrix() {
         BTreeSet::from([
             "process_run_once_twin",
             "declared_success_parity",
+            "catalog_metadata_parity",
             "subset_refusal_parity",
         ])
     );
@@ -69,6 +70,7 @@ fn parity_ledger_fixture_is_checked_in_and_documents_requirement_matrix() {
         .collect::<BTreeMap<_, _>>();
     assert!(cases_by_id.contains_key("write_insert_basic"));
     assert!(cases_by_id.contains_key("read_select_by_pk"));
+    assert!(cases_by_id.contains_key("metadata_public_base_tables"));
     assert!(cases_by_id.contains_key("outside_subset_relation"));
 
     assert_eq!(
@@ -90,6 +92,15 @@ fn parity_ledger_fixture_is_checked_in_and_documents_requirement_matrix() {
             .columns
             .as_deref(),
         Some([String::from("deal_id"), String::from("deal_name")].as_slice())
+    );
+    assert_eq!(
+        cases_by_id["metadata_public_base_tables"]
+            .twin_expected
+            .rows
+            .as_ref()
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("table_name")),
+        Some(&Value::String(String::from("deals")))
     );
     assert_eq!(
         cases_by_id["outside_subset_relation"]
@@ -173,7 +184,7 @@ fn run_once_parity_ledger_records_success_and_protocol_refusal_entries() {
             "tests/fixtures/differential/parity_ledger/cases.json"
         );
     }
-    assert_eq!(ledger.entries.len(), 3);
+    assert_eq!(ledger.entries.len(), 4);
     assert!(
         ledger.entries.iter().all(|entry| entry.verdict == "pass"),
         "all parity ledger entries should pass: {ledger:#?}"
@@ -210,6 +221,22 @@ fn run_once_parity_ledger_records_success_and_protocol_refusal_entries() {
             .and_then(|row| row.get("deal_name")),
         Some(&Value::String(String::from("Alpha")))
     );
+
+    let metadata = entries_by_id["metadata_public_base_tables"];
+    assert_eq!(
+        metadata.twin_observed.columns.as_deref(),
+        Some([String::from("table_name")].as_slice())
+    );
+    assert_eq!(
+        metadata
+            .twin_observed
+            .rows
+            .as_ref()
+            .and_then(|rows| rows.get(1))
+            .and_then(|row| row.get("table_name")),
+        Some(&Value::String(String::from("tenants")))
+    );
+    assert_eq!(metadata.postgres_observed.rows, metadata.twin_observed.rows);
 
     let refusal = entries_by_id["outside_subset_relation"];
     assert_eq!(refusal.twin_observed.sqlstate.as_deref(), Some("42P01"));

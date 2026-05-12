@@ -141,10 +141,15 @@ fn assert_supported_black_box_shapes(canary: &support::CanaryDefinition) {
         "upsert_pk",
         "upsert_unique",
     ]);
-    let supported_read_shapes =
-        BTreeSet::from(["select_by_pk", "select_filtered_scan", "select_is_null"]);
+    let supported_read_shapes = BTreeSet::from([
+        "select_by_pk",
+        "select_filtered_scan",
+        "select_is_null",
+        "information_schema_public_base_tables",
+        "select_inner_join_eq_refusal",
+    ]);
     let supported_required_sqlstates =
-        BTreeSet::from(["23502", "23503", "23505", "23514", "22P02"]);
+        BTreeSet::from(["23502", "23503", "23505", "23514", "22P02", "0A000"]);
     let supported_unsupported_policies = BTreeSet::from(["refusal"]);
 
     for shape in &canary.session_shapes {
@@ -542,6 +547,16 @@ def parse_bind_execute_error(name, sql, params, expected_sqlstate):
     expect_ready(frames, b"E")
 
 
+def expect_prepare_refusal(name, sql, expected_sqlstate):
+    framed(b"P", name.encode("utf-8") + b"\x00" + sql.encode("utf-8") + b"\x00" + struct.pack("!h", 0))
+    framed(b"S")
+    frames = read_until_ready()
+    actual_sqlstate = decode_error_sqlstate(frames[0])
+    if actual_sqlstate != expected_sqlstate:
+        fail(f"{name} expected SQLSTATE {expected_sqlstate}, got {actual_sqlstate}")
+    expect_ready(frames, b"I")
+
+
 def execute_write_shape(shape):
     canary_id = case["id"]
     if shape == "insert_values":
@@ -615,6 +630,25 @@ def execute_read_shape(shape):
         )
         if not any(row == [f"{canary_id}-insert-values"] for row in rows):
             fail(f"select_is_null did not return the committed NULL-status row: {rows!r}")
+    elif shape == "information_schema_public_base_tables":
+        rows = parse_bind_execute(
+            "information_schema_public_base_tables",
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name",
+            [],
+            expect_select=True,
+            ready_status=b"I",
+        )
+        if rows != [["deals"], ["tenants"]]:
+            fail(f"information_schema_public_base_tables returned unexpected rows: {rows!r}")
+    elif shape == "select_inner_join_eq_refusal":
+        query("BEGIN", b"T")
+        parse_bind_execute_error(
+            "select_inner_join_eq_refusal",
+            "SELECT deals.deal_id, tenants.tenant_id FROM public.deals JOIN public.tenants ON deals.tenant_id = tenants.tenant_id WHERE deals.deal_id = $1",
+            [f"{canary_id}-missing"],
+            "0A000",
+        )
+        query("ROLLBACK", b"I")
     else:
         fail(f"unmapped manifest read shape {shape!r}")
 
@@ -638,6 +672,9 @@ def execute_required_sqlstate(sqlstate):
     elif sqlstate == "22P02":
         sql = "INSERT INTO public.deals (tenant_id, deal_id, external_key, deal_name, status, amount) VALUES ($1, $2, $3, $4, $5, $6)"
         params = [None, f"{canary_id}-probe-bad-int", f"{canary_id}-external-bad-int", "Bad Int Probe", "open", "not-an-int"]
+    elif sqlstate == "0A000":
+        expect_prepare_refusal("probe_0A000", "BEGIN", "0A000")
+        return
     else:
         fail(f"unmapped manifest SQLSTATE {sqlstate!r}")
 
@@ -659,11 +696,7 @@ for sqlstate in case["required_sqlstates"]:
     execute_required_sqlstate(sqlstate)
 
 if case["unsupported_policy"] == "refusal":
-    framed(b"P", b"bad_statement\x00BEGIN\x00" + struct.pack("!h", 0))
-    framed(b"S")
-    frames = read_until_ready()
-    if decode_error_sqlstate(frames[0]) != "0A000":
-        fail("unsupported prepared BEGIN should be a 0A000 protocol-visible refusal")
+    expect_prepare_refusal("bad_statement", "BEGIN", "0A000")
 
 framed(b"X")
 sock.close()

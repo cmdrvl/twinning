@@ -334,6 +334,7 @@ For v0, the normative canaries are:
 - `psql_smoke`
 - `psycopg2_params`
 - `sqlalchemy_core`
+- `metadata_join_conformance`
 - `extractor_canary`
 
 The v0 subset should therefore be described in terms of those canaries:
@@ -344,7 +345,10 @@ The v0 subset should therefore be described in terms of those canaries:
 - write shapes exercised by the canaries: `INSERT`, `INSERT ... ON CONFLICT`,
   and the exact coercion / SQLSTATE behavior those writes rely on
 - read shapes exercised by the canaries: point lookups, simple predicates, and
-  only the aggregates or grouping shapes explicitly present in the manifest
+  only the aggregates, grouping, or exact catalog-introspection shapes
+  explicitly present in the manifest
+- joins remain explicit refusals unless a future canary adds joined-read IR and
+  executor support
 
 Anything outside the canary-defined subset is not "partially supported." It is
 either:
@@ -376,7 +380,7 @@ Required fields:
 | `engine` | `postgres` for v0 |
 | `canaries[]` | Named compatibility claims |
 | `canaries[].id` | Stable canary ID such as `psql_smoke` |
-| `canaries[].client` | Client family: `psql`, `psycopg2`, `sqlalchemy_core`, `factory_extractor` |
+| `canaries[].client` | Client family: `psql`, `psycopg2`, `sqlalchemy_core`, `factory_extractor`, or `conformance_probe` |
 | `canaries[].session_shapes[]` | Required startup/session behaviors |
 | `canaries[].write_shapes[]` | Required mutation shapes |
 | `canaries[].read_shapes[]` | Required read/query shapes |
@@ -406,7 +410,7 @@ Controlled vocabulary for v0:
 |------|-----------------------|
 | `session_shapes[]` | `startup_auth_v3`, `parameter_status_baseline`, `set_application_name`, `tx_begin`, `tx_commit`, `tx_rollback`, `simple_query`, `extended_query_parse_bind_execute_sync` |
 | `write_shapes[]` | `insert_values`, `insert_returning`, `upsert_pk`, `upsert_unique`, `update_by_predicate`, `delete_by_predicate` |
-| `read_shapes[]` | `select_by_pk`, `select_filtered_scan`, `select_is_null`, `select_in_list`, `select_between`, `aggregate_count`, `aggregate_basic_group_by` |
+| `read_shapes[]` | `select_by_pk`, `select_filtered_scan`, `select_is_null`, `select_in_list`, `select_between`, `aggregate_count`, `aggregate_basic_group_by`, `information_schema_public_base_tables`, `select_inner_join_eq_refusal` |
 
 If a future canary needs a new shape token, the manifest schema must be extended
 explicitly rather than inventing ad hoc shape names in fixtures.
@@ -1092,6 +1096,7 @@ The first harnesses are not optional. They define the real subset.
 - `psql_smoke`: connect, authenticate, `SET application_name`, `BEGIN`, `SELECT`, `ROLLBACK`, restore-ready snapshot load
 - `psycopg2_params`: parameterized `INSERT`, `SELECT`, `ON CONFLICT`, and a known unique-violation SQLSTATE
 - `sqlalchemy_core`: engine connect, transaction begin/commit, parameterized execute, row fetch, no reflection requirement in v1
+- `metadata_join_conformance`: exact public base-table introspection plus explicit joined-read refusal
 - `extractor_canary`: one real Crucible extractor script, run unchanged against the twin
 The rule is simple: no new feature claim lands without a canary or differential fixture that proves it.
 

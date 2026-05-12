@@ -1,0 +1,49 @@
+{
+  "version": "twinning.ir-equivalence.fixture.v0",
+  "client": "conformance_probe",
+  "supported_cases": [
+    {
+      "case_id": "public_base_table_metadata",
+      "equivalence_group": "information_schema_public_base_tables",
+      "covers_shape": "information_schema_public_base_tables",
+      "surface": {
+        "transport": "extended_query",
+        "api": "catalog introspection probe",
+        "sql": "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name"
+      },
+      "expected_result": {
+        "columns": [
+          "table_name"
+        ],
+        "rows": [
+          {
+            "table_name": "deals"
+          },
+          {
+            "table_name": "tenants"
+          }
+        ]
+      }
+    }
+  ],
+  "refusal_cases": [
+    {
+      "case_id": "inner_join_refusal",
+      "near_miss_shape": "select_inner_join_eq_refusal",
+      "surface": {
+        "transport": "extended_query",
+        "api": "joined read probe",
+        "sql": "SELECT deals.deal_id, tenants.tenant_name FROM public.deals JOIN public.tenants ON deals.tenant_id = tenants.tenant_id WHERE deals.deal_id = $1"
+      },
+      "expected_result": {
+        "op_type": "refusal",
+        "scope": "read",
+        "code": "unsupported_shape",
+        "sqlstate": "0A000",
+        "detail": {
+          "shape": "select_join"
+        }
+      }
+    }
+  ]
+}

@@ -137,6 +137,91 @@ fn extended_query_metadata_probes_return_declared_single_text_rows() {
 }
 
 #[test]
+fn information_schema_public_base_tables_query_returns_declared_catalog_tables() {
+    let catalog = parse_postgres_schema(
+        r#"
+        CREATE TABLE public.widgets (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL
+        );
+
+        CREATE TABLE public.widget_events (
+            event_id TEXT PRIMARY KEY,
+            widget_id INTEGER NOT NULL
+        );
+        "#,
+    )
+    .expect("schema should parse");
+    let storages = catalog
+        .tables
+        .iter()
+        .map(TableStorage::new)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("table storage should build");
+    let mut backend = BaseSnapshotBackend::new(storages).expect("backend should build");
+
+    let mut parse_state = ExtendedParseState::new();
+    let parse = parse_state.process_parse(
+        "session-reflect-public",
+        ParseRequest {
+            statement_name: String::from("stmt-reflect-public"),
+            sql: String::from(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name",
+            ),
+            param_types: Vec::new(),
+        },
+    );
+    assert_eq!(parse, vec![parse_complete_frame()]);
+
+    let mut execute_state = ExtendedExecuteState::new();
+    let describe = execute_state.process_describe(
+        &catalog,
+        &parse_state,
+        DescribeTarget::Statement(String::from("stmt-reflect-public")),
+    );
+    assert_eq!(
+        decode_parameter_description(&describe[0]),
+        Vec::<u32>::new()
+    );
+    assert_eq!(
+        decode_row_description(&describe[1]),
+        vec![(String::from("table_name"), TEXT_OID)]
+    );
+
+    let bind = parse_state.process_bind(BindRequest {
+        portal_name: String::from("portal-reflect-public"),
+        statement_name: String::from("stmt-reflect-public"),
+        params: Vec::new(),
+        parameter_formats: Vec::new(),
+        result_formats: Vec::new(),
+    });
+    assert_eq!(bind, vec![bind_complete_frame()]);
+
+    let execute = execute_state.process_execute(
+        &catalog,
+        &mut backend,
+        &parse_state,
+        ExecuteRequest {
+            portal_name: String::from("portal-reflect-public"),
+            max_rows: 0,
+        },
+    );
+    assert_eq!(
+        decode_row_description(&execute[0]),
+        vec![(String::from("table_name"), TEXT_OID)]
+    );
+    assert_eq!(
+        decode_data_row(&execute[1]),
+        vec![Some(String::from("widget_events"))]
+    );
+    assert_eq!(
+        decode_data_row(&execute[2]),
+        vec![Some(String::from("widgets"))]
+    );
+    assert_eq!(decode_command_complete(&execute[3]), "SELECT 2");
+}
+
+#[test]
 fn broader_reflection_queries_stay_explicitly_unsupported() {
     let catalog = parse_postgres_schema(
         r#"

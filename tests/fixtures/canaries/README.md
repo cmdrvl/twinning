@@ -9,3 +9,7 @@ canary. Current fixture types include:
   near-miss coverage
 - `fixture.json` / companion assets for canaries that already have a frozen
   corpus, such as `extractor_canary`
+
+`metadata_join_conformance` is a synthetic conformance probe rather than a
+client library fixture: it pins the exact supported `information_schema.tables`
+public-base-table query and the explicit join refusal boundary.

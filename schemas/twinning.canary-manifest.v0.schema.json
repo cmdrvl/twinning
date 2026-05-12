@@ -38,7 +38,8 @@
         "psql",
         "psycopg2",
         "sqlalchemy_core",
-        "factory_extractor"
+        "factory_extractor",
+        "conformance_probe"
       ]
     },
     "session_shape": {
@@ -74,7 +75,9 @@
         "select_in_list",
         "select_between",
         "aggregate_count",
-        "aggregate_basic_group_by"
+        "aggregate_basic_group_by",
+        "information_schema_public_base_tables",
+        "select_inner_join_eq_refusal"
       ]
     },
     "canary": {
