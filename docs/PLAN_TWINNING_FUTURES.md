@@ -84,41 +84,36 @@ pack seal replay-results/ benchmark.json verify.json decision.json \
 
 ### Gaps from current repo to first twin-pair proof
 
-Current repo status is still Phase 0 bootstrap only: deterministic catalog
-artifacts, snapshot hashing, and explicit refusals for the unimplemented live
-runtime. The shortest path to the first twin-pair proof is:
+Current repo status now has the Postgres `run_once` shell, committed-state
+snapshot hashing, catalog declaration identity, and a prototype fixture-backed
+`twinning.twin-pair-proof.v0` receipt. The shortest path to a production
+twin-pair proof is:
 
 1. finish the v0 center from
    [PLAN_TWINNING.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING.md)
    phases 1-4
 2. add the migration-proof-specific surfaces below
 
-The blocking gaps are:
+The remaining blocking gaps are:
 
-- **Live protocol/runtime gap.** Twin A and Twin B cannot yet accept real
-  client traffic. The current repo still needs the phase-1 pgwire/session work,
-  the phase-2 write kernel, the phase-3 read subset, and the phase-4 storage
-  backend before any paired proof run is possible.
-- **Committed-state snapshot gap.** The current bootstrap snapshot is
-  catalog-only. First twin-pair proof needs snapshots over committed relation
-  contents with canonical ordering, restore lineage, and stable hashing over
-  real loaded data.
-- **Replay corpus gap.** The main plan defines extractor canaries, not a
-  historical-query replay corpus. Twin A needs a checked-in replay manifest and
-  fixtures with explicit PASS / FAIL / SKIP rules for migration proof.
+- **Live dual-endpoint orchestration gap.** The prototype restores two
+  snapshots and runs the kernel directly. Production proof still needs an
+  operator surface for booting, loading, naming, reporting, and sealing both
+  twins as one coherent run.
+- **Replay corpus gap.** The current proof fixture has one translated
+  Postgres-compatible point lookup. Twin A still needs a broader checked-in
+  replay manifest and fixtures with explicit PASS / FAIL / SKIP rules for
+  migration proof.
 - **Legacy-query boundary gap.** This futures doc talks about replaying
   historical queries verbatim while the v0 center remains Postgres-only. The
   first migration-proof cut needs an explicit rule: either replay a translated
   Postgres-compatible corpus against the legacy-schema twin, or defer true
   Oracle/TNS fidelity to a later phase. Without that rule, Twin A is
   underspecified.
-- **Replay-result artifact gap.** The plan says Crucible handles comparison, but
-  it does not yet define a compact artifact contract for per-query results,
+- **Replay-result artifact gap.** `twinning.twin-pair-proof.v0` now pins the
+  compact endpoint/case/result-hash receipt shape, but live replay still needs
   SQLSTATE parity, timing-independent diff inputs, and snapshot provenance at
-  replay scope.
-- **Dual-twin orchestration gap.** The example shows two twins in one proof run,
-  but the operator contract for booting, loading, naming, reporting, and
-  sealing both twins as one coherent proof is not yet written down explicitly.
+  broader replay scope.
 - **Heavier-backend gap.** Twin-pair migration proof is the first consumer that
   may genuinely need the snapshot-backed, disk-backed, or delegated backend
   path. The backend boundary exists in prose, but the first migration-proof cut

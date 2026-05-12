@@ -1,0 +1,37 @@
+{
+  "version": "twinning.catalog-declaration.v0",
+  "declaration_id": "metadata-catalog:migration-proof:v0",
+  "catalog_version": "metadata-catalog.v2026-05-12",
+  "source_deployment_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "outcome_tags": [
+    "migration-proof"
+  ],
+  "schema_hash": "sha256:2d3dad6513575ae16a359c9c0fb056e53cd5bbfb3ec638a9436a56b6549b9af5",
+  "tables": [
+    {
+      "name": "public.tenants",
+      "catalog_table_key": "metadata.tables.public.tenants",
+      "primary_key": [
+        "tenant_id"
+      ]
+    },
+    {
+      "name": "public.deals",
+      "catalog_table_key": "metadata.tables.public.deals",
+      "primary_key": [
+        "deal_id"
+      ],
+      "foreign_keys": [
+        {
+          "columns": [
+            "tenant_id"
+          ],
+          "references_table": "public.tenants",
+          "references_columns": [
+            "tenant_id"
+          ]
+        }
+      ]
+    }
+  ]
+}

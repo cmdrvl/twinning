@@ -63,7 +63,7 @@
       "name": "run",
       "flag": "--run",
       "type": "string",
-      "description": "Planned one-shot command execution mode. Currently refused explicitly."
+      "description": "Run one child command against the live pgwire shell, then freeze final artifacts"
     },
     {
       "name": "report",
@@ -141,25 +141,27 @@
   },
   "current_runtime_behavior": {
     "engine_support": {
-      "postgres": "bootstrap-ready",
+      "postgres": "bootstrap-ready plus run_once pgwire shell for the proven subset",
       "mysql": "declared but refused",
       "oracle": "declared but refused"
     },
     "implemented_surface": [
       "DDL catalog parsing",
       "compiled verify artifact hashing",
+      "catalog declaration identity import",
       "bootstrap report generation",
       "snapshot write/restore with hash verification",
+      "committed-state snapshot freeze/restore",
+      "run_once pgwire listener for the declared Postgres subset",
+      "prototype twin-pair proof report model and fixture harness",
       "storage-boundary reporting for tournament vs replay modes",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
     "deferred_surface": [
-      "pgwire server",
-      "SQL execution",
-      "row materialization",
-      "bounded-memory overlay backend",
       "heavier replay/proof backends",
-      "live --run orchestration"
+      "long-lived general-purpose database server mode",
+      "production dual-twin migration proof orchestration",
+      "non-Postgres protocol families"
     ]
   },
   "artifacts": [
@@ -171,7 +173,12 @@
     {
       "name": "twinning.snapshot.v0",
       "kind": "snapshot",
-      "description": "Content-addressed bootstrap snapshot of the parsed twin catalog"
+      "description": "Content-addressed snapshot of parsed catalog identity and optional committed relation state"
+    },
+    {
+      "name": "twinning.twin-pair-proof.v0",
+      "kind": "proof_report",
+      "description": "Prototype interface-equivalence receipt for comparing two Postgres twins over one declared subset"
     }
   ]
 }

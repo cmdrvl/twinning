@@ -10,6 +10,7 @@ pub mod declaration;
 pub mod doctor;
 pub mod ir;
 pub mod kernel;
+pub mod migration_proof;
 pub mod protocol;
 pub mod refusal;
 pub mod report;

@@ -152,12 +152,14 @@ plan instead of silently changing the contract.
 | `src/config.rs` | validated runtime/bootstrap config |
 | `src/declaration.rs` | catalog-declared subset identity loading and validation |
 | `src/catalog.rs` | Postgres DDL parsing and normalized catalog construction |
+| `src/migration_proof.rs` | prototype twin-pair proof report model |
 | `src/runtime.rs` | bootstrap lifecycle, load/restore, report/snapshot emission |
 | `src/report.rs` | `twinning.v0` report model and rendering |
 | `src/snapshot.rs` | `twinning.snapshot.v0` model, hashing, write/restore |
 | `src/refusal.rs` | refusal taxonomy and rendering |
 | `schemas/twinning.v0.schema.json` | report schema contract |
 | `schemas/twinning.snapshot.v0.schema.json` | snapshot schema contract |
+| `schemas/twinning.twin-pair-proof.v0.schema.json` | twin-pair proof report contract |
 | `schemas/twinning.canary-manifest.v0.schema.json` | canary-manifest schema contract |
 | `canaries/manifest.v0.json` | checked-in normative v0 compatibility manifest |
 | `docs/PLAN_TWINNING.md` | main implementation plan |

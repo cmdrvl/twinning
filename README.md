@@ -335,6 +335,7 @@ Current artifact contracts:
 
 - `twinning.v0` — bootstrap or later runtime report
 - `twinning.snapshot.v0` — content-addressed snapshot
+- `twinning.twin-pair-proof.v0` — prototype interface-equivalence receipt for two Postgres twins
 - `twinning.canary-manifest.v0` — normative compatibility manifest for the supported subset
 
 Checked-in manifest:
@@ -345,6 +346,7 @@ Schemas:
 
 - [schemas/twinning.v0.schema.json](./schemas/twinning.v0.schema.json)
 - [schemas/twinning.snapshot.v0.schema.json](./schemas/twinning.snapshot.v0.schema.json)
+- [schemas/twinning.twin-pair-proof.v0.schema.json](./schemas/twinning.twin-pair-proof.v0.schema.json)
 - [schemas/twinning.canary-manifest.v0.schema.json](./schemas/twinning.canary-manifest.v0.schema.json)
 
 Snapshot contract highlights:

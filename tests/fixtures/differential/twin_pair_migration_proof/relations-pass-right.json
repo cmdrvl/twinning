@@ -1,0 +1,62 @@
+{
+  "public.deals": [
+    {
+      "amount": {
+        "kind": "integer",
+        "value": 100
+      },
+      "deal_id": {
+        "kind": "text",
+        "value": "deal-001"
+      },
+      "deal_name": {
+        "kind": "text",
+        "value": "Alpha"
+      },
+      "tenant_id": {
+        "kind": "text",
+        "value": "tenant-a"
+      }
+    },
+    {
+      "amount": {
+        "kind": "integer",
+        "value": 120
+      },
+      "deal_id": {
+        "kind": "text",
+        "value": "deal-002"
+      },
+      "deal_name": {
+        "kind": "text",
+        "value": "Beta"
+      },
+      "tenant_id": {
+        "kind": "text",
+        "value": "tenant-b"
+      }
+    }
+  ],
+  "public.tenants": [
+    {
+      "tenant_id": {
+        "kind": "text",
+        "value": "tenant-a"
+      },
+      "tenant_name": {
+        "kind": "text",
+        "value": "Tenant A"
+      }
+    },
+    {
+      "tenant_id": {
+        "kind": "text",
+        "value": "tenant-b"
+      },
+      "tenant_name": {
+        "kind": "text",
+        "value": "Tenant B"
+      }
+    }
+  ]
+}

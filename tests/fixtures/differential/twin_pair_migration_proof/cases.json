@@ -1,0 +1,70 @@
+{
+  "version": "twinning.twin-pair-proof-fixture.v0",
+  "proof_version": "twinning.twin-pair-proof.v0",
+  "dependencies": [
+    {
+      "bead": "bd-2bh",
+      "contract": "run_once parity ledger records declared success and subset-refusal outcomes"
+    },
+    {
+      "bead": "bd-28t",
+      "contract": "canonical committed-state snapshot bytes survive restore and refreeze"
+    },
+    {
+      "bead": "bd-jjz",
+      "contract": "catalog declaration identity is preserved in reports and snapshots"
+    }
+  ],
+  "queries": [
+    {
+      "id": "deal_lookup",
+      "table": "public.deals",
+      "shape": "point_lookup",
+      "projection": [
+        "deal_id",
+        "deal_name",
+        "amount"
+      ],
+      "lookup_column": "deal_id",
+      "lookup_value": {
+        "text": "deal-002"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "byte_identical_snapshot_pass",
+      "query_id": "deal_lookup",
+      "expected_verdict": "pass",
+      "left": {
+        "endpoint_id": "legacy",
+        "role": "legacy-source",
+        "relations": "relations-pass-left.json"
+      },
+      "right": {
+        "endpoint_id": "candidate",
+        "role": "candidate-target",
+        "relations": "relations-pass-right.json"
+      },
+      "expected_mismatches": []
+    },
+    {
+      "id": "intentional_deal_name_divergence",
+      "query_id": "deal_lookup",
+      "expected_verdict": "fail",
+      "left": {
+        "endpoint_id": "legacy",
+        "role": "legacy-source",
+        "relations": "relations-pass-left.json"
+      },
+      "right": {
+        "endpoint_id": "candidate",
+        "role": "candidate-target",
+        "relations": "relations-diverged-right.json"
+      },
+      "expected_mismatches": [
+        "query_result"
+      ]
+    }
+  ]
+}

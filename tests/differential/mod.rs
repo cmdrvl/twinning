@@ -1,4 +1,5 @@
 pub mod assertions;
+pub mod migration_proof;
 pub mod parity_ledger;
 pub mod read_corpus;
 pub mod runner;
