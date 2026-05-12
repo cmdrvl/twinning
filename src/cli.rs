@@ -148,15 +148,39 @@ pub enum ProofCommand {
 
 #[derive(Debug, Args, Clone)]
 pub struct TwinPairProofArgs {
-    #[arg(long, value_name = "FILE")]
-    pub left: PathBuf,
+    #[command(subcommand)]
+    pub command: Option<TwinPairProofCommand>,
 
     #[arg(long, value_name = "FILE")]
-    pub right: PathBuf,
+    pub left: Option<PathBuf>,
 
     #[arg(long, value_name = "FILE")]
-    pub queries: PathBuf,
+    pub right: Option<PathBuf>,
+
+    #[arg(long, value_name = "FILE")]
+    pub queries: Option<PathBuf>,
 
     #[arg(long, value_name = "FILE")]
     pub report: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum TwinPairProofCommand {
+    #[command(
+        name = "orchestrate",
+        about = "Run a manifest-first twin-pair proof orchestration"
+    )]
+    Orchestrate(TwinPairOrchestrateArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct TwinPairOrchestrateArgs {
+    #[arg(long, value_name = "FILE")]
+    pub manifest: PathBuf,
+
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
+
+    #[arg(long, value_name = "DIR")]
+    pub bundle_dir: Option<PathBuf>,
 }

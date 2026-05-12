@@ -2,8 +2,8 @@
   "version": "twinning.twin-pair-orchestration-manifest.v0",
   "proof_id": "loan-performance-migration-proof:v0",
   "catalog_declaration": {
-    "path": "tests/fixtures/differential/twin_pair_migration_proof/declaration.json",
-    "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    "path": "../twin_pair_migration_proof/declaration.json",
+    "hash": "sha256:1325ac8ebcb901e2bd000bc9a11b07f45ba3c2af0584eba6b62caa4786e8d1a4"
   },
   "left_endpoint": {
     "endpoint_id": "legacy",
@@ -20,16 +20,16 @@
     "engine": "postgres",
     "bootstrap": {
       "kind": "schema",
-      "schema": "tests/fixtures/differential/twin_pair_migration_proof/schema.sql",
-      "declaration": "tests/fixtures/differential/twin_pair_migration_proof/declaration.json",
+      "schema": "../twin_pair_migration_proof/schema.sql",
+      "declaration": "../twin_pair_migration_proof/declaration.json",
       "load": [
         "load/candidate.sql"
       ]
     }
   },
   "replay_manifest": {
-    "path": "tests/fixtures/differential/twin_pair_migration_proof/cases.json",
-    "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    "path": "../twin_pair_migration_proof/cases.json",
+    "hash": "sha256:eb803011a7e78ed4b36c86fcca85908e7d14ad226a46edeb38cfa985bb972db3"
   },
   "target_evidence": [
     {

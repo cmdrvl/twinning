@@ -6,7 +6,7 @@ use std::{
     process::Command,
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use twinning::{
@@ -168,6 +168,139 @@ fn proof_cli_refuses_incompatible_snapshot_declarations() {
     assert_eq!(refusal["refusal"]["code"], "E_TWIN_PAIR_PROOF");
 }
 
+#[test]
+fn proof_cli_orchestrates_restore_manifest_and_writes_outputs() {
+    let workspace = tempdir().expect("workspace");
+    let left_input = workspace.path().join("input-left.twin");
+    let right_input = workspace.path().join("input-right.twin");
+    let left_output = workspace.path().join("out").join("legacy.twin");
+    let right_output = workspace.path().join("out").join("candidate.twin");
+    let report_path = workspace.path().join("out").join("proof.json");
+    let bundle_dir = workspace.path().join("bundle");
+    let manifest_path = workspace.path().join("manifest.json");
+    write_fixture_snapshot(&left_input, "relations-pass-left.json", true);
+    write_fixture_snapshot(&right_input, "relations-pass-right.json", true);
+    write_json(
+        &manifest_path,
+        &restore_orchestration_manifest(
+            &left_input,
+            &right_input,
+            &report_path,
+            &left_output,
+            &right_output,
+            &bundle_dir,
+        ),
+    );
+
+    let output = Command::new(twinning_bin())
+        .arg("--json")
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("orchestrate")
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .output()
+        .expect("run proof orchestrator");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf-8");
+    assert!(
+        output.status.success(),
+        "proof orchestrator failed: stdout={stdout}; stderr={stderr}"
+    );
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    assert!(bundle_dir.is_dir());
+
+    let report: Value = serde_json::from_str(&stdout).expect("parse proof stdout");
+    let written_report: Value =
+        serde_json::from_str(&fs::read_to_string(&report_path).expect("read proof report"))
+            .expect("parse written report");
+    assert_eq!(report, written_report);
+    assert_eq!(report["proof_id"], "loan-performance-migration-proof:test");
+    assert_eq!(report["outcome"], "PASS");
+    assert_eq!(report["endpoints"][0]["endpoint_id"], "legacy");
+    assert_eq!(report["endpoints"][0]["role"], "legacy-source");
+    assert_eq!(report["endpoints"][1]["endpoint_id"], "candidate");
+    assert_eq!(report["endpoints"][1]["role"], "candidate-target");
+    assert_eq!(
+        report["endpoints"][1]["evidence_identities"]
+            .as_array()
+            .expect("target evidence")
+            .len(),
+        3
+    );
+
+    let left_snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&left_output).expect("read left output"))
+            .expect("parse left output");
+    let right_snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&right_output).expect("read right output"))
+            .expect("parse right output");
+    assert_eq!(
+        left_snapshot["snapshot_hash"],
+        report["endpoints"][0]["snapshot_hash"]
+    );
+    assert_eq!(
+        right_snapshot["snapshot_hash"],
+        report["endpoints"][1]["snapshot_hash"]
+    );
+    assert!(report.get("score").is_none());
+}
+
+#[test]
+fn proof_cli_orchestrate_refuses_schema_load_bootstrap_until_materialization_exists() {
+    let workspace = tempdir().expect("workspace");
+    let left_input = workspace.path().join("input-left.twin");
+    let left_output = workspace.path().join("out").join("legacy.twin");
+    let right_output = workspace.path().join("out").join("candidate.twin");
+    let report_path = workspace.path().join("out").join("proof.json");
+    let bundle_dir = workspace.path().join("bundle");
+    let manifest_path = workspace.path().join("manifest.json");
+    write_fixture_snapshot(&left_input, "relations-pass-left.json", true);
+
+    let mut manifest = restore_orchestration_manifest(
+        &left_input,
+        &workspace.path().join("unused-right.twin"),
+        &report_path,
+        &left_output,
+        &right_output,
+        &bundle_dir,
+    );
+    manifest["right_endpoint"]["bootstrap"] = json!({
+        "kind": "schema",
+        "schema": schema_path().display().to_string(),
+        "declaration": declaration_path().display().to_string(),
+        "load": ["load/candidate.sql"]
+    });
+    write_json(&manifest_path, &manifest);
+
+    let output = Command::new(twinning_bin())
+        .arg("--json")
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("orchestrate")
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .output()
+        .expect("run proof orchestrator");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf-8");
+    assert_eq!(output.status.code(), Some(2), "stdout={stdout}");
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+
+    let refusal: Value = serde_json::from_str(&stdout).expect("parse refusal");
+    assert_eq!(refusal["outcome"], "REFUSAL");
+    assert_eq!(refusal["refusal"]["code"], "E_TWIN_PAIR_PROOF");
+    assert_eq!(
+        refusal["refusal"]["detail"]["policy"],
+        "restore_existing_snapshot_or_empty_schema_only"
+    );
+    assert_eq!(refusal["refusal"]["detail"]["endpoint_id"], "candidate");
+    assert!(!report_path.exists());
+    assert!(!right_output.exists());
+}
+
 fn write_fixture_snapshot(path: &Path, relations_file: &str, attach_declaration: bool) {
     let schema_bytes = fs::read(schema_path()).expect("read schema");
     let schema_hash = sha256_prefixed(&schema_bytes);
@@ -195,6 +328,87 @@ fn write_fixture_snapshot(path: &Path, relations_file: &str, attach_declaration:
     .with_relations(relations)
     .expect("attach relations");
     write_snapshot(path, &snapshot).expect("write snapshot");
+}
+
+fn restore_orchestration_manifest(
+    left_snapshot: &Path,
+    right_snapshot: &Path,
+    report_path: &Path,
+    left_output: &Path,
+    right_output: &Path,
+    bundle_dir: &Path,
+) -> Value {
+    json!({
+        "version": "twinning.twin-pair-orchestration-manifest.v0",
+        "proof_id": "loan-performance-migration-proof:test",
+        "catalog_declaration": {
+            "path": declaration_path().display().to_string(),
+            "hash": file_hash(&declaration_path())
+        },
+        "left_endpoint": {
+            "endpoint_id": "legacy",
+            "role": "legacy-source",
+            "engine": "postgres",
+            "bootstrap": {
+                "kind": "restore",
+                "snapshot": left_snapshot.display().to_string()
+            }
+        },
+        "right_endpoint": {
+            "endpoint_id": "candidate",
+            "role": "candidate-target",
+            "engine": "postgres",
+            "bootstrap": {
+                "kind": "restore",
+                "snapshot": right_snapshot.display().to_string()
+            }
+        },
+        "replay_manifest": {
+            "path": fixture_dir().join("cases.json").display().to_string(),
+            "hash": file_hash(&fixture_dir().join("cases.json"))
+        },
+        "target_evidence": [
+            {
+                "artifact_kind": "verify",
+                "artifact_id": "verify:loan-performance-candidate:v1",
+                "version": "verify.report.v1",
+                "hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+                "artifact_kind": "benchmark",
+                "artifact_id": "benchmark:loan-performance-candidate:v1",
+                "version": "benchmark.report.v1",
+                "hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            {
+                "artifact_kind": "assess",
+                "artifact_id": "assess:loan-performance-candidate:v1",
+                "version": "assess.decision.v1",
+                "hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+        ],
+        "artifact_outputs": {
+            "report": report_path.display().to_string(),
+            "bundle_dir": bundle_dir.display().to_string(),
+            "left_snapshot": left_output.display().to_string(),
+            "right_snapshot": right_output.display().to_string()
+        }
+    })
+}
+
+fn write_json(path: &Path, value: &Value) {
+    fs::write(
+        path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(value).expect("render json")
+        ),
+    )
+    .expect("write json");
+}
+
+fn file_hash(path: &Path) -> String {
+    sha256_prefixed(&fs::read(path).expect("read hash input"))
 }
 
 fn sha256_prefixed(bytes: &[u8]) -> String {

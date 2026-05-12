@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -6,14 +9,21 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     backend::BaseSnapshotBackend,
-    catalog::Catalog,
-    cli::{Engine, ProofArgs, ProofCommand, TwinPairProofArgs},
-    declaration::CatalogDeclarationIdentity,
+    catalog::{Catalog, parse_postgres_schema},
+    cli::{
+        Engine, ProofArgs, ProofCommand, TwinPairOrchestrateArgs, TwinPairProofArgs,
+        TwinPairProofCommand,
+    },
+    declaration::{CatalogDeclarationIdentity, load_catalog_declaration},
     ir::{
         AggregateKind, AggregateSpec, PredicateComparison, PredicateExpr, PredicateOperator,
         ReadOp, ReadShape, ScalarValue,
     },
     kernel::read::execute_read,
+    orchestration_manifest::{
+        ManifestArtifactRef, TwinPairEndpointBootstrap, TwinPairEndpointSpec,
+        TwinPairOrchestrationManifest, load_twin_pair_orchestration_manifest,
+    },
     refusal::{self, RefusalEnvelope, RefusalResult},
     result::KernelResult,
     runtime::Execution,
@@ -221,19 +231,185 @@ fn execute_inner(args: &ProofArgs, json_mode: bool) -> RefusalResult<Execution> 
 }
 
 fn execute_twin_pair(args: &TwinPairProofArgs, json_mode: bool) -> RefusalResult<Execution> {
-    let query_file = read_query_file(&args.queries)?;
-    let left_snapshot = snapshot::read_snapshot(&args.left)?;
-    let right_snapshot = snapshot::read_snapshot(&args.right)?;
-    validate_compatible_snapshots(&left_snapshot, &right_snapshot)?;
+    match &args.command {
+        Some(TwinPairProofCommand::Orchestrate(args)) => {
+            execute_twin_pair_orchestrate(args, json_mode)
+        }
+        None => execute_twin_pair_snapshots(args, json_mode),
+    }
+}
 
-    let left_backend = restore::restore_base_backend(&left_snapshot)?;
-    let right_backend = restore::restore_base_backend(&right_snapshot)?;
-    let left_endpoint = endpoint_identity("left", "left-snapshot", &left_snapshot, Vec::new())?;
-    let right_endpoint = endpoint_identity(
-        "right",
-        "right-snapshot",
+fn execute_twin_pair_snapshots(
+    args: &TwinPairProofArgs,
+    json_mode: bool,
+) -> RefusalResult<Execution> {
+    let queries_path = required_snapshot_pair_arg(args.queries.as_deref(), "--queries")?;
+    let left_path = required_snapshot_pair_arg(args.left.as_deref(), "--left")?;
+    let right_path = required_snapshot_pair_arg(args.right.as_deref(), "--right")?;
+    let query_file = read_query_file(queries_path)?;
+    let left_snapshot = snapshot::read_snapshot(left_path)?;
+    let right_snapshot = snapshot::read_snapshot(right_path)?;
+    let replay = build_twin_pair_replay(
+        &query_file,
+        &left_snapshot,
         &right_snapshot,
-        query_file.target_evidence.clone(),
+        EndpointReportSpec {
+            endpoint_id: "left",
+            role: "left-snapshot",
+            evidence_identities: Vec::new(),
+        },
+        EndpointReportSpec {
+            endpoint_id: "right",
+            role: "right-snapshot",
+            evidence_identities: query_file.target_evidence.clone(),
+        },
+    )?;
+    let report = TwinPairProofReport::new(
+        query_file.proof_id.unwrap_or_else(|| {
+            format!(
+                "{}:{}",
+                TWIN_PAIR_PROOF_VERSION,
+                queries_path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("snapshot-pair")
+            )
+        }),
+        left_snapshot.catalog_declaration.clone(),
+        replay.endpoints,
+        replay.cases,
+    );
+
+    if let Some(report_path) = &args.report {
+        write_report(report_path, &report)?;
+    }
+
+    let stdout = if json_mode {
+        render_json(&report)?
+    } else {
+        render_human(&report)
+    };
+
+    Ok(Execution {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn execute_twin_pair_orchestrate(
+    args: &TwinPairOrchestrateArgs,
+    json_mode: bool,
+) -> RefusalResult<Execution> {
+    let manifest = load_twin_pair_orchestration_manifest(&args.manifest)?;
+    validate_orchestration_artifact_hash(
+        &args.manifest,
+        "replay_manifest",
+        &manifest.replay_manifest,
+    )?;
+    validate_orchestration_artifact_hash(
+        &args.manifest,
+        "catalog_declaration",
+        &manifest.catalog_declaration,
+    )?;
+
+    let query_file = read_query_file(&resolve_manifest_path(
+        &args.manifest,
+        &manifest.replay_manifest.path,
+    ))?;
+    let left_snapshot =
+        orchestration_endpoint_snapshot(&args.manifest, "left_endpoint", &manifest.left_endpoint)?;
+    let right_snapshot = orchestration_endpoint_snapshot(
+        &args.manifest,
+        "right_endpoint",
+        &manifest.right_endpoint,
+    )?;
+    validate_orchestration_declaration(&args.manifest, &manifest, &left_snapshot, &right_snapshot)?;
+
+    let replay = build_twin_pair_replay(
+        &query_file,
+        &left_snapshot,
+        &right_snapshot,
+        EndpointReportSpec {
+            endpoint_id: &manifest.left_endpoint.endpoint_id,
+            role: &manifest.left_endpoint.role,
+            evidence_identities: Vec::new(),
+        },
+        EndpointReportSpec {
+            endpoint_id: &manifest.right_endpoint.endpoint_id,
+            role: &manifest.right_endpoint.role,
+            evidence_identities: manifest.target_evidence.clone(),
+        },
+    )?;
+    let report = TwinPairProofReport::new(
+        manifest.proof_id.clone(),
+        left_snapshot.catalog_declaration.clone(),
+        replay.endpoints,
+        replay.cases,
+    );
+
+    let bundle_dir = args.bundle_dir.clone().unwrap_or_else(|| {
+        resolve_manifest_path(&args.manifest, &manifest.artifact_outputs.bundle_dir)
+    });
+    fs::create_dir_all(&bundle_dir)
+        .map_err(|error| Box::new(refusal::io_write(&bundle_dir, &error)))?;
+
+    let left_output =
+        resolve_manifest_path(&args.manifest, &manifest.artifact_outputs.left_snapshot);
+    let right_output =
+        resolve_manifest_path(&args.manifest, &manifest.artifact_outputs.right_snapshot);
+    snapshot::write_snapshot(&left_output, &left_snapshot)?;
+    snapshot::write_snapshot(&right_output, &right_snapshot)?;
+
+    let report_path = args.report.clone().unwrap_or_else(|| {
+        resolve_manifest_path(&args.manifest, &manifest.artifact_outputs.report)
+    });
+    write_report(&report_path, &report)?;
+
+    let stdout = if json_mode {
+        render_json(&report)?
+    } else {
+        render_human(&report)
+    };
+
+    Ok(Execution {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+struct EndpointReportSpec<'a> {
+    endpoint_id: &'a str,
+    role: &'a str,
+    evidence_identities: Vec<TwinPairEvidenceIdentity>,
+}
+
+struct BuiltTwinPairReplay {
+    endpoints: Vec<TwinPairEndpointIdentity>,
+    cases: Vec<TwinPairProofCase>,
+}
+
+fn build_twin_pair_replay(
+    query_file: &TwinPairProofQueryFile,
+    left_snapshot: &TwinSnapshot,
+    right_snapshot: &TwinSnapshot,
+    left_spec: EndpointReportSpec<'_>,
+    right_spec: EndpointReportSpec<'_>,
+) -> RefusalResult<BuiltTwinPairReplay> {
+    validate_compatible_snapshots(left_snapshot, right_snapshot)?;
+
+    let left_backend = restore::restore_base_backend(left_snapshot)?;
+    let right_backend = restore::restore_base_backend(right_snapshot)?;
+    let left_endpoint = endpoint_identity(
+        left_spec.endpoint_id,
+        left_spec.role,
+        left_snapshot,
+        left_spec.evidence_identities,
+    )?;
+    let right_endpoint = endpoint_identity(
+        right_spec.endpoint_id,
+        right_spec.role,
+        right_snapshot,
+        right_spec.evidence_identities,
     )?;
 
     let cases = query_file
@@ -258,38 +434,153 @@ fn execute_twin_pair(args: &TwinPairProofArgs, json_mode: bool) -> RefusalResult
                 ),
             )
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    let report = TwinPairProofReport::new(
-        query_file.proof_id.unwrap_or_else(|| {
-            format!(
-                "{}:{}",
-                TWIN_PAIR_PROOF_VERSION,
-                args.queries
-                    .file_stem()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("snapshot-pair")
-            )
-        }),
-        left_snapshot.catalog_declaration.clone(),
-        vec![left_endpoint, right_endpoint],
+    Ok(BuiltTwinPairReplay {
+        endpoints: vec![left_endpoint, right_endpoint],
         cases,
-    );
+    })
+}
 
-    if let Some(report_path) = &args.report {
-        write_report(report_path, &report)?;
+fn required_snapshot_pair_arg<'a>(path: Option<&'a Path>, flag: &str) -> RefusalResult<&'a Path> {
+    path.ok_or_else(|| {
+        Box::new(proof_refusal(
+            format!("Twin-pair snapshot proof requires `{flag}`."),
+            json!({ "missing": flag }),
+        ))
+    })
+}
+
+fn orchestration_endpoint_snapshot(
+    manifest_path: &Path,
+    field: &str,
+    endpoint: &TwinPairEndpointSpec,
+) -> RefusalResult<TwinSnapshot> {
+    match &endpoint.bootstrap {
+        TwinPairEndpointBootstrap::Restore { snapshot } => {
+            let snapshot_path = resolve_manifest_path(manifest_path, snapshot);
+            snapshot::read_snapshot(&snapshot_path)
+        }
+        TwinPairEndpointBootstrap::Schema {
+            schema,
+            declaration,
+            load,
+        } => {
+            if !load.is_empty() {
+                return Err(Box::new(proof_refusal(
+                    "Twin-pair orchestration schema bootstraps with load scripts are not implemented.",
+                    json!({
+                        "field": field,
+                        "endpoint_id": endpoint.endpoint_id,
+                        "bootstrap": "schema",
+                        "load": load,
+                        "policy": "restore_existing_snapshot_or_empty_schema_only",
+                    }),
+                )));
+            }
+
+            let schema_path = resolve_manifest_path(manifest_path, schema);
+            let schema_bytes = fs::read(&schema_path)
+                .map_err(|error| Box::new(refusal::io_read(&schema_path, &error)))?;
+            let schema_hash = sha256_prefixed(&schema_bytes);
+            let schema_source = String::from_utf8(schema_bytes).map_err(|error| {
+                Box::new(proof_refusal(
+                    "Twin-pair orchestration schema file must be UTF-8 Postgres DDL.",
+                    json!({
+                        "field": field,
+                        "schema": schema_path.display().to_string(),
+                        "error": error.to_string(),
+                    }),
+                ))
+            })?;
+            let catalog = parse_postgres_schema(&schema_source).map_err(|error| {
+                Box::new(refusal::schema_parse(&schema_path, error.to_string()))
+            })?;
+            let declaration = declaration
+                .as_ref()
+                .map(|declaration| {
+                    let declaration_path = resolve_manifest_path(manifest_path, declaration);
+                    load_catalog_declaration(&declaration_path, &schema_hash, &catalog)
+                })
+                .transpose()?;
+
+            TwinSnapshot::new(
+                Engine::Postgres,
+                schema_path.display().to_string(),
+                schema_hash,
+                None,
+                None,
+                catalog,
+            )?
+            .with_catalog_declaration(declaration)
+        }
+    }
+}
+
+fn validate_orchestration_declaration(
+    manifest_path: &Path,
+    manifest: &TwinPairOrchestrationManifest,
+    left: &TwinSnapshot,
+    right: &TwinSnapshot,
+) -> RefusalResult<()> {
+    let declaration_path = resolve_manifest_path(manifest_path, &manifest.catalog_declaration.path);
+    let declaration =
+        load_catalog_declaration(&declaration_path, &left.schema_hash, &left.catalog)?;
+    if left.catalog_declaration.as_ref() != Some(&declaration)
+        || right.catalog_declaration.as_ref() != Some(&declaration)
+    {
+        return Err(Box::new(proof_refusal(
+            "Twin-pair orchestration snapshots must match the manifest catalog declaration.",
+            json!({
+                "catalog_declaration": declaration_path.display().to_string(),
+                "expected_hash": declaration.hash,
+                "left_catalog_declaration": &left.catalog_declaration,
+                "right_catalog_declaration": &right.catalog_declaration,
+            }),
+        )));
     }
 
-    let stdout = if json_mode {
-        render_json(&report)?
-    } else {
-        render_human(&report)
-    };
+    Ok(())
+}
 
-    Ok(Execution {
-        exit_code: 0,
-        stdout,
-    })
+fn validate_orchestration_artifact_hash(
+    manifest_path: &Path,
+    field: &str,
+    artifact: &ManifestArtifactRef,
+) -> RefusalResult<()> {
+    let Some(expected_hash) = &artifact.hash else {
+        return Ok(());
+    };
+    let artifact_path = resolve_manifest_path(manifest_path, &artifact.path);
+    let bytes = fs::read(&artifact_path)
+        .map_err(|error| Box::new(refusal::io_read(&artifact_path, &error)))?;
+    let actual_hash = sha256_prefixed(&bytes);
+    if actual_hash != *expected_hash {
+        return Err(Box::new(proof_refusal(
+            "Twin-pair orchestration artifact hash mismatch.",
+            json!({
+                "field": field,
+                "path": artifact_path.display().to_string(),
+                "expected_hash": expected_hash,
+                "actual_hash": actual_hash,
+            }),
+        )));
+    }
+
+    Ok(())
+}
+
+fn resolve_manifest_path(manifest_path: &Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        return candidate;
+    }
+
+    manifest_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.join(&candidate))
+        .unwrap_or(candidate)
 }
 
 fn validate_compatible_snapshots(left: &TwinSnapshot, right: &TwinSnapshot) -> RefusalResult<()> {

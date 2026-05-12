@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cmdrvl.com/schemas/twinning.twin-pair-orchestration-manifest.v0.schema.json",
   "title": "twinning.twin-pair-orchestration-manifest.v0",
-  "description": "Manifest contract for future production twin-pair proof orchestration.",
+  "description": "Manifest contract for production twin-pair proof orchestration.",
   "type": "object",
   "additionalProperties": false,
   "required": [

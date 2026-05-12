@@ -11,6 +11,7 @@
     "usage": [
       "twinning postgres [OPTIONS]",
       "twinning proof twin-pair --left LEFT.twin --right RIGHT.twin --queries cases.json --json",
+      "twinning proof twin-pair orchestrate --manifest proof-run.json --json",
       "twinning doctor health --json",
       "twinning doctor capabilities --json",
       "twinning doctor robot-docs",
@@ -155,14 +156,14 @@
       "committed-state snapshot freeze/restore",
       "run_once pgwire listener for the declared Postgres subset",
       "prototype twin-pair proof report model, fixture harness, target evidence identities, and snapshot-pair CLI",
-      "twin-pair orchestration manifest parser and schema",
+      "restore-backed twin-pair orchestration runner, manifest parser, and schema",
       "storage-boundary reporting for tournament vs replay modes",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
     "deferred_surface": [
       "heavier replay/proof backends",
+      "schema-load materialization inside production twin-pair orchestration",
       "long-lived general-purpose database server mode",
-      "production dual-twin migration proof orchestration runner",
       "non-Postgres protocol families"
     ]
   },
@@ -180,12 +181,17 @@
     {
       "name": "twinning.twin-pair-proof.v0",
       "kind": "proof_report",
-      "description": "Prototype interface-equivalence receipt for comparing two Postgres twins over one declared subset, with optional raw target evidence identities"
+      "description": "Interface-equivalence receipt for comparing two Postgres twins over one declared subset, with optional raw target evidence identities"
     },
     {
       "name": "twinning.twin-pair-replay-result.v0",
       "kind": "nested_proof_artifact",
       "description": "Per-case timing-independent replay diff inputs: snapshot provenance, result hashes, and SQLSTATE parity"
+    },
+    {
+      "name": "twinning.twin-pair-orchestration-manifest.v0",
+      "kind": "manifest",
+      "description": "Manifest-first production twin-pair proof orchestration contract"
     }
   ]
 }

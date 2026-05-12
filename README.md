@@ -47,6 +47,12 @@ cargo run -- --json proof twin-pair \
   --queries tests/fixtures/differential/twin_pair_migration_proof/cases.json \
   --report out/twin-pair-proof.json
 
+# Run manifest-first twin-pair proof orchestration over restore-backed endpoints
+cargo run -- --json proof twin-pair orchestrate \
+  --manifest proof-run.json \
+  --report out/twin-pair-proof.json \
+  --bundle-dir out/twin-pair-proof/
+
 # Run one child command against the live run_once shell
 # The child must connect to the configured --host/--port.
 cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
@@ -214,7 +220,7 @@ Implemented now:
 - embedded verify execution over committed twin state
 - storage-boundary reporting for tournament mode vs replay/proof mode
 - refusal envelopes for process-level failures and protocol-visible live subset boundaries
-- twin-pair orchestration manifest parser and schema
+- restore-backed twin-pair orchestration runner, manifest parser, and schema
 
 Not implemented yet:
 
@@ -223,7 +229,7 @@ Not implemented yet:
 - concurrent writers or multi-writer semantics
 - non-Postgres runtime engines
 - replay/proof backends beyond the current tournament-mode live shell
-- production dual-twin proof orchestration runner beyond the snapshot-pair prototype
+- schema-load materialization inside production twin-pair orchestration
 
 This means the repo can validate bootstrap assets and run one child command
 against a live twin shell for the proven subset, but it still refuses broader
@@ -348,8 +354,9 @@ Current artifact contracts:
 
 - `twinning.v0` — bootstrap or later runtime report
 - `twinning.snapshot.v0` — content-addressed snapshot
-- `twinning.twin-pair-proof.v0` — prototype interface-equivalence receipt for two Postgres twins
+- `twinning.twin-pair-proof.v0` — interface-equivalence receipt for two Postgres twins
 - `twinning.twin-pair-replay-result.v0` — per-case replay diff inputs nested in twin-pair proof reports
+- `twinning.twin-pair-orchestration-manifest.v0` — manifest-first twin-pair proof orchestration contract
 - `twinning.canary-manifest.v0` — normative compatibility manifest for the supported subset
 
 Checked-in manifest:
@@ -489,7 +496,7 @@ Only the Postgres engine is implemented. MySQL and Oracle are declared in the CL
 - **Run-once shell only.** Live mode binds pgwire for one child command and then exits; there is no standalone long-lived server mode yet.
 - **Canary-defined subset.** Only SQL shapes named in the [canary manifest](./canaries/manifest.v0.json) will be supported.
 - **No concurrent writers.** The intended live model is single-writer admission with explicit contention refusal.
-- **Tournament mode only.** Replay/proof backends are deferred to the first post-v0 artifact.
+- **Restore-backed proof orchestration only.** Schema-load materialization and heavier replay/proof backends remain deferred.
 
 ---
 

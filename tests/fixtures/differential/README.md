@@ -1,7 +1,8 @@
 # differential fixtures
 
 This subtree holds the real-Postgres parity corpora, the first run_once parity
-ledger fixture, and the prototype twin-pair migration proof fixture.
+ledger fixture, the twin-pair migration proof fixture, and the orchestration
+manifest fixture.
 
 - `read_corpus/` and `write_corpus/` pin the declared read/write semantics.
 - `parity_ledger/` runs a child process through the twinning pgwire listener and
@@ -9,3 +10,5 @@ ledger fixture, and the prototype twin-pair migration proof fixture.
 - `twin_pair_migration_proof/` restores two declared committed-state snapshots
   and records an interface-equivalence proof report with both endpoint
   identities.
+- `twin_pair_orchestration/` pins the manifest-first proof orchestration
+  contract, including explicit refusal coverage for schema load scripts.

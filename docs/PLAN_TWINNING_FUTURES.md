@@ -103,12 +103,13 @@ pack seal replay-results/ benchmark.json verify.json decision.json \
 
 ### Production twin-pair orchestration surface
 
-The current `twinning proof twin-pair` command is a snapshot-pair prototype: it
-compares two already-frozen `twinning.snapshot.v0` artifacts over one query
-fixture. Production migration proof should add a manifest-first orchestration
-surface instead of stretching the prototype flags into a second runtime mode.
+The legacy `twinning proof twin-pair --left ... --right ...` flags remain a
+snapshot-pair prototype: they compare two already-frozen `twinning.snapshot.v0`
+artifacts over one query fixture. Production migration proof uses the
+manifest-first `orchestrate` surface instead of stretching those prototype flags
+into a second runtime mode.
 
-Proposed later command:
+Current restore-backed command:
 
 ```bash
 twinning proof twin-pair orchestrate \
@@ -156,8 +157,9 @@ Refusal boundaries:
 
 Current repo status now has the Postgres `run_once` shell, committed-state
 snapshot hashing, catalog declaration identity, a prototype fixture-backed
-`twinning.twin-pair-proof.v0` receipt, and a typed parser for the proposed
-orchestration manifest. The shortest path to a production twin-pair proof is:
+`twinning.twin-pair-proof.v0` receipt, and a restore-backed orchestration
+runner for the typed manifest surface. The shortest path to a fuller production
+twin-pair proof is:
 
 1. finish the v0 center from
    [PLAN_TWINNING.md](/Users/zac/Source/cmdrvl/twinning/docs/PLAN_TWINNING.md)
@@ -167,9 +169,11 @@ orchestration manifest. The shortest path to a production twin-pair proof is:
 The remaining blocking gaps are:
 
 - **Live dual-endpoint orchestration runner gap.** The proposed manifest-first
-  operator surface above names how production proof should boot, load, name,
-  and hand off paired twins, and the manifest parser exists. The code still
-  needs to implement the runner without widening the v0 Postgres subset.
+  operator surface above now has a restore-backed runner that names endpoints,
+  replays the manifest, emits report/snapshot artifacts, and prepares a bundle
+  handoff directory without sealing inside `twinning`. Schema bootstraps with
+  load scripts still refuse until live materialization can execute them without
+  widening the v0 Postgres subset.
 - **Replay corpus gap.** The current proof fixture covers translated
   Postgres-compatible point lookup, filtered scan, aggregate count, intentional
   divergence, and SQLSTATE parity. Its replay matrix now explicitly records
