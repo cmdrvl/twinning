@@ -138,14 +138,15 @@ Read-only doctor commands:
 - `twinning doctor health --json` emits doctor availability, side-effect
   guarantees, and next diagnostic steps as `twinning.v0`.
 - `twinning doctor capabilities --json` reflects agent-facing command,
-  artifact, and safety capabilities.
+  artifact, detector fixture, and safety capabilities.
 - `twinning doctor robot-docs` prints concise command notes for headless agents.
 - `twinning doctor --robot-triage` emits structured follow-up findings.
 
 Doctor mode does not read schema, snapshot, or verify files; it does not bind
 pgwire, run child commands, write reports/snapshots, create `.doctor/`, or alter
-the working directory. No `doctor --fix` surface exists until detector fixtures,
-verbatim backups, inverses, and undo tests are implemented.
+the working directory. Its detector catalog is static and fixture-backed. No
+`doctor --fix` surface exists until detector fixtures, verbatim backups,
+inverses, and undo tests are implemented.
 
 ### Exit codes
 

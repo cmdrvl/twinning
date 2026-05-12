@@ -1,0 +1,19 @@
+{
+  "version": "verify.constraint.v1",
+  "constraint_set_id": "doctor.batch-only.v1",
+  "bindings": [
+    { "name": "public.deals", "kind": "relation" }
+  ],
+  "rules": [
+    {
+      "id": "doctor_batch_only_query",
+      "severity": "error",
+      "portability": "batch_only",
+      "check": {
+        "op": "query_zero_rows",
+        "bindings": ["public.deals"],
+        "query": "SELECT 1 FROM public.deals"
+      }
+    }
+  ]
+}

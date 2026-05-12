@@ -248,13 +248,13 @@ Read-only doctor surface:
 - `doctor health --json`: emit `twinning.v0` health diagnostics without reading
   schema, snapshot, or verify files
 - `doctor capabilities --json`: list machine-readable commands, output
-  contracts, and safety boundaries
+  contracts, detector fixtures, and safety boundaries
 - `doctor robot-docs`: print concise agent-facing command notes
 - `doctor --robot-triage`: emit structured follow-up findings
 
-`doctor --fix` is intentionally not available. Any future fix mode needs
-detector fixtures, verbatim backups, explicit inverses, and undo tests before it
-is exposed.
+`doctor --fix` is intentionally not available. The read-only doctor detector
+catalog is fixture-backed, and any future fix mode needs verbatim backups,
+explicit inverses, and undo tests before it is exposed.
 
 Exit codes:
 

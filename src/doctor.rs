@@ -78,6 +78,7 @@ struct CapabilitiesReport {
     read_only: bool,
     commands: Vec<CommandCapability>,
     output_contracts: Vec<OutputContract>,
+    detectors: Vec<DetectorSpec>,
     fix_mode: FixMode,
     side_effects: SideEffects,
     next_step: &'static str,
@@ -92,6 +93,7 @@ struct TriageReport {
     package_version: &'static str,
     summary: TriageSummary,
     findings: Vec<DoctorCheck>,
+    detectors: Vec<DetectorSpec>,
     recommended_next_work: Vec<Recommendation>,
     side_effects: SideEffects,
 }
@@ -149,6 +151,26 @@ struct OutputContract {
     name: &'static str,
     version: &'static str,
     description: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DetectorSpec {
+    id: &'static str,
+    failure_mode: &'static str,
+    fixture: &'static str,
+    signal: DetectorSignal,
+    fix_available: bool,
+    required_before_fix: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DetectorSignal {
+    kind: &'static str,
+    code: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sqlstate: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    json_path: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -266,6 +288,7 @@ fn capabilities_report() -> CapabilitiesReport {
                 description: "Snapshot output remains exclusive to bootstrap/run paths, not doctor paths.",
             },
         ],
+        detectors: detector_specs(),
         fix_mode: FixMode {
             available: false,
             reason: "read-only campaign slice only; no mutation chokepoint or undo artifact is exposed yet",
@@ -295,9 +318,115 @@ fn triage_report() -> TriageReport {
             fix_mode: "absent_by_design",
         },
         findings: health_report().checks,
+        detectors: detector_specs(),
         recommended_next_work: detector_recommendations(),
         side_effects: SideEffects::read_only(),
     }
+}
+
+fn detector_specs() -> Vec<DetectorSpec> {
+    vec![
+        DetectorSpec {
+            id: "malformed_postgres_ddl",
+            failure_mode: "Malformed Postgres DDL must stay a process-level bootstrap refusal.",
+            fixture: "tests/fixtures/doctor_detectors/malformed_postgres_ddl/schema.sql",
+            signal: DetectorSignal {
+                kind: "process_refusal",
+                code: "E_SCHEMA_PARSE",
+                sqlstate: None,
+                json_path: Some("$.refusal.code"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "unsupported_sql_shape",
+            failure_mode: "Unsupported SQL and canary near-misses must stay explicit refusals.",
+            fixture: "tests/fixtures/doctor_detectors/unsupported_sql_shape/query.sql",
+            signal: DetectorSignal {
+                kind: "operation_refusal",
+                code: "unsupported_shape",
+                sqlstate: Some("0A000"),
+                json_path: Some("$.op_type=refusal"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "catalog_drift",
+            failure_mode: "Schema edits that change the normalized catalog must be detectable.",
+            fixture: "tests/fixtures/doctor_detectors/catalog_drift/after.sql",
+            signal: DetectorSignal {
+                kind: "catalog_comparison",
+                code: "catalog_hash_drift",
+                sqlstate: None,
+                json_path: Some("$.catalog"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "tampered_snapshot",
+            failure_mode: "Malformed or tampered twinning.snapshot.v0 artifacts must refuse restore.",
+            fixture: "tests/fixtures/doctor_detectors/tampered_snapshot/schema.sql",
+            signal: DetectorSignal {
+                kind: "process_refusal",
+                code: "E_SNAPSHOT_VERIFY",
+                sqlstate: None,
+                json_path: Some("$.refusal.code"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "batch_only_verify_artifact",
+            failure_mode: "Batch-only verify artifacts must refuse embedded live execution.",
+            fixture: "tests/fixtures/doctor_detectors/batch_only_verify_artifact/constraints.verify.json",
+            signal: DetectorSignal {
+                kind: "process_refusal",
+                code: "E_BATCH_ONLY_RULE",
+                sqlstate: None,
+                json_path: Some("$.refusal.code"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "pgwire_bind_failure",
+            failure_mode: "Listener bind failures must stay explicit runtime I/O refusals.",
+            fixture: "tests/fixtures/doctor_detectors/pgwire_bind_failure/schema.sql",
+            signal: DetectorSignal {
+                kind: "process_refusal",
+                code: "E_RUNTIME_IO",
+                sqlstate: None,
+                json_path: Some("$.refusal.detail.stage"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "run_once_child_failure_metadata",
+            failure_mode: "Non-zero child exits must be preserved in run_once report metadata.",
+            fixture: "tests/fixtures/doctor_detectors/run_once_child_failure/schema.sql",
+            signal: DetectorSignal {
+                kind: "report_failure",
+                code: "run_once_child_failed",
+                sqlstate: None,
+                json_path: Some("$.run.exit_code"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+    ]
+}
+
+fn fix_requirements() -> Vec<&'static str> {
+    vec![
+        "detector_fixture",
+        "verbatim_backup",
+        "explicit_inverse",
+        "regression_fixture",
+    ]
 }
 
 fn detector_recommendations() -> Vec<Recommendation> {
