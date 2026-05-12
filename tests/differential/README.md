@@ -13,7 +13,9 @@ Current state:
   catalog declaration, runs the same Postgres-kernel reads against both, and
   emits a `twinning.twin-pair-proof.v0` receipt for point lookup,
   filtered-scan, aggregate-count, divergence, SQLSTATE-refusal cases, and raw
-  target-side `verify`/`benchmark`/`assess` evidence identities
+  target-side `verify`/`benchmark`/`assess` evidence identities; its coverage
+  matrix also pins explicit SKIP accounting for join, introspection, and
+  historical workload families
 - the shared runner still carries `TWINNING_DIFF_POSTGRES_URL` so a future
   live-target comparison path can reuse the same checked-in corpora
 - fixture directories are checked in and exercised so layout drift shows up

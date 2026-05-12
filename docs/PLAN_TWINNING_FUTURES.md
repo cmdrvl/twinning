@@ -172,14 +172,15 @@ The remaining blocking gaps are:
   needs to implement the runner without widening the v0 Postgres subset.
 - **Replay corpus gap.** The current proof fixture covers translated
   Postgres-compatible point lookup, filtered scan, aggregate count, intentional
-  divergence, and SQLSTATE parity. Twin A still needs a broader checked-in
-  replay manifest and fixtures with explicit PASS / FAIL / SKIP rules for
-  joins, introspection, and historical-query families beyond this prototype
-  subset.
+  divergence, and SQLSTATE parity. Its replay matrix now explicitly records
+  PASS / FAIL / SKIP coverage, including SKIP accounting for join,
+  introspection, and historical-query families. Twin A still needs executable
+  fixtures for those broader replay families once the declared subset widens.
 - **Legacy-query breadth gap.** The first cut is explicitly translated
   Postgres-compatible replay. True Oracle/TNS fidelity is deferred to a later
   adapter. The remaining work is breadth: more translated replay families and
-  explicit SKIP/refusal accounting for shapes outside the current subset.
+  promotion of current SKIP/refusal accounting into proved replay rows as the
+  subset expands.
 - **Replay-result breadth gap.** `twinning.twin-pair-proof.v0` now includes a
   per-case `twinning.twin-pair-replay-result.v0` section with result hashes,
   SQLSTATE parity, and endpoint snapshot provenance. Broader live replay still

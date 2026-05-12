@@ -87,18 +87,41 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
         .iter()
         .map(|entry| (entry.shape.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        coverage_by_shape.keys().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "aggregate_count",
+            "filtered_scan",
+            "historical_query_family",
+            "historical_query_family_refusal",
+            "introspection",
+            "join",
+            "point_lookup",
+            "point_lookup_divergence",
+            "sqlstate_refusal_parity",
+        ])
+    );
     assert_eq!(coverage_by_shape["point_lookup"].policy, "pass");
-    assert!(
-        coverage_by_shape["point_lookup"]
-            .cases
-            .iter()
-            .any(|case| case == "byte_identical_snapshot_pass")
+    assert_eq!(
+        coverage_by_shape["point_lookup"].cases,
+        vec![String::from("byte_identical_snapshot_pass")]
+    );
+    assert_eq!(coverage_by_shape["point_lookup_divergence"].policy, "fail");
+    assert_eq!(
+        coverage_by_shape["point_lookup_divergence"].cases,
+        vec![String::from("intentional_deal_name_divergence")]
     );
     assert!(
-        coverage_by_shape["point_lookup"]
-            .cases
-            .iter()
-            .any(|case| case == "intentional_deal_name_divergence")
+        !coverage_by_shape["point_lookup_divergence"]
+            .reason
+            .as_deref()
+            .expect("fail reason")
+            .is_empty()
+    );
+    assert_eq!(coverage_by_shape["sqlstate_refusal_parity"].policy, "pass");
+    assert_eq!(
+        coverage_by_shape["sqlstate_refusal_parity"].cases,
+        vec![String::from("outside_subset_sqlstate_parity")]
     );
     assert_eq!(coverage_by_shape["filtered_scan"].policy, "pass");
     assert_eq!(
@@ -110,15 +133,35 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
         coverage_by_shape["aggregate_count"].cases,
         vec![String::from("aggregate_count_parity")]
     );
-    assert_eq!(coverage_by_shape["join_or_introspection"].policy, "skip");
-    assert!(coverage_by_shape["join_or_introspection"].cases.is_empty());
-    assert!(
-        !coverage_by_shape["join_or_introspection"]
-            .reason
-            .as_deref()
-            .expect("skip reason")
-            .is_empty()
-    );
+    for skipped_shape in [
+        "join",
+        "introspection",
+        "historical_query_family",
+        "historical_query_family_refusal",
+    ] {
+        assert_eq!(coverage_by_shape[skipped_shape].policy, "skip");
+        assert!(coverage_by_shape[skipped_shape].cases.is_empty());
+        assert!(
+            !coverage_by_shape[skipped_shape]
+                .reason
+                .as_deref()
+                .expect("skip reason")
+                .is_empty(),
+            "skip row `{skipped_shape}` should state the boundary"
+        );
+    }
+
+    let matrix_case_ids = fixture
+        .coverage_matrix
+        .iter()
+        .flat_map(|entry| entry.cases.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    let proof_case_ids = fixture
+        .cases
+        .iter()
+        .map(|case| case.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(matrix_case_ids, proof_case_ids);
 
     let query_ids = fixture
         .queries

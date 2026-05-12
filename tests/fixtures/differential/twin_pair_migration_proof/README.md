@@ -15,9 +15,10 @@ that both endpoints surface the same protocol-visible SQLSTATE for an
 out-of-subset relation.
 
 The replay matrix currently exercises translated Postgres-compatible point
-lookup, filtered scan, and aggregate count reads. Join and introspection replay
-remain explicit SKIP entries until the live v0 center declares and proves those
-shapes.
+lookup, filtered scan, aggregate count, intentional divergence, and SQLSTATE
+refusal-parity rows. Join replay, catalog introspection, and historical workload
+families remain explicit SKIP entries until the live v0 center declares and
+proves those shapes.
 
 The fixture also attaches target-side evidence identities for raw `verify`,
 `benchmark`, and `assess` artifacts. Those identities are references only: the

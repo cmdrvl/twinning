@@ -48,8 +48,7 @@
       "shape": "point_lookup",
       "policy": "pass",
       "cases": [
-        "byte_identical_snapshot_pass",
-        "intentional_deal_name_divergence"
+        "byte_identical_snapshot_pass"
       ]
     },
     {
@@ -67,9 +66,44 @@
       ]
     },
     {
-      "shape": "join_or_introspection",
+      "shape": "point_lookup_divergence",
+      "policy": "fail",
+      "cases": [
+        "intentional_deal_name_divergence"
+      ],
+      "reason": "same declared point-lookup replay shape with intentional target data drift must fail query-result comparison"
+    },
+    {
+      "shape": "sqlstate_refusal_parity",
+      "policy": "pass",
+      "cases": [
+        "outside_subset_sqlstate_parity"
+      ],
+      "reason": "unsupported relation replay is acceptable only when both endpoints return the same protocol-visible SQLSTATE"
+    },
+    {
+      "shape": "join",
       "policy": "skip",
-      "reason": "not in the current migration-proof query fixture subset"
+      "cases": [],
+      "reason": "join replay is not in the current translated Postgres-compatible proof fixture subset"
+    },
+    {
+      "shape": "introspection",
+      "policy": "skip",
+      "cases": [],
+      "reason": "information_schema and catalog introspection replay are not in the current proof fixture subset"
+    },
+    {
+      "shape": "historical_query_family",
+      "policy": "skip",
+      "cases": [],
+      "reason": "historical workload families require a broader translated replay manifest before execution"
+    },
+    {
+      "shape": "historical_query_family_refusal",
+      "policy": "skip",
+      "cases": [],
+      "reason": "legacy workload syntax outside translated Postgres-compatible replay must stay skipped or be recorded as protocol-visible refusal, not success"
     }
   ],
   "queries": [
