@@ -40,6 +40,13 @@ cargo run -- postgres --schema schema.sql --verify schema.verify.json \
 # Restore a prior snapshot and re-emit bootstrap status
 cargo run -- postgres --restore out/bootstrap.twin --json
 
+# Compare two committed-state snapshots over one proof query fixture
+cargo run -- --json proof twin-pair \
+  --left snapshots/legacy.twin \
+  --right snapshots/candidate.twin \
+  --queries tests/fixtures/differential/twin_pair_migration_proof/cases.json \
+  --report out/twin-pair-proof.json
+
 # Run one child command against the live run_once shell
 # The child must connect to the configured --host/--port.
 cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
@@ -372,6 +379,7 @@ Refusals are structured errors with exit code `2`. Each includes a code, message
 | `E_DECLARATION_PARSE` | Catalog declaration malformed or mismatched | Regenerate the declaration for the selected schema |
 | `E_VERIFY_ARTIFACT_PARSE` | Verify artifact malformed | Regenerate with `verify` |
 | `E_SNAPSHOT_VERIFY` | Snapshot hash mismatch or version error | Re-emit from schema source |
+| `E_TWIN_PAIR_PROOF` | Twin-pair proof inputs or query fixture are incompatible | Use snapshots with the same schema/catalog/declaration and a supported query fixture |
 | `E_SERIALIZATION` | Internal JSON rendering failure | Report bug |
 
 Refusals are never silent. If twinning cannot do what you asked, it tells you why and what to try instead.

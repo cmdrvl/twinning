@@ -96,10 +96,10 @@ twin-pair proof is:
 
 The remaining blocking gaps are:
 
-- **Live dual-endpoint orchestration gap.** The prototype restores two
-  snapshots and runs the kernel directly. Production proof still needs an
-  operator surface for booting, loading, naming, reporting, and sealing both
-  twins as one coherent run.
+- **Live dual-endpoint orchestration gap.** The prototype has a snapshot-pair
+  CLI that runs a shared query fixture and emits `twinning.twin-pair-proof.v0`.
+  Production proof still needs an operator surface for booting, loading,
+  naming, and sealing live twins as one coherent run.
 - **Replay corpus gap.** The current proof fixture has one translated
   Postgres-compatible point lookup. Twin A still needs a broader checked-in
   replay manifest and fixtures with explicit PASS / FAIL / SKIP rules for

@@ -10,6 +10,7 @@
     "binary": "twinning",
     "usage": [
       "twinning postgres [OPTIONS]",
+      "twinning proof twin-pair --left LEFT.twin --right RIGHT.twin --queries cases.json --json",
       "twinning doctor health --json",
       "twinning doctor capabilities --json",
       "twinning doctor robot-docs",
@@ -153,7 +154,7 @@
       "snapshot write/restore with hash verification",
       "committed-state snapshot freeze/restore",
       "run_once pgwire listener for the declared Postgres subset",
-      "prototype twin-pair proof report model and fixture harness",
+      "prototype twin-pair proof report model, fixture harness, and snapshot-pair CLI",
       "storage-boundary reporting for tournament vs replay modes",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],

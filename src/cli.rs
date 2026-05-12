@@ -63,6 +63,8 @@ pub enum Command {
     Oracle(TwinArgs),
     #[command(about = "Inspect the CLI's read-only health and agent-facing capabilities")]
     Doctor(DoctorArgs),
+    #[command(about = "Run proof-oriented twin comparison workflows")]
+    Proof(ProofArgs),
 }
 
 impl Command {
@@ -71,14 +73,14 @@ impl Command {
             Self::Postgres(_) => Some(Engine::Postgres),
             Self::Mysql(_) => Some(Engine::Mysql),
             Self::Oracle(_) => Some(Engine::Oracle),
-            Self::Doctor(_) => None,
+            Self::Doctor(_) | Self::Proof(_) => None,
         }
     }
 
     pub fn twin_args(&self) -> Option<&TwinArgs> {
         match self {
             Self::Postgres(args) | Self::Mysql(args) | Self::Oracle(args) => Some(args),
-            Self::Doctor(_) => None,
+            Self::Doctor(_) | Self::Proof(_) => None,
         }
     }
 }
@@ -130,4 +132,31 @@ pub enum DoctorCommand {
     Capabilities,
     #[command(name = "robot-docs", about = "Print concise agent-facing usage notes")]
     RobotDocs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ProofArgs {
+    #[command(subcommand)]
+    pub command: ProofCommand,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum ProofCommand {
+    #[command(name = "twin-pair", about = "Compare two Postgres twin snapshots")]
+    TwinPair(TwinPairProofArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct TwinPairProofArgs {
+    #[arg(long, value_name = "FILE")]
+    pub left: PathBuf,
+
+    #[arg(long, value_name = "FILE")]
+    pub right: PathBuf,
+
+    #[arg(long, value_name = "FILE")]
+    pub queries: PathBuf,
+
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
 }

@@ -100,6 +100,8 @@ cargo run -- postgres --schema schema.sql --json
 cargo run -- postgres --schema schema.sql --verify schema.verify.json \
   --report out/bootstrap.json --snapshot out/bootstrap.twin --json
 cargo run -- postgres --schema schema.sql --declaration declaration.json --json
+cargo run -- --json proof twin-pair --left legacy.twin --right candidate.twin \
+  --queries tests/fixtures/differential/twin_pair_migration_proof/cases.json
 cargo run -- --describe
 
 # Current live run_once path

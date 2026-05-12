@@ -45,6 +45,12 @@ pub fn run() -> Result<u8, Box<dyn std::error::Error>> {
         return Ok(execution.exit_code);
     }
 
+    if let Some(cli::Command::Proof(args)) = &cli.command {
+        let execution = migration_proof::execute(args, cli.json)?;
+        print!("{}", execution.stdout);
+        return Ok(execution.exit_code);
+    }
+
     let config = match config::TwinConfig::from_cli(&cli) {
         Ok(config) => config,
         Err(refusal) => {
