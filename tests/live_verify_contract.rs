@@ -51,6 +51,7 @@ fn seeded_report() -> TwinReport {
             hash: String::from("sha256:artifact"),
             loaded: 2,
         }),
+        source_materialization: None,
         verify: None,
         catalog: &catalog,
         snapshot: SnapshotReport {

@@ -29,6 +29,8 @@ pub struct TwinReport {
     pub verify_artifact: Option<VerifyArtifactReport>,
     pub catalog: CatalogReport,
     pub storage: StorageReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_materialization: Option<SourceMaterializationReport>,
     pub tables: BTreeMap<String, TableReport>,
     pub constraints: ConstraintCounters,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,6 +95,15 @@ pub struct StorageReport {
     pub cold_state: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceMaterializationReport {
+    pub source_identity: String,
+    pub method: String,
+    pub table_count: usize,
+    pub row_count: u64,
+    pub tables: BTreeMap<String, u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableReport {
     pub rows: u64,
@@ -140,6 +151,7 @@ pub struct TwinReportSeed<'a> {
     pub schema: SchemaReport,
     pub catalog_declaration: Option<CatalogDeclarationIdentity>,
     pub verify_artifact: Option<VerifyArtifactReport>,
+    pub source_materialization: Option<SourceMaterializationReport>,
     pub verify: Option<Value>,
     pub catalog: &'a Catalog,
     pub snapshot: SnapshotReport,
@@ -201,6 +213,7 @@ impl TwinReport {
                 hot_working_set: "memory".to_owned(),
                 cold_state: "shared snapshot or pluggable backing store".to_owned(),
             },
+            source_materialization: seed.source_materialization,
             tables,
             constraints: ConstraintCounters {
                 not_null_violations: 0,
@@ -458,6 +471,7 @@ mod tests {
             },
             catalog_declaration: None,
             verify_artifact: None,
+            source_materialization: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
                 table_count: 0,
@@ -524,6 +538,7 @@ mod tests {
             },
             catalog_declaration: None,
             verify_artifact: None,
+            source_materialization: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
                 table_count: 0,
@@ -598,6 +613,7 @@ mod tests {
             },
             catalog_declaration: None,
             verify_artifact: None,
+            source_materialization: None,
             verify: None,
             catalog: &catalog,
             snapshot: SnapshotReport {
@@ -653,6 +669,7 @@ mod tests {
             },
             catalog_declaration: None,
             verify_artifact: None,
+            source_materialization: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
                 table_count: 2,
@@ -754,6 +771,7 @@ mod tests {
             },
             catalog_declaration: None,
             verify_artifact: None,
+            source_materialization: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
                 table_count: 0,
@@ -822,6 +840,7 @@ mod tests {
             },
             catalog_declaration: None,
             verify_artifact: None,
+            source_materialization: None,
             catalog: CatalogReport {
                 dialect: "postgres".to_owned(),
                 table_count: 0,

@@ -66,6 +66,9 @@
     "storage": {
       "$ref": "#/$defs/storage"
     },
+    "source_materialization": {
+      "$ref": "#/$defs/source_materialization"
+    },
     "tables": {
       "type": "object",
       "description": "Per-table twin metrics keyed by canonical schema.table name.",
@@ -258,6 +261,35 @@
         "cold_state": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "source_materialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_identity", "method", "table_count", "row_count", "tables"],
+      "properties": {
+        "source_identity": {
+          "$ref": "#/$defs/sha256"
+        },
+        "method": {
+          "type": "string",
+          "const": "psql_copy_stdout"
+        },
+        "table_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tables": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       }
     },

@@ -9,11 +9,15 @@ use crate::{
     config::TwinConfig,
     declaration::{CatalogDeclarationIdentity, load_catalog_declaration},
     kernel::storage::TableStorage,
+    materialize,
     protocol::postgres::listener::{PgwireListener, SharedPgwireState, ShutdownHook},
     refusal,
     refusal::RefusalResult,
-    report::{LiveVerifyArtifact, RatioMap, RunReport, VerifyArtifactReport},
+    report::{
+        LiveVerifyArtifact, RatioMap, RunReport, SourceMaterializationReport, VerifyArtifactReport,
+    },
     snapshot,
+    snapshot::SnapshotRelations,
 };
 
 mod final_artifacts;
@@ -37,6 +41,8 @@ struct BootstrapState {
     verify_report: Option<serde_json::Value>,
     live_verify_artifact: Option<LiveVerifyArtifact>,
     catalog_declaration: Option<CatalogDeclarationIdentity>,
+    source_materialization: Option<SourceMaterializationReport>,
+    materialized_relations: Option<SnapshotRelations>,
     catalog: Catalog,
     restored_from: Option<String>,
     restored_snapshot_hash: Option<String>,
@@ -84,12 +90,19 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
 
     preflight_output_targets(config)?;
 
+    if let Some(source_url) = &config.materialize_source_url {
+        let capture = materialize::capture_source_relations(&state.catalog, source_url)?;
+        state.source_materialization = Some(capture.report);
+        state.materialized_relations = Some(capture.relations);
+    }
+
     if live_mode {
         return execute_run_mode(config, &state);
     }
 
     let mut emitter = FinalArtifactEmitter::from_config(config);
-    let finalized = emitter.emit_once(&state, None, None)?;
+    let committed_tables = materialized_committed_tables(&state)?;
+    let finalized = emitter.emit_once(&state, committed_tables, None)?;
 
     let stdout = if config.json {
         finalized
@@ -231,6 +244,8 @@ fn load_state_from_schema(
         verify_report: None,
         live_verify_artifact: None,
         catalog_declaration,
+        source_materialization: None,
+        materialized_relations: None,
         catalog,
         restored_from: None,
         restored_snapshot_hash: None,
@@ -274,6 +289,8 @@ fn restore_state(
         verify_report: None,
         live_verify_artifact: None,
         catalog_declaration,
+        source_materialization: None,
+        materialized_relations: None,
         catalog: snapshot.catalog,
         restored_from: Some(path_display(restore_path)),
         restored_snapshot_hash: Some(restored_snapshot_hash),
@@ -415,6 +432,10 @@ fn committed_tables_for_live_run(
     config: &TwinConfig,
     state: &BootstrapState,
 ) -> RefusalResult<Vec<TableStorage>> {
+    if let Some(committed_tables) = materialized_committed_tables(state)? {
+        return Ok(committed_tables);
+    }
+
     if let Some(restore_path) = &config.restore_path {
         let snapshot = snapshot::read_snapshot(restore_path)?;
         return snapshot::restore::restore_committed_tables(&snapshot);
@@ -434,6 +455,27 @@ fn committed_tables_for_live_run(
         .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
 
     Ok(committed_tables)
+}
+
+fn materialized_committed_tables(
+    state: &BootstrapState,
+) -> RefusalResult<Option<Vec<TableStorage>>> {
+    let Some(relations) = &state.materialized_relations else {
+        return Ok(None);
+    };
+    let snapshot = snapshot::TwinSnapshot::new(
+        Engine::Postgres,
+        state.schema_source.clone(),
+        state.schema_hash.clone(),
+        state.restored_snapshot_hash.clone(),
+        state.verify_artifact.clone(),
+        state.catalog.clone(),
+    )?
+    .with_catalog_declaration(state.catalog_declaration.clone())?
+    .with_source_materialization(state.source_materialization.clone())?
+    .with_relations(relations.clone())?;
+
+    snapshot::restore::restore_committed_tables(&snapshot).map(Some)
 }
 
 fn verify_failed(verify: Option<&serde_json::Value>) -> bool {
@@ -535,6 +577,7 @@ mod tests {
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -671,6 +714,7 @@ sock.close()
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -724,6 +768,7 @@ sock.close()
             report_path: Some(invalid_report_path),
             snapshot_path: None,
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -769,6 +814,7 @@ sock.close()
             report_path: None,
             snapshot_path: None,
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -798,6 +844,7 @@ sock.close()
             report_path: Some(report_path),
             snapshot_path: Some(snapshot_path.clone()),
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -838,6 +885,7 @@ sock.close()
             report_path: Some(invalid_report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -859,6 +907,7 @@ sock.close()
             report_path: Some(invalid_report_path),
             snapshot_path: Some(snapshot_path.clone()),
             restore_path: Some(malformed_snapshot_path),
+            materialize_source_url: None,
             json: true,
         };
 
@@ -896,6 +945,7 @@ sock.close()
             report_path: Some(invalid_report_path),
             snapshot_path: Some(blocked_snapshot_path.clone()),
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -924,6 +974,7 @@ sock.close()
             report_path: Some(report_output_path.clone()),
             snapshot_path: Some(invalid_snapshot_path),
             restore_path: None,
+            materialize_source_url: None,
             json: true,
         };
 
@@ -1038,6 +1089,7 @@ sock.close()
             report_path: None,
             snapshot_path: None,
             restore_path: Some(snapshot_path),
+            materialize_source_url: None,
             json: true,
         };
 

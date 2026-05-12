@@ -131,6 +131,8 @@ Options:
   --report <FILE>        Write twin validation / metrics report as JSON on exit
   --snapshot <FILE>      Dump twin state to content-addressed snapshot on exit
   --restore <FILE>       Restore twin state from a snapshot before accepting connections
+  --materialize-source-url <URL>
+                         Capture declared tables from a Postgres source before final snapshot/report
   --json                 JSON output for status messages
 ```
 
@@ -187,7 +189,11 @@ Startup preflight order:
 3. If `--verify` is provided, load the compiled artifact and refuse immediately
    if it contains any batch-only rule.
 4. Bind report / snapshot output targets.
-5. Only then start accepting pgwire connections.
+5. If `--materialize-source-url` is provided with `--schema`, use `psql COPY`
+   to read the declared tables from the source URL, convert values into the
+   declared kernel value model, and attach the hashed source identity to the
+   report/snapshot.
+6. Only then start accepting pgwire connections, when `--run` is also present.
 
 Interactive mode semantics:
 
@@ -216,6 +222,9 @@ Visibility rules:
 - Verification and snapshotting see only committed twin state.
 - Rolled-back mutations, transient session variables, live sockets, and
   prepared-statement caches are outside the report/snapshot semantic surface.
+- Source materialization is Postgres-only and schema-declared: it captures only
+  catalog tables and refuses restore/source combinations rather than merging
+  two bootstrap sources.
 
 ### Unsupported-shape mapping
 

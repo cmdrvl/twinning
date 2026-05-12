@@ -93,6 +93,21 @@ pub fn ambiguous_bootstrap_source() -> RefusalEnvelope {
     )
 }
 
+pub fn materialization_requires_schema() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_MATERIALIZATION_BOOTSTRAP_SOURCE",
+        "Live source materialization requires --schema and cannot be combined with --restore.",
+        json!({
+            "required_bootstrap_source": "schema",
+            "disallowed_with": "restore"
+        }),
+        Some(
+            "twinning postgres --schema schema.sql --materialize-source-url postgres://... --snapshot out.twin --json"
+                .to_owned(),
+        ),
+    )
+}
+
 pub fn engine_unimplemented(engine: Engine) -> RefusalEnvelope {
     RefusalEnvelope::new(
         "E_ENGINE_UNIMPLEMENTED",

@@ -86,6 +86,12 @@
       "description": "Restore a prior bootstrap snapshot"
     },
     {
+      "name": "materialize_source_url",
+      "flag": "--materialize-source-url",
+      "type": "string",
+      "description": "Capture declared Postgres source rows into the final report/snapshot using psql COPY"
+    },
+    {
       "name": "json",
       "flag": "--json",
       "type": "flag",
@@ -154,6 +160,7 @@
       "bootstrap report generation",
       "snapshot write/restore with hash verification",
       "committed-state snapshot freeze/restore",
+      "schema-declared live source materialization through psql COPY",
       "run_once pgwire listener for the declared Postgres subset",
       "prototype twin-pair proof report model, fixture harness, target evidence identities, and snapshot-pair CLI",
       "restore-backed twin-pair orchestration runner, manifest parser, and schema",

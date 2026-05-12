@@ -113,6 +113,9 @@ pub struct TwinArgs {
 
     #[arg(long, value_name = "FILE")]
     pub restore: Option<PathBuf>,
+
+    #[arg(long, value_name = "URL")]
+    pub materialize_source_url: Option<String>,
 }
 
 #[derive(Debug, Args, Clone)]

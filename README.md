@@ -12,7 +12,7 @@ It answers one narrow question:
 
 Current status:
 
-- repository status: Phase 0 bootstrap + live `run_once` shell for the proven Postgres subset
+- repository status: Phase 0 bootstrap + live `run_once` shell and source materialization for the proven Postgres subset
 - source of truth: [docs/PLAN_TWINNING.md](./docs/PLAN_TWINNING.md)
 - current repo contents: plan + execution graph + Rust bootstrap crate + report/snapshot schemas
 - first deferred direction after the v0 center: twin-pair migration proof
@@ -35,6 +35,13 @@ cargo run -- postgres --schema schema.sql --json
 cargo run -- postgres --schema schema.sql --verify schema.verify.json \
   --report out/bootstrap.json \
   --snapshot out/bootstrap.twin \
+  --json
+
+# Capture declared rows from a disposable/source Postgres database into a snapshot
+cargo run -- postgres --schema schema.sql \
+  --materialize-source-url "$SOURCE_DATABASE_URL" \
+  --report out/materialized.json \
+  --snapshot out/materialized.twin \
   --json
 
 # Restore a prior snapshot and re-emit bootstrap status
@@ -66,8 +73,11 @@ cargo run -- doctor capabilities --json
 cargo run -- doctor --robot-triage
 ```
 
-The first three examples cover bootstrap mode. The `--run` example uses the
-current live `run_once` shell and final artifact path.
+The first materialization example shells out to `psql` and captures only the
+tables declared by the schema. Use it against a source account/database that is
+safe for deterministic reads; `TWINNING_PSQL_BIN` can point at a specific
+`psql` binary in test harnesses. The `--run` example uses the current live
+`run_once` shell and final artifact path.
 
 ### Example Output
 

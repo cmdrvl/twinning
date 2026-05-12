@@ -15,7 +15,7 @@ use crate::{
     kernel::{storage::TableStorage, value::KernelValue},
     refusal,
     refusal::RefusalResult,
-    report::VerifyArtifactReport,
+    report::{SourceMaterializationReport, VerifyArtifactReport},
 };
 
 pub mod restore;
@@ -39,6 +39,8 @@ pub struct TwinSnapshot {
     pub verify_artifact: Option<VerifyArtifactReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catalog_declaration: Option<CatalogDeclarationIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_materialization: Option<SourceMaterializationReport>,
     pub catalog: Catalog,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relations: Option<SnapshotRelations>,
@@ -67,6 +69,7 @@ impl TwinSnapshot {
             base_snapshot_hash,
             verify_artifact,
             catalog_declaration: None,
+            source_materialization: None,
             catalog,
             relations: None,
             table_rows,
@@ -77,6 +80,7 @@ impl TwinSnapshot {
 
     pub fn with_relations(mut self, relations: SnapshotRelations) -> RefusalResult<Self> {
         let relations = canonicalize_relations(&self.catalog, &relations)?;
+        self.mode = "committed_state".to_owned();
         self.table_rows = table_rows_for_relations(&self.catalog, Some(&relations));
         self.relations = Some(relations);
         self.snapshot_hash = self.compute_hash()?;
@@ -96,6 +100,15 @@ impl TwinSnapshot {
         declaration: Option<CatalogDeclarationIdentity>,
     ) -> RefusalResult<Self> {
         self.catalog_declaration = declaration;
+        self.snapshot_hash = self.compute_hash()?;
+        Ok(self)
+    }
+
+    pub fn with_source_materialization(
+        mut self,
+        source_materialization: Option<SourceMaterializationReport>,
+    ) -> RefusalResult<Self> {
+        self.source_materialization = source_materialization;
         self.snapshot_hash = self.compute_hash()?;
         Ok(self)
     }
@@ -124,6 +137,7 @@ impl TwinSnapshot {
             schema_hash: &clone.schema_hash,
             verify_artifact: clone.verify_artifact.as_ref(),
             catalog_declaration: clone.catalog_declaration.as_ref(),
+            source_materialization: clone.source_materialization.as_ref(),
             catalog: &clone.catalog,
             relations: clone.relations.as_ref(),
             table_rows: &clone.table_rows,
@@ -155,6 +169,8 @@ struct CanonicalCommittedStateSurface<'a> {
     verify_artifact: Option<&'a VerifyArtifactReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     catalog_declaration: Option<&'a CatalogDeclarationIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_materialization: Option<&'a SourceMaterializationReport>,
     catalog: &'a Catalog,
     #[serde(skip_serializing_if = "Option::is_none")]
     relations: Option<&'a SnapshotRelations>,

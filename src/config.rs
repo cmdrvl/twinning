@@ -20,6 +20,7 @@ pub struct TwinConfig {
     pub report_path: Option<PathBuf>,
     pub snapshot_path: Option<PathBuf>,
     pub restore_path: Option<PathBuf>,
+    pub materialize_source_url: Option<String>,
     pub json: bool,
 }
 
@@ -47,6 +48,10 @@ impl TwinConfig {
             return Err(Box::new(refusal::ambiguous_bootstrap_source()));
         }
 
+        if args.restore.is_some() && args.materialize_source_url.is_some() {
+            return Err(Box::new(refusal::materialization_requires_schema()));
+        }
+
         Ok(Self {
             engine,
             host: args.host.clone(),
@@ -58,6 +63,7 @@ impl TwinConfig {
             report_path: args.report.clone(),
             snapshot_path: args.snapshot.clone(),
             restore_path: args.restore.clone(),
+            materialize_source_url: args.materialize_source_url.clone(),
             json,
         })
     }
@@ -81,6 +87,7 @@ mod tests {
             report: None,
             snapshot: None,
             restore: None,
+            materialize_source_url: None,
         };
 
         let config =
