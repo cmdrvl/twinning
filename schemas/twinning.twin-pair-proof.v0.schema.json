@@ -187,7 +187,8 @@
         "case_id",
         "verdict",
         "left",
-        "right"
+        "right",
+        "replay_result"
       ],
       "properties": {
         "case_id": {
@@ -207,6 +208,9 @@
         "right": {
           "$ref": "#/$defs/observation"
         },
+        "replay_result": {
+          "$ref": "#/$defs/replay_result"
+        },
         "mismatches": {
           "type": "array",
           "items": {
@@ -221,6 +225,7 @@
       "additionalProperties": false,
       "required": [
         "endpoint_id",
+        "snapshot_hash",
         "query_id",
         "result_hash",
         "result"
@@ -230,6 +235,9 @@
           "type": "string",
           "minLength": 1
         },
+        "snapshot_hash": {
+          "$ref": "#/$defs/sha256"
+        },
         "query_id": {
           "type": "string",
           "minLength": 1
@@ -238,6 +246,74 @@
           "$ref": "#/$defs/sha256"
         },
         "result": true
+      }
+    },
+    "replay_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "query_id",
+        "left_endpoint_id",
+        "right_endpoint_id",
+        "left_snapshot_hash",
+        "right_snapshot_hash",
+        "left_result_hash",
+        "right_result_hash",
+        "sqlstate_parity"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "const": "twinning.twin-pair-replay-result.v0"
+        },
+        "query_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_endpoint_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "right_endpoint_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_snapshot_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "right_snapshot_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "left_result_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "right_result_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sqlstate_parity": {
+          "$ref": "#/$defs/sqlstate_parity"
+        }
+      }
+    },
+    "sqlstate_parity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matches"
+      ],
+      "properties": {
+        "left": {
+          "type": "string",
+          "pattern": "^[0-9A-Z]{5}$"
+        },
+        "right": {
+          "type": "string",
+          "pattern": "^[0-9A-Z]{5}$"
+        },
+        "matches": {
+          "type": "boolean"
+        }
       }
     }
   }

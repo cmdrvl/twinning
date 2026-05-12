@@ -21,6 +21,7 @@ use crate::{
 };
 
 pub const TWIN_PAIR_PROOF_VERSION: &str = "twinning.twin-pair-proof.v0";
+pub const TWIN_PAIR_REPLAY_RESULT_VERSION: &str = "twinning.twin-pair-replay-result.v0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TwinPairProofReport {
@@ -78,6 +79,7 @@ pub struct TwinPairProofCase {
     pub verdict: TwinPairCaseVerdict,
     pub left: TwinPairObservation,
     pub right: TwinPairObservation,
+    pub replay_result: TwinPairReplayResultArtifact,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mismatches: Vec<String>,
 }
@@ -92,9 +94,32 @@ pub enum TwinPairCaseVerdict {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TwinPairObservation {
     pub endpoint_id: String,
+    pub snapshot_hash: String,
     pub query_id: String,
     pub result_hash: String,
     pub result: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TwinPairReplayResultArtifact {
+    pub version: String,
+    pub query_id: String,
+    pub left_endpoint_id: String,
+    pub right_endpoint_id: String,
+    pub left_snapshot_hash: String,
+    pub right_snapshot_hash: String,
+    pub left_result_hash: String,
+    pub right_result_hash: String,
+    pub sqlstate_parity: TwinPairSqlstateParity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TwinPairSqlstateParity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<String>,
+    pub matches: bool,
 }
 
 impl TwinPairProofReport {
@@ -140,13 +165,39 @@ impl TwinPairProofCase {
         } else {
             TwinPairCaseVerdict::Fail
         };
+        let replay_result = TwinPairReplayResultArtifact::from_observations(&left, &right);
 
         Self {
             case_id: case_id.into(),
             verdict,
             left,
             right,
+            replay_result,
             mismatches,
+        }
+    }
+}
+
+impl TwinPairReplayResultArtifact {
+    fn from_observations(left: &TwinPairObservation, right: &TwinPairObservation) -> Self {
+        let left_sqlstate = observation_sqlstate(&left.result);
+        let right_sqlstate = observation_sqlstate(&right.result);
+        let sqlstate_matches = left_sqlstate == right_sqlstate;
+
+        Self {
+            version: TWIN_PAIR_REPLAY_RESULT_VERSION.to_owned(),
+            query_id: left.query_id.clone(),
+            left_endpoint_id: left.endpoint_id.clone(),
+            right_endpoint_id: right.endpoint_id.clone(),
+            left_snapshot_hash: left.snapshot_hash.clone(),
+            right_snapshot_hash: right.snapshot_hash.clone(),
+            left_result_hash: left.result_hash.clone(),
+            right_result_hash: right.result_hash.clone(),
+            sqlstate_parity: TwinPairSqlstateParity {
+                left: left_sqlstate,
+                right: right_sqlstate,
+                matches: sqlstate_matches,
+            },
         }
     }
 }
@@ -193,12 +244,14 @@ fn execute_twin_pair(args: &TwinPairProofArgs, json_mode: bool) -> RefusalResult
                 query.id.clone(),
                 observe_query(
                     &left_endpoint.endpoint_id,
+                    &left_endpoint.snapshot_hash,
                     &left_snapshot.catalog,
                     &left_backend,
                     query,
                 ),
                 observe_query(
                     &right_endpoint.endpoint_id,
+                    &right_endpoint.snapshot_hash,
                     &right_snapshot.catalog,
                     &right_backend,
                     query,
@@ -305,6 +358,7 @@ fn endpoint_identity(
 
 fn observe_query(
     endpoint_id: &str,
+    snapshot_hash: &str,
     catalog: &Catalog,
     backend: &BaseSnapshotBackend,
     query: &TwinPairProofQuery,
@@ -339,10 +393,18 @@ fn observe_query(
 
     TwinPairObservation {
         endpoint_id: endpoint_id.to_owned(),
+        snapshot_hash: snapshot_hash.to_owned(),
         query_id: query.id.clone(),
         result_hash: sha256_json(&result),
         result,
     }
+}
+
+fn observation_sqlstate(result: &Value) -> Option<String> {
+    result
+        .get("sqlstate")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn read_query_file(path: &Path) -> RefusalResult<TwinPairProofQueryFile> {

@@ -97,6 +97,28 @@ fn proof_cli_writes_report_for_matching_snapshots() {
         .find(|case| case["case_id"] == "outside_subset_lookup")
         .expect("outside-subset SQLSTATE case");
     assert_eq!(sqlstate_case["left"]["result"]["sqlstate"], "42P01");
+    assert_eq!(
+        sqlstate_case["replay_result"]["sqlstate_parity"]["left"],
+        "42P01"
+    );
+    assert_eq!(
+        sqlstate_case["replay_result"]["sqlstate_parity"]["right"],
+        "42P01"
+    );
+    assert_eq!(
+        sqlstate_case["replay_result"]["sqlstate_parity"]["matches"],
+        true
+    );
+    assert_eq!(
+        sqlstate_case["replay_result"]["left_snapshot_hash"],
+        report["endpoints"][0]["snapshot_hash"]
+    );
+    assert_eq!(
+        sqlstate_case["replay_result"]["right_snapshot_hash"],
+        report["endpoints"][1]["snapshot_hash"]
+    );
+    assert!(sqlstate_case["replay_result"].get("duration_ms").is_none());
+    assert!(sqlstate_case["replay_result"].get("score").is_none());
 
     let filtered_case = cases
         .iter()

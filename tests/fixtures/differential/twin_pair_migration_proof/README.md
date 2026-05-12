@@ -22,3 +22,8 @@ shapes.
 The fixture also attaches target-side evidence identities for raw `verify`,
 `benchmark`, and `assess` artifacts. Those identities are references only: the
 proof report does not read, score, or reinterpret the target artifacts.
+
+Each proof case also emits a `twinning.twin-pair-replay-result.v0` replay-result
+artifact section with timing-independent diff inputs: endpoint snapshot hashes,
+left/right result hashes, and SQLSTATE parity. It intentionally excludes scores
+and timing measurements.

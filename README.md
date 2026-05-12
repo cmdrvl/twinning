@@ -307,6 +307,8 @@ Critical boundary:
 - it must not export state and shell out to batch `verify`
 - twin-pair proof reports may reference raw `verify`/`benchmark`/`assess`
   artifact identities, but must not score or reinterpret them
+- twin-pair proof cases include replay-result diff inputs with snapshot
+  provenance, result hashes, and SQLSTATE parity, not timing-derived fields
 
 ---
 
@@ -347,6 +349,7 @@ Current artifact contracts:
 - `twinning.v0` — bootstrap or later runtime report
 - `twinning.snapshot.v0` — content-addressed snapshot
 - `twinning.twin-pair-proof.v0` — prototype interface-equivalence receipt for two Postgres twins
+- `twinning.twin-pair-replay-result.v0` — per-case replay diff inputs nested in twin-pair proof reports
 - `twinning.canary-manifest.v0` — normative compatibility manifest for the supported subset
 
 Checked-in manifest:

@@ -181,6 +181,11 @@
       "name": "twinning.twin-pair-proof.v0",
       "kind": "proof_report",
       "description": "Prototype interface-equivalence receipt for comparing two Postgres twins over one declared subset, with optional raw target evidence identities"
+    },
+    {
+      "name": "twinning.twin-pair-replay-result.v0",
+      "kind": "nested_proof_artifact",
+      "description": "Per-case timing-independent replay diff inputs: snapshot provenance, result hashes, and SQLSTATE parity"
     }
   ]
 }

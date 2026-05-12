@@ -180,10 +180,10 @@ The remaining blocking gaps are:
   Postgres-compatible replay. True Oracle/TNS fidelity is deferred to a later
   adapter. The remaining work is breadth: more translated replay families and
   explicit SKIP/refusal accounting for shapes outside the current subset.
-- **Replay-result artifact gap.** `twinning.twin-pair-proof.v0` now pins the
-  compact endpoint/case/result-hash receipt shape, but live replay still needs
-  SQLSTATE parity, timing-independent diff inputs, and snapshot provenance at
-  broader replay scope.
+- **Replay-result breadth gap.** `twinning.twin-pair-proof.v0` now includes a
+  per-case `twinning.twin-pair-replay-result.v0` section with result hashes,
+  SQLSTATE parity, and endpoint snapshot provenance. Broader live replay still
+  needs more query-family coverage and pack-facing bundle layout.
 - **Heavier-backend gap.** Twin-pair migration proof is the first consumer that
   may genuinely need the snapshot-backed, disk-backed, or delegated backend
   path. The backend boundary exists in prose, but the first migration-proof cut

@@ -21,9 +21,9 @@ use twinning::{
     },
     kernel::read::execute_read,
     migration_proof::{
-        TWIN_PAIR_PROOF_VERSION, TwinPairCaseVerdict, TwinPairEndpointIdentity,
-        TwinPairEvidenceIdentity, TwinPairEvidenceKind, TwinPairObservation, TwinPairProofCase,
-        TwinPairProofOutcome, TwinPairProofReport,
+        TWIN_PAIR_PROOF_VERSION, TWIN_PAIR_REPLAY_RESULT_VERSION, TwinPairCaseVerdict,
+        TwinPairEndpointIdentity, TwinPairEvidenceIdentity, TwinPairEvidenceKind,
+        TwinPairObservation, TwinPairProofCase, TwinPairProofOutcome, TwinPairProofReport,
     },
     result::KernelResult,
     snapshot::{SnapshotRelations, TwinSnapshot, restore},
@@ -162,6 +162,26 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     assert_eq!(pass_report.cases[0].verdict, TwinPairCaseVerdict::Pass);
     assert!(pass_report.cases[0].mismatches.is_empty());
     assert_eq!(
+        pass_report.cases[0].replay_result.version,
+        TWIN_PAIR_REPLAY_RESULT_VERSION
+    );
+    assert_eq!(
+        pass_report.cases[0].replay_result.left_snapshot_hash,
+        pass_report.endpoints[0].snapshot_hash
+    );
+    assert_eq!(
+        pass_report.cases[0].replay_result.right_snapshot_hash,
+        pass_report.endpoints[1].snapshot_hash
+    );
+    assert!(pass_report.cases[0].replay_result.sqlstate_parity.matches);
+    assert!(
+        pass_report.cases[0]
+            .replay_result
+            .sqlstate_parity
+            .left
+            .is_none()
+    );
+    assert_eq!(
         pass_report.endpoints[0].committed_state_hash,
         pass_report.endpoints[1].committed_state_hash
     );
@@ -197,6 +217,10 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     assert_eq!(fail_report.cases[0].verdict, TwinPairCaseVerdict::Fail);
     assert_eq!(fail_report.cases[0].mismatches, vec!["query_result"]);
     assert_ne!(
+        fail_report.cases[0].replay_result.left_result_hash,
+        fail_report.cases[0].replay_result.right_result_hash
+    );
+    assert_ne!(
         fail_report.endpoints[0].committed_state_hash,
         fail_report.endpoints[1].committed_state_hash
     );
@@ -219,6 +243,20 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     assert_eq!(
         refusal_report.cases[0].left.result["code"],
         json!("unknown_table")
+    );
+    assert_eq!(
+        refusal_report.cases[0].replay_result.sqlstate_parity.left,
+        Some(String::from("42P01"))
+    );
+    assert_eq!(
+        refusal_report.cases[0].replay_result.sqlstate_parity.right,
+        Some(String::from("42P01"))
+    );
+    assert!(
+        refusal_report.cases[0]
+            .replay_result
+            .sqlstate_parity
+            .matches
     );
 
     let filtered_report = build_report(&fixture, filtered_case);
@@ -262,6 +300,10 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
         json!(["query_result"])
     );
     assert_eq!(
+        rendered_fail["cases"][0]["replay_result"]["version"],
+        TWIN_PAIR_REPLAY_RESULT_VERSION
+    );
+    assert_eq!(
         rendered_fail["endpoints"][1]["evidence_identities"][0]["artifact_kind"],
         json!("verify")
     );
@@ -273,6 +315,10 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
         proof_schema["$defs"]["evidence_identity"]["properties"]["artifact_kind"]["enum"],
         json!(["verify", "benchmark", "assess"])
     );
+    assert_eq!(
+        proof_schema["$defs"]["replay_result"]["properties"]["version"]["const"],
+        TWIN_PAIR_REPLAY_RESULT_VERSION
+    );
 }
 
 fn build_report(fixture: &ProofFixture, case: &FixtureCase) -> TwinPairProofReport {
@@ -283,8 +329,20 @@ fn build_report(fixture: &ProofFixture, case: &FixtureCase) -> TwinPairProofRepo
 
     let proof_case = TwinPairProofCase::compare(
         case.id.clone(),
-        observe_query(&left.identity.endpoint_id, &catalog, &left.backend, query),
-        observe_query(&right.identity.endpoint_id, &catalog, &right.backend, query),
+        observe_query(
+            &left.identity.endpoint_id,
+            &left.identity.snapshot_hash,
+            &catalog,
+            &left.backend,
+            query,
+        ),
+        observe_query(
+            &right.identity.endpoint_id,
+            &right.identity.snapshot_hash,
+            &catalog,
+            &right.backend,
+            query,
+        ),
     );
     assert_eq!(proof_case.verdict, case.expected_verdict);
     assert_eq!(proof_case.mismatches, case.expected_mismatches);
@@ -347,6 +405,7 @@ fn build_endpoint(
 
 fn observe_query(
     endpoint_id: &str,
+    snapshot_hash: &str,
     catalog: &Catalog,
     backend: &BaseSnapshotBackend,
     query: &ProofQuery,
@@ -374,6 +433,7 @@ fn observe_query(
 
     TwinPairObservation {
         endpoint_id: endpoint_id.to_owned(),
+        snapshot_hash: snapshot_hash.to_owned(),
         query_id: query.id.clone(),
         result_hash: sha256_json(&result),
         result,
