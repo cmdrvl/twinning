@@ -2,14 +2,19 @@ use std::{
     io::{self, Read, Write},
     net::{Shutdown, SocketAddr, TcpListener, TcpStream},
     sync::{
-        Arc,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
 };
 
-use crate::{backend::BaseSnapshotBackend, catalog::Catalog};
+use crate::{
+    backend::{Backend, BackendError, BaseSnapshotBackend, OverlayError, SessionOverlayManager},
+    catalog::Catalog,
+    kernel::storage::TableStorage,
+    result::{KernelResult, RefusalResult, ResultTag},
+};
 
 #[cfg(unix)]
 use signal_hook::{
@@ -22,12 +27,13 @@ use super::{
     extended_parse::{BindRequest, ExtendedParseState, ParseRequest},
     frames::{ResultFrameMetadata, unsupported_live_shape_result},
     session::{SessionLoop, ready_for_query_frame},
-    simple_query::dispatch_simple_query,
+    simple_query::dispatch_simple_query_result,
     startup::{StartupOutcome, encode_startup_response, negotiate_startup, parse_startup_packet},
 };
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const CONNECTION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const FINALIZER_SESSION_ID: &str = "__twinning_finalizer__";
 const NO_SHUTDOWN: usize = 0;
 const OPERATOR_STOP: usize = 1;
 
@@ -98,6 +104,55 @@ impl ShutdownHook {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SharedPgwireState {
+    catalog: Catalog,
+    overlays: Arc<Mutex<SessionOverlayManager>>,
+}
+
+impl SharedPgwireState {
+    pub fn from_backend(catalog: Catalog, backend: BaseSnapshotBackend) -> Self {
+        Self {
+            catalog,
+            overlays: Arc::new(Mutex::new(SessionOverlayManager::new(backend))),
+        }
+    }
+
+    pub fn from_committed_tables(
+        catalog: Catalog,
+        committed_tables: impl IntoIterator<Item = TableStorage>,
+    ) -> Result<Self, BackendError> {
+        Ok(Self::from_backend(
+            catalog,
+            BaseSnapshotBackend::new(committed_tables)?,
+        ))
+    }
+
+    pub fn committed_tables(&self) -> io::Result<Vec<TableStorage>> {
+        let overlays = self.lock_overlays()?;
+        self.catalog
+            .tables
+            .iter()
+            .map(|table| {
+                overlays
+                    .snapshot_visible_table(FINALIZER_SESSION_ID, &table.name)
+                    .map_err(|error| {
+                        io::Error::other(format!(
+                            "failed to freeze committed table `{}`: {error}",
+                            table.name
+                        ))
+                    })
+            })
+            .collect()
+    }
+
+    fn lock_overlays(&self) -> io::Result<MutexGuard<'_, SessionOverlayManager>> {
+        self.overlays.lock().map_err(|error| {
+            io::Error::other(format!("shared pgwire state lock poisoned: {error}"))
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct PgwireListener {
     listener: TcpListener,
@@ -125,8 +180,19 @@ impl PgwireListener {
         catalog: Catalog,
         backend: BaseSnapshotBackend,
     ) -> io::Result<()> {
+        self.accept_with_state(
+            session_id,
+            SharedPgwireState::from_backend(catalog, backend),
+        )
+    }
+
+    pub fn accept_with_state(
+        &self,
+        session_id: impl Into<String>,
+        state: SharedPgwireState,
+    ) -> io::Result<()> {
         let (stream, _) = self.listener.accept()?;
-        serve_connection_with_backend(stream, session_id, catalog, backend)
+        serve_connection_with_state(stream, session_id, state)
     }
 
     pub fn accept_until_shutdown(
@@ -136,7 +202,24 @@ impl PgwireListener {
     ) -> io::Result<()> {
         self.listener.set_nonblocking(true)?;
         let result =
-            accept_until_shutdown_loop(&self.listener, session_id_prefix.as_ref(), shutdown);
+            accept_until_shutdown_loop(&self.listener, session_id_prefix.as_ref(), shutdown, None);
+        self.listener.set_nonblocking(false)?;
+        result
+    }
+
+    pub fn accept_until_shutdown_with_state(
+        &self,
+        session_id_prefix: impl AsRef<str>,
+        shutdown: &ShutdownHook,
+        state: SharedPgwireState,
+    ) -> io::Result<()> {
+        self.listener.set_nonblocking(true)?;
+        let result = accept_until_shutdown_loop(
+            &self.listener,
+            session_id_prefix.as_ref(),
+            shutdown,
+            Some(state),
+        );
         self.listener.set_nonblocking(false)?;
         result
     }
@@ -147,17 +230,24 @@ pub fn serve_connection(mut stream: TcpStream, session_id: impl Into<String>) ->
 }
 
 pub fn serve_connection_with_backend(
-    mut stream: TcpStream,
+    stream: TcpStream,
     session_id: impl Into<String>,
     catalog: Catalog,
     backend: BaseSnapshotBackend,
 ) -> io::Result<()> {
-    serve_connection_with_shutdown(
-        &mut stream,
+    serve_connection_with_state(
+        stream,
         session_id,
-        None,
-        Some(LiveQueryState { catalog, backend }),
+        SharedPgwireState::from_backend(catalog, backend),
     )
+}
+
+pub fn serve_connection_with_state(
+    mut stream: TcpStream,
+    session_id: impl Into<String>,
+    state: SharedPgwireState,
+) -> io::Result<()> {
+    serve_connection_with_shutdown(&mut stream, session_id, None, Some(state))
 }
 
 pub fn serve_connection_until_shutdown(
@@ -173,7 +263,7 @@ fn serve_connection_with_shutdown(
     stream: &mut TcpStream,
     session_id: impl Into<String>,
     shutdown: Option<&ShutdownHook>,
-    live_state: Option<LiveQueryState>,
+    live_state: Option<SharedPgwireState>,
 ) -> io::Result<()> {
     let session_id = session_id.into();
     let startup_packet = match read_startup_packet(stream, shutdown) {
@@ -226,7 +316,13 @@ fn serve_connection_with_shutdown(
                 write_frames(stream, &cycle.frames)?;
             }
             FrontendMessage::Query(sql) => {
-                let cycle = dispatch_simple_query(&mut session, session_id.as_str(), &sql);
+                let result = dispatch_simple_query_result(session_id.as_str(), &sql);
+                let result = apply_live_session_side_effect(
+                    live_state.as_ref(),
+                    session_id.as_str(),
+                    result,
+                )?;
+                let cycle = session.process_result(&result, ResultFrameMetadata::default());
                 write_frames(stream, &cycle.frames)?;
             }
             FrontendMessage::Parse(request) => {
@@ -259,12 +355,19 @@ fn serve_connection_with_shutdown(
             }
             FrontendMessage::Execute(request) => {
                 let frames = match live_state.as_mut() {
-                    Some(state) => execute_state.process_execute(
-                        &state.catalog,
-                        &mut state.backend,
-                        &parse_state,
-                        request,
-                    ),
+                    Some(state) => {
+                        let overlays = state.lock_overlays()?;
+                        let mut backend = SessionScopedBackend {
+                            session_id: session_id.as_str(),
+                            overlays,
+                        };
+                        execute_state.process_execute(
+                            &state.catalog,
+                            &mut backend,
+                            &parse_state,
+                            request,
+                        )
+                    }
                     None => {
                         session
                             .process_result(
@@ -295,10 +398,89 @@ fn serve_connection_with_shutdown(
     Ok(())
 }
 
-#[derive(Debug)]
-struct LiveQueryState {
-    catalog: Catalog,
-    backend: BaseSnapshotBackend,
+struct SessionScopedBackend<'a> {
+    session_id: &'a str,
+    overlays: MutexGuard<'a, SessionOverlayManager>,
+}
+
+impl Backend for SessionScopedBackend<'_> {
+    fn base_table(&self, table_name: &str) -> Option<&TableStorage> {
+        self.overlays.visible_table(self.session_id, table_name)
+    }
+
+    fn overlay_table(&self, table_name: &str) -> Option<&TableStorage> {
+        self.overlays.visible_table(self.session_id, table_name)
+    }
+
+    fn write_overlay_table(&mut self, table: TableStorage) -> Result<(), BackendError> {
+        self.overlays
+            .write_overlay_table(self.session_id, table)
+            .map_err(backend_error_from_overlay)
+    }
+
+    fn clear_overlay(&mut self) {
+        let _ = self.overlays.rollback(self.session_id);
+    }
+}
+
+fn apply_live_session_side_effect(
+    live_state: Option<&SharedPgwireState>,
+    session_id: &str,
+    result: KernelResult,
+) -> io::Result<KernelResult> {
+    let Some(live_state) = live_state else {
+        return Ok(result);
+    };
+    let tag = match &result {
+        KernelResult::Ack(ack) => ack.tag,
+        _ => return Ok(result),
+    };
+
+    let mut overlays = live_state.lock_overlays()?;
+    let outcome = match tag {
+        ResultTag::Begin => overlays.begin_write(session_id),
+        ResultTag::Commit
+            if overlays
+                .writer_session_id()
+                .is_some_and(|writer| writer.eq(session_id)) =>
+        {
+            overlays.commit(session_id)
+        }
+        ResultTag::Rollback
+            if overlays
+                .writer_session_id()
+                .is_some_and(|writer| writer.eq(session_id)) =>
+        {
+            overlays.rollback(session_id)
+        }
+        ResultTag::Commit | ResultTag::Rollback => Ok(()),
+        _ => return Ok(result),
+    };
+
+    Ok(outcome.map_or_else(overlay_refusal_result, |_| result))
+}
+
+fn overlay_refusal_result(error: OverlayError) -> KernelResult {
+    KernelResult::Refusal(RefusalResult {
+        code: String::from("live_state_error"),
+        message: format!("live session state update failed: {error}"),
+        sqlstate: String::from("55000"),
+        detail: [
+            (String::from("scope"), String::from("state_backend")),
+            (String::from("error"), error.to_string()),
+        ]
+        .into_iter()
+        .collect(),
+    })
+}
+
+fn backend_error_from_overlay(error: OverlayError) -> BackendError {
+    match error {
+        OverlayError::UnknownTable { table } => BackendError::UnknownTable { table },
+        other => BackendError::UnknownTable {
+            table: format!("session overlay error: {other}"),
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,6 +500,7 @@ fn accept_until_shutdown_loop(
     listener: &TcpListener,
     session_id_prefix: &str,
     shutdown: &ShutdownHook,
+    live_state: Option<SharedPgwireState>,
 ) -> io::Result<()> {
     let mut connection_count = 0_u64;
 
@@ -326,9 +509,14 @@ fn accept_until_shutdown_loop(
             Ok((stream, _)) => {
                 connection_count += 1;
                 let session_id = format!("{session_id_prefix}-{connection_count}");
-                serve_connection_until_shutdown(stream, session_id, shutdown)?;
+                serve_connection_until_shutdown_with_state(
+                    stream,
+                    session_id,
+                    shutdown,
+                    live_state.clone(),
+                )?;
             }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+            Err(error) if error.kind().eq(&io::ErrorKind::WouldBlock) => {
                 thread::sleep(ACCEPT_POLL_INTERVAL);
             }
             Err(error) => return Err(error),
@@ -336,6 +524,16 @@ fn accept_until_shutdown_loop(
     }
 
     Ok(())
+}
+
+fn serve_connection_until_shutdown_with_state(
+    mut stream: TcpStream,
+    session_id: impl Into<String>,
+    shutdown: &ShutdownHook,
+    live_state: Option<SharedPgwireState>,
+) -> io::Result<()> {
+    stream.set_read_timeout(Some(CONNECTION_POLL_INTERVAL))?;
+    serve_connection_with_shutdown(&mut stream, session_id, Some(shutdown), live_state)
 }
 
 fn read_startup_packet(

@@ -8,7 +8,7 @@ use crate::{
     cli::Engine,
     config::TwinConfig,
     kernel::storage::TableStorage,
-    protocol::postgres::listener::{PgwireListener, ShutdownHook},
+    protocol::postgres::listener::{PgwireListener, SharedPgwireState, ShutdownHook},
     refusal,
     refusal::RefusalResult,
     report::{LiveVerifyArtifact, RatioMap, RunReport, VerifyArtifactReport},
@@ -127,9 +127,16 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
         })?
         .port();
 
+    let initial_committed_tables = committed_tables_for_live_run(config, state)?;
+    let live_state =
+        SharedPgwireState::from_committed_tables(state.catalog.clone(), initial_committed_tables)
+            .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
+    let final_live_state = live_state.clone();
+
     let server_shutdown = shutdown.clone();
-    let listener_thread =
-        std::thread::spawn(move || listener.accept_until_shutdown("run-once", &server_shutdown));
+    let listener_thread = std::thread::spawn(move || {
+        listener.accept_until_shutdown_with_state("run-once", &server_shutdown, live_state)
+    });
 
     let command = config
         .run_command
@@ -162,7 +169,9 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
         signal: child_outcome.signal,
         timed_out: child_outcome.timed_out,
     };
-    let committed_tables = committed_tables_for_live_run(config, state)?;
+    let committed_tables = final_live_state
+        .committed_tables()
+        .map_err(|error| Box::new(refusal::runtime_io("live_state_freeze", error.to_string())))?;
     let mut emitter = FinalArtifactEmitter::new(
         config.engine,
         config.host.clone(),
@@ -566,13 +575,62 @@ while True:
     if tag == b"Z":
         break
 
-query = b"BEGIN\x00"
-sock.sendall(b"Q" + struct.pack("!I", len(query) + 4) + query)
+def read_until_ready():
+    while True:
+        tag, _ = read_frame()
+        if tag == b"Z":
+            return
 
-while True:
-    tag, _ = read_frame()
-    if tag == b"Z":
-        break
+def framed(tag, body=b""):
+    sock.sendall(tag + struct.pack("!I", len(body) + 4) + body)
+
+def query(sql):
+    framed(b"Q", sql.encode("utf-8") + b"\x00")
+    read_until_ready()
+
+def parse(name, sql, param_oids):
+    body = name.encode("utf-8") + b"\x00" + sql.encode("utf-8") + b"\x00"
+    body += struct.pack("!h", len(param_oids))
+    for oid in param_oids:
+        body += struct.pack("!I", oid)
+    framed(b"P", body)
+
+def bind(portal, statement, params):
+    body = portal.encode("utf-8") + b"\x00" + statement.encode("utf-8") + b"\x00"
+    body += struct.pack("!h", 0)
+    body += struct.pack("!h", len(params))
+    for param in params:
+        encoded = param.encode("utf-8")
+        body += struct.pack("!i", len(encoded)) + encoded
+    body += struct.pack("!h", 0)
+    framed(b"B", body)
+
+def execute(portal):
+    body = portal.encode("utf-8") + b"\x00" + struct.pack("!i", 0)
+    framed(b"E", body)
+
+def sync():
+    framed(b"S")
+    read_until_ready()
+
+parse(
+    "insert_deal",
+    "INSERT INTO public.deals (deal_id, tenant_id) VALUES ($1, $2) RETURNING deal_id",
+    [25, 25],
+)
+sync()
+
+query("BEGIN")
+bind("commit_portal", "insert_deal", ["deal-commit", "tenant-a"])
+execute("commit_portal")
+sync()
+query("COMMIT")
+
+query("BEGIN")
+bind("rollback_portal", "insert_deal", ["deal-rollback", "tenant-b"])
+execute("rollback_portal")
+sync()
+query("ROLLBACK")
 
 sock.sendall(b"X" + struct.pack("!I", 4))
 sock.close()
@@ -604,12 +662,24 @@ sock.close()
         assert_eq!(json["port"], port);
         assert_eq!(json["run"]["exit_code"], 0);
         assert_eq!(json["run"]["timed_out"], false);
+        assert_eq!(json["tables"]["public.deals"]["rows"], 1);
         assert_eq!(
             json["snapshot"]["written_to"],
             snapshot_path.display().to_string()
         );
         assert!(report_path.exists());
         assert!(snapshot_path.exists());
+
+        let snapshot_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&snapshot_path).expect("read snapshot"))
+                .expect("snapshot json");
+        assert_eq!(snapshot_json["table_rows"]["public.deals"], 1);
+        let rows = snapshot_json["relations"]["public.deals"]
+            .as_array()
+            .expect("deals relation rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["deal_id"]["value"], "deal-commit");
+        assert_eq!(rows[0]["tenant_id"]["value"], "tenant-a");
     }
 
     #[test]

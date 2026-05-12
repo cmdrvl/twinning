@@ -206,6 +206,10 @@ fn live_listener_dispatches_extended_query_messages_over_socket() {
         vec![(String::from("name"), TEXT_OID)]
     );
 
+    write_query_message(&mut client, "BEGIN");
+    let begin = read_until_ready(&mut client).expect("begin frames");
+    assert_eq!(decode_command_complete(&begin[0]), "BEGIN");
+
     write_bind_message(
         &mut client,
         "insert_widget_portal",
@@ -232,8 +236,12 @@ fn live_listener_dispatches_extended_query_messages_over_socket() {
     assert_eq!(decode_command_complete(&insert_execute[4]), "INSERT 0 1");
     assert_eq!(
         decode_ready_status(insert_execute.last().expect("insert ready")),
-        b'I'
+        b'T'
     );
+
+    write_query_message(&mut client, "COMMIT");
+    let commit = read_until_ready(&mut client).expect("commit frames");
+    assert_eq!(decode_command_complete(&commit[0]), "COMMIT");
 
     write_parse_message(
         &mut client,
@@ -245,7 +253,7 @@ fn live_listener_dispatches_extended_query_messages_over_socket() {
         &mut client,
         "select_widget_portal",
         "select_widget",
-        &[Some("1")],
+        &[Some("7")],
     );
     write_execute_message(&mut client, "select_widget_portal", 0);
     write_sync_message(&mut client);
@@ -258,7 +266,7 @@ fn live_listener_dispatches_extended_query_messages_over_socket() {
     );
     assert_eq!(
         decode_data_row(&select_execute[3]),
-        vec![Some(String::from("Seed"))]
+        vec![Some(String::from("Alpha"))]
     );
     assert_eq!(decode_command_complete(&select_execute[4]), "SELECT 1");
 
@@ -470,6 +478,12 @@ fn write_parse_message(
         body.extend_from_slice(&oid.to_be_bytes());
     }
     write_framed_message(stream, b'P', &body);
+}
+
+fn write_query_message(stream: &mut TcpStream, sql: &str) {
+    let mut body = sql.as_bytes().to_vec();
+    body.push(0);
+    write_framed_message(stream, b'Q', &body);
 }
 
 fn write_bind_message(
