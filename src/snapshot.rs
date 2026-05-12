@@ -88,9 +88,38 @@ impl TwinSnapshot {
     }
 
     pub fn compute_hash(&self) -> RefusalResult<String> {
-        let mut clone = self.clone();
+        let bytes = self.canonical_hash_bytes()?;
+        let mut digest = Sha256::new();
+        digest.update(bytes);
+        Ok(format!("sha256:{:x}", digest.finalize()))
+    }
+
+    pub fn canonical_hash_bytes(&self) -> RefusalResult<Vec<u8>> {
+        let mut clone = self.canonicalized_clone()?;
         clone.snapshot_hash.clear();
         clone.created_at.clear();
+        serde_json::to_vec(&clone)
+            .map_err(|error| Box::new(refusal::serialization(error.to_string())))
+    }
+
+    pub fn canonical_committed_state_bytes(&self) -> RefusalResult<Vec<u8>> {
+        let clone = self.canonicalized_clone()?;
+        let surface = CanonicalCommittedStateSurface {
+            version: &clone.version,
+            engine: clone.engine,
+            mode: &clone.mode,
+            schema_hash: &clone.schema_hash,
+            verify_artifact: clone.verify_artifact.as_ref(),
+            catalog: &clone.catalog,
+            relations: clone.relations.as_ref(),
+            table_rows: &clone.table_rows,
+        };
+        serde_json::to_vec(&surface)
+            .map_err(|error| Box::new(refusal::serialization(error.to_string())))
+    }
+
+    fn canonicalized_clone(&self) -> RefusalResult<Self> {
+        let mut clone = self.clone();
         if let Some(relations) = clone.relations.clone() {
             let relations = canonicalize_relations(&clone.catalog, &relations)?;
             clone.table_rows = table_rows_for_relations(&clone.catalog, Some(&relations));
@@ -98,12 +127,22 @@ impl TwinSnapshot {
         } else {
             clone.table_rows = table_rows_for_relations(&clone.catalog, None);
         }
-        let bytes = serde_json::to_vec(&clone)
-            .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
-        let mut digest = Sha256::new();
-        digest.update(bytes);
-        Ok(format!("sha256:{:x}", digest.finalize()))
+        Ok(clone)
     }
+}
+
+#[derive(Serialize)]
+struct CanonicalCommittedStateSurface<'a> {
+    version: &'a str,
+    engine: Engine,
+    mode: &'a str,
+    schema_hash: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verify_artifact: Option<&'a VerifyArtifactReport>,
+    catalog: &'a Catalog,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relations: Option<&'a SnapshotRelations>,
+    table_rows: &'a BTreeMap<String, u64>,
 }
 
 fn default_table_rows(catalog: &Catalog) -> BTreeMap<String, u64> {

@@ -749,6 +749,14 @@ A live `twinning.snapshot.v0` hash surface must exclude:
 If timestamps or debug metadata are present in the serialized snapshot, they
 must live outside the content-addressed hash surface.
 
+The committed-state byte surface used for freeze/restore equivalence is narrower
+than the full artifact envelope. It includes the snapshot version, engine, mode,
+schema hash, verify artifact identity, normalized catalog, canonical committed
+relations, and deterministic row counts. It excludes creation time, artifact hash
+slots, source file display paths, and restore lineage (`base_snapshot_hash`).
+Those excluded fields are operator metadata; they must not change whether two
+snapshots carry the same declared committed state.
+
 Phase-0 bootstrap note:
 
 - The current bootstrap build emits normalized catalog identity plus deterministic

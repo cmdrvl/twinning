@@ -8,7 +8,14 @@ use std::{
 
 use serde_json::Value;
 use tempfile::tempdir;
-use twinning::snapshot::read_snapshot;
+use twinning::{
+    catalog::parse_postgres_schema,
+    cli::Engine,
+    snapshot::{SnapshotRelations, TwinSnapshot, read_snapshot, restore},
+};
+
+const COMMITTED_ROWS_SCHEMA_HASH: &str =
+    "sha256:0000000000000000000000000000000000000000000000000000000000000028";
 
 fn twinning_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_twinning"))
@@ -175,4 +182,63 @@ fn snapshot_verification_ignores_created_at_metadata() {
             .expect("compute mutated hash"),
         original_snapshot.snapshot_hash
     );
+}
+
+#[test]
+fn committed_row_snapshot_canonical_bytes_survive_restore_and_refreeze() {
+    let fixture_dir = committed_rows_fixture_dir();
+    let schema_path = fixture_dir.join("schema.sql");
+    let relations_path = fixture_dir.join("relations.json");
+    let catalog = parse_postgres_schema(
+        &fs::read_to_string(&schema_path).expect("read committed-row schema"),
+    )
+    .expect("parse committed-row schema");
+    let relations: SnapshotRelations =
+        serde_json::from_str(&fs::read_to_string(&relations_path).expect("read relations fixture"))
+            .expect("parse relations fixture");
+
+    let frozen = TwinSnapshot::new(
+        Engine::Postgres,
+        schema_path.display().to_string(),
+        COMMITTED_ROWS_SCHEMA_HASH.to_owned(),
+        None,
+        None,
+        catalog.clone(),
+    )
+    .expect("build frozen snapshot")
+    .with_relations(relations)
+    .expect("attach committed rows");
+    let restored_tables = restore::restore_committed_tables(&frozen).expect("restore rows");
+    let refrozen = TwinSnapshot::new(
+        Engine::Postgres,
+        String::from("restored-from-base-snapshot.sql"),
+        COMMITTED_ROWS_SCHEMA_HASH.to_owned(),
+        Some(frozen.snapshot_hash.clone()),
+        None,
+        catalog,
+    )
+    .expect("build restored snapshot")
+    .with_committed_tables(restored_tables)
+    .expect("refreeze restored rows");
+
+    assert_eq!(
+        frozen
+            .canonical_committed_state_bytes()
+            .expect("frozen canonical bytes"),
+        refrozen
+            .canonical_committed_state_bytes()
+            .expect("refrozen canonical bytes")
+    );
+    assert_ne!(
+        frozen.snapshot_hash, refrozen.snapshot_hash,
+        "restore lineage remains explicit artifact metadata outside the committed-state byte surface"
+    );
+}
+
+fn committed_rows_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("snapshots")
+        .join("committed_rows")
 }
