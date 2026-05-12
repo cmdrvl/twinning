@@ -132,16 +132,16 @@ fn extractor_canary_fixture_is_pinned_and_manifest_aligned() {
 }
 
 #[test]
-fn extractor_canary() {
+fn extractor_canary() -> Result<(), String> {
     let fixture_dir = crate::support::canary_fixture_dir_for_test(stringify!(extractor_canary));
     assert!(
         fixture_dir.exists(),
         "fixture dir should exist for extractor_canary"
     );
 
-    let fixture = load_fixture(&fixture_dir);
-    let input_corpus = load_input_corpus(&fixture_dir);
-    let extractor_output = run_extractor_entrypoint(fixture.entrypoint_path());
+    let fixture = load_fixture(&fixture_dir)?;
+    let input_corpus = load_input_corpus(&fixture_dir)?;
+    let extractor_output = run_extractor_entrypoint(fixture.entrypoint_path())?;
     let manifest = crate::support::canary_by_id(stringify!(extractor_canary));
 
     assert_eq!(fixture.version, "twinning.extractor-canary.fixture.v0");
@@ -203,13 +203,13 @@ fn extractor_canary() {
     );
 
     for case_name in &extractor_output.mutation_case_names {
-        let case = input_corpus.mutation_case(case_name);
+        let case = input_corpus.mutation_case(case_name)?;
         match case.name.as_str() {
             "insert_seed_deal" | "upsert_existing_pk" | "upsert_existing_unique" => {
                 let execution = execute_statement(
                     &mut mutation_context,
                     case.name.as_str(),
-                    protocol_mutation_sql_for_shape(case.shape.as_str()),
+                    protocol_mutation_sql_for_shape(case.shape.as_str())?,
                     protocol_mutation_param_types(),
                     protocol_row_params(&case.row),
                 );
@@ -239,7 +239,7 @@ fn extractor_canary() {
                 let execution = execute_statement(
                     &mut mutation_context,
                     case.name.as_str(),
-                    protocol_mutation_sql_for_shape(case.shape.as_str()),
+                    protocol_mutation_sql_for_shape(case.shape.as_str())?,
                     protocol_mutation_param_types(),
                     protocol_row_params(&case.row),
                 );
@@ -280,20 +280,20 @@ fn extractor_canary() {
                 &rich_catalog,
                 &case.row,
                 "23503",
-            )),
+            )?),
             "reject_bad_status_and_amount_text" => {
                 observed_sqlstates.push(run_kernel_failure_probe_allowing(
                     format!("extractor_canary `{}`", case.name).as_str(),
                     &rich_catalog,
                     &case.row,
                     &["23514", "22P02"],
-                ));
+                )?);
             }
-            other => panic!("unexpected extractor mutation case `{other}`"),
+            other => return Err(format!("unexpected extractor mutation case `{other}`")),
         }
     }
 
-    let combined_failure = input_corpus.mutation_case("reject_bad_status_and_amount_text");
+    let combined_failure = input_corpus.mutation_case("reject_bad_status_and_amount_text")?;
     observed_sqlstates.push(run_kernel_failure_probe(
         "extractor_canary bad_status focused probe",
         &rich_catalog,
@@ -302,7 +302,7 @@ fn extractor_canary() {
             ..combined_failure.row.clone()
         },
         "23514",
-    ));
+    )?);
     observed_sqlstates.push(run_kernel_failure_probe(
         "extractor_canary bad_amount focused probe",
         &rich_catalog,
@@ -311,7 +311,7 @@ fn extractor_canary() {
             ..combined_failure.row.clone()
         },
         "22P02",
-    ));
+    )?);
 
     let commit = mutation_context.simple_query("COMMIT");
     assert_eq!(decode_command_complete(&commit.frames[0]), "COMMIT");
@@ -343,7 +343,7 @@ fn extractor_canary() {
         "extractor_canary required sqlstates",
     );
 
-    let mut read_backend = read_backend(&rich_catalog);
+    let mut read_backend = read_backend(&rich_catalog)?;
     let mut read_parse_state = ExtendedParseState::new();
     let mut read_execute_state = ExtendedExecuteState::new();
     let mut read_session = SessionLoop::new();
@@ -357,8 +357,8 @@ fn extractor_canary() {
     };
 
     for case_name in &extractor_output.read_case_names {
-        let case = input_corpus.read_case(case_name);
-        let (sql, param_types, params) = read_query_for_case(case);
+        let case = input_corpus.read_case(case_name)?;
+        let (sql, param_types, params) = read_query_for_case(case)?;
         let execution = execute_statement(
             &mut read_context,
             case.name.as_str(),
@@ -394,6 +394,8 @@ fn extractor_canary() {
             case.name
         );
     }
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,18 +436,18 @@ impl InputCorpus {
             .collect()
     }
 
-    fn mutation_case(&self, case_name: &str) -> &MutationCase {
+    fn mutation_case(&self, case_name: &str) -> Result<&MutationCase, String> {
         self.mutation_cases
             .iter()
             .find(|case| case.name == case_name)
-            .unwrap_or_else(|| panic!("missing extractor mutation case `{case_name}`"))
+            .ok_or_else(|| format!("missing extractor mutation case `{case_name}`"))
     }
 
-    fn read_case(&self, case_name: &str) -> &ReadCase {
+    fn read_case(&self, case_name: &str) -> Result<&ReadCase, String> {
         self.read_cases
             .iter()
             .find(|case| case.name == case_name)
-            .unwrap_or_else(|| panic!("missing extractor read case `{case_name}`"))
+            .ok_or_else(|| format!("missing extractor read case `{case_name}`"))
     }
 }
 
@@ -482,6 +484,8 @@ struct ReadPredicate {
     value: Option<String>,
 }
 
+type ReadQuerySpec = (&'static str, &'static [&'static str], Vec<Option<String>>);
+
 #[derive(Debug, Deserialize)]
 struct ExtractorOutput {
     entrypoint: String,
@@ -511,36 +515,60 @@ impl ExecutionContext<'_> {
     }
 }
 
-fn load_fixture(fixture_dir: &Path) -> ExtractorFixture {
+fn load_fixture(fixture_dir: &Path) -> Result<ExtractorFixture, String> {
     let fixture_path = fixture_dir.join("fixture.json");
-    serde_json::from_str(&fs::read_to_string(&fixture_path).expect("read extractor fixture"))
-        .expect("parse extractor fixture")
+    let fixture = fs::read_to_string(&fixture_path).map_err(|error| {
+        format!(
+            "read extractor fixture `{}`: {error}",
+            fixture_path.display()
+        )
+    })?;
+    serde_json::from_str(&fixture).map_err(|error| {
+        format!(
+            "parse extractor fixture `{}`: {error}",
+            fixture_path.display()
+        )
+    })
 }
 
-fn load_input_corpus(fixture_dir: &Path) -> InputCorpus {
+fn load_input_corpus(fixture_dir: &Path) -> Result<InputCorpus, String> {
     let input_corpus_path = fixture_dir.join("input_rows.json");
-    serde_json::from_str(
-        &fs::read_to_string(&input_corpus_path).expect("read extractor input corpus"),
-    )
-    .expect("parse extractor input corpus")
+    let input_corpus = fs::read_to_string(&input_corpus_path).map_err(|error| {
+        format!(
+            "read extractor input corpus `{}`: {error}",
+            input_corpus_path.display()
+        )
+    })?;
+    serde_json::from_str(&input_corpus).map_err(|error| {
+        format!(
+            "parse extractor input corpus `{}`: {error}",
+            input_corpus_path.display()
+        )
+    })
 }
 
-fn run_extractor_entrypoint(entrypoint: PathBuf) -> ExtractorOutput {
+fn run_extractor_entrypoint(entrypoint: PathBuf) -> Result<ExtractorOutput, String> {
     let output = Command::new("python3")
         .arg(&entrypoint)
         .current_dir(crate::support::repo_root())
         .output()
-        .unwrap_or_else(|error| panic!("run `{}`: {error}", entrypoint.display()));
+        .map_err(|error| format!("run `{}`: {error}", entrypoint.display()))?;
 
-    assert!(
-        output.status.success(),
-        "extractor entrypoint `{}` failed: stdout={}; stderr={}",
-        entrypoint.display(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    if !output.status.success() {
+        return Err(format!(
+            "extractor entrypoint `{}` failed: stdout={}; stderr={}",
+            entrypoint.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
 
-    serde_json::from_slice(&output.stdout).expect("parse extractor stdout as JSON")
+    serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "parse extractor stdout from `{}` as JSON: {error}",
+            entrypoint.display()
+        )
+    })
 }
 
 fn assert_startup_parameter_status_baseline(application_name: &str) {
@@ -661,25 +689,25 @@ fn constraint_backend(catalog: &Catalog) -> BaseSnapshotBackend {
     BaseSnapshotBackend::new([tenants, deals]).expect("build constraint backend")
 }
 
-fn read_backend(catalog: &Catalog) -> BaseSnapshotBackend {
+fn read_backend(catalog: &Catalog) -> Result<BaseSnapshotBackend, String> {
     let mut tenants = TableStorage::new(
         catalog
             .table("public.tenants")
-            .expect("tenants table should exist"),
+            .ok_or_else(|| String::from("tenants table should exist"))?,
     )
-    .expect("tenant storage should build");
+    .map_err(|error| format!("tenant storage should build: {error}"))?;
     for tenant_id in ["tenant-a", "tenant-b"] {
         tenants
             .insert_row(vec![KernelValue::Text(tenant_id.to_owned())])
-            .unwrap_or_else(|error| panic!("insert tenant `{tenant_id}`: {error}"));
+            .map_err(|error| format!("insert tenant `{tenant_id}`: {error}"))?;
     }
 
     let mut deals = TableStorage::new(
         catalog
             .table("public.deals")
-            .expect("deals table should exist"),
+            .ok_or_else(|| String::from("deals table should exist"))?,
     )
-    .expect("deals storage should build");
+    .map_err(|error| format!("deals storage should build: {error}"))?;
     for row in [
         vec![
             KernelValue::Text(String::from("tenant-a")),
@@ -708,24 +736,25 @@ fn read_backend(catalog: &Catalog) -> BaseSnapshotBackend {
     ] {
         deals
             .insert_row(row)
-            .expect("insert committed extractor read row");
+            .map_err(|error| format!("insert committed extractor read row: {error}"))?;
     }
 
-    BaseSnapshotBackend::new([tenants, deals]).expect("build read backend")
+    BaseSnapshotBackend::new([tenants, deals])
+        .map_err(|error| format!("build read backend: {error}"))
 }
 
-fn protocol_mutation_sql_for_shape(shape: &str) -> &'static str {
+fn protocol_mutation_sql_for_shape(shape: &str) -> Result<&'static str, String> {
     match shape {
         "insert_values" => {
-            "INSERT INTO public.deals (deal_id, external_key, deal_name) VALUES ($1, $2, $3)"
+            Ok("INSERT INTO public.deals (deal_id, external_key, deal_name) VALUES ($1, $2, $3)")
         }
-        "upsert_pk" => {
-            "INSERT INTO public.deals (deal_id, external_key, deal_name) VALUES ($1, $2, $3) ON CONFLICT (deal_id) DO UPDATE SET external_key = EXCLUDED.external_key, deal_name = EXCLUDED.deal_name"
-        }
-        "upsert_unique" => {
-            "INSERT INTO public.deals (deal_id, external_key, deal_name) VALUES ($1, $2, $3) ON CONFLICT ON CONSTRAINT deals_external_key_key DO UPDATE SET deal_id = EXCLUDED.deal_id, deal_name = EXCLUDED.deal_name"
-        }
-        other => panic!("unexpected extractor mutation shape `{other}`"),
+        "upsert_pk" => Ok(
+            "INSERT INTO public.deals (deal_id, external_key, deal_name) VALUES ($1, $2, $3) ON CONFLICT (deal_id) DO UPDATE SET external_key = EXCLUDED.external_key, deal_name = EXCLUDED.deal_name",
+        ),
+        "upsert_unique" => Ok(
+            "INSERT INTO public.deals (deal_id, external_key, deal_name) VALUES ($1, $2, $3) ON CONFLICT ON CONSTRAINT deals_external_key_key DO UPDATE SET deal_id = EXCLUDED.deal_id, deal_name = EXCLUDED.deal_name",
+        ),
+        other => Err(format!("unexpected extractor mutation shape `{other}`")),
     }
 }
 
@@ -741,27 +770,27 @@ fn protocol_row_params(row: &DealInputRow) -> Vec<Option<String>> {
     ]
 }
 
-fn read_query_for_case(
-    case: &ReadCase,
-) -> (&'static str, &'static [&'static str], Vec<Option<String>>) {
+fn read_query_for_case(case: &ReadCase) -> Result<ReadQuerySpec, String> {
     match (
         case.shape.as_str(),
         case.predicate.column.as_str(),
         case.predicate.operator.as_str(),
     ) {
-        ("select_filtered_scan", "tenant_id", "eq") => (
+        ("select_filtered_scan", "tenant_id", "eq") => Ok((
             "SELECT deal_id FROM public.deals WHERE tenant_id = $1 LIMIT 50",
             &["text"],
-            vec![Some(case.predicate.value.clone().expect(
-                "select_filtered_scan should declare a predicate value",
-            ))],
-        ),
-        ("select_is_null", "status", "is_null") => (
+            vec![Some(case.predicate.value.clone().ok_or_else(|| {
+                String::from("select_filtered_scan should declare a predicate value")
+            })?)],
+        )),
+        ("select_is_null", "status", "is_null") => Ok((
             "SELECT deal_id FROM public.deals WHERE status IS NULL",
             &[],
             Vec::new(),
-        ),
-        other => panic!("unexpected extractor read shape/predicate combination: {other:?}"),
+        )),
+        other => Err(format!(
+            "unexpected extractor read shape/predicate combination: {other:?}"
+        )),
     }
 }
 
@@ -821,7 +850,7 @@ fn run_kernel_failure_probe(
     catalog: &Catalog,
     row: &DealInputRow,
     expected_sqlstate: &str,
-) -> String {
+) -> Result<String, String> {
     let mut backend = constraint_backend(catalog);
     let result = execute_insert(
         catalog,
@@ -853,11 +882,11 @@ fn run_kernel_failure_probe(
         },
     );
     let KernelResult::Refusal(refusal) = result else {
-        panic!("{context} should refuse, got {result:?}");
+        return Err(format!("{context} should refuse, got {result:?}"));
     };
     assert_sqlstate(Some(refusal.sqlstate.as_str()), expected_sqlstate, context);
 
-    refusal.sqlstate
+    Ok(refusal.sqlstate)
 }
 
 fn run_kernel_failure_probe_allowing(
@@ -865,7 +894,7 @@ fn run_kernel_failure_probe_allowing(
     catalog: &Catalog,
     row: &DealInputRow,
     allowed_sqlstates: &[&str],
-) -> String {
+) -> Result<String, String> {
     let mut backend = constraint_backend(catalog);
     let result = execute_insert(
         catalog,
@@ -897,7 +926,7 @@ fn run_kernel_failure_probe_allowing(
         },
     );
     let KernelResult::Refusal(refusal) = result else {
-        panic!("{context} should refuse, got {result:?}");
+        return Err(format!("{context} should refuse, got {result:?}"));
     };
     assert!(
         allowed_sqlstates.contains(&refusal.sqlstate.as_str()),
@@ -906,7 +935,7 @@ fn run_kernel_failure_probe_allowing(
         refusal.sqlstate
     );
 
-    refusal.sqlstate
+    Ok(refusal.sqlstate)
 }
 
 fn option_to_scalar(value: &Option<String>) -> ScalarValue {
