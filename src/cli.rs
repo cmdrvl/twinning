@@ -105,11 +105,17 @@ pub struct TwinArgs {
     #[arg(long, value_name = "COMMAND")]
     pub run: Option<String>,
 
+    #[arg(long)]
+    pub serve: bool,
+
     #[arg(long, value_name = "FILE")]
     pub report: Option<PathBuf>,
 
     #[arg(long, value_name = "FILE")]
     pub snapshot: Option<PathBuf>,
+
+    #[arg(long, value_name = "FILE")]
+    pub query_trace: Option<PathBuf>,
 
     #[arg(long, value_name = "FILE")]
     pub restore: Option<PathBuf>,

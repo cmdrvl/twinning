@@ -140,11 +140,16 @@ fn assert_supported_black_box_shapes(canary: &support::CanaryDefinition) {
         "insert_returning",
         "upsert_pk",
         "upsert_unique",
+        "update_by_predicate",
+        "delete_by_predicate",
     ]);
     let supported_read_shapes = BTreeSet::from([
         "select_by_pk",
         "select_filtered_scan",
         "select_is_null",
+        "select_in_list",
+        "select_between",
+        "aggregate_basic_group_by",
         "information_schema_public_base_tables",
         "select_inner_join_eq_refusal",
     ]);
@@ -245,6 +250,39 @@ fn expected_final_rows(canary: &support::CanaryDefinition) -> BTreeMap<String, S
             format!("{}-insert-values", canary.id),
             String::from("Upsert Unique"),
         );
+    }
+    if canary
+        .write_shapes
+        .iter()
+        .any(|shape| shape == "update_by_predicate")
+    {
+        assert!(
+            canary
+                .write_shapes
+                .iter()
+                .any(|shape| shape == "insert_values"),
+            "black-box run_once canary `{}` needs insert_values before update_by_predicate so the client exercises an affected row",
+            canary.id
+        );
+        rows.insert(
+            format!("{}-insert-values", canary.id),
+            String::from("Updated By Predicate"),
+        );
+    }
+    if canary
+        .write_shapes
+        .iter()
+        .any(|shape| shape == "delete_by_predicate")
+    {
+        assert!(
+            canary
+                .write_shapes
+                .iter()
+                .any(|shape| shape == "insert_values"),
+            "black-box run_once canary `{}` needs insert_values before delete_by_predicate so the client exercises an affected row",
+            canary.id
+        );
+        rows.remove(format!("{}-insert-values", canary.id).as_str());
     }
 
     rows
@@ -593,6 +631,19 @@ def execute_write_shape(shape):
             [None, f"{canary_id}-upsert-unique", f"{canary_id}-external-seed", "Upsert Unique", "open", "130"],
             expect_returning=True,
         )
+    elif shape == "update_by_predicate":
+        parse_bind_execute(
+            "update_by_predicate",
+            "UPDATE public.deals SET deal_name = $2 WHERE deal_id = $1",
+            [f"{canary_id}-insert-values", "Updated By Predicate"],
+        )
+    elif shape == "delete_by_predicate":
+        parse_bind_execute(
+            "delete_by_predicate",
+            "DELETE FROM public.deals WHERE deal_id = $1",
+            [f"{canary_id}-insert-values"],
+            ready_status=b"I",
+        )
     else:
         fail(f"unmapped manifest write shape {shape!r}")
 
@@ -610,7 +661,7 @@ def execute_read_shape(shape):
         if not any(row[0] == f"{canary_id}-insert-values" for row in rows):
             fail(f"select_by_pk did not return the committed insert row: {rows!r}")
     elif shape == "select_filtered_scan":
-        expected_name = "Upsert Unique" if "upsert_unique" in case["write_shapes"] else "Upsert PK" if "upsert_pk" in case["write_shapes"] else "Inserted"
+        expected_name = "Updated By Predicate" if "update_by_predicate" in case["write_shapes"] else "Upsert Unique" if "upsert_unique" in case["write_shapes"] else "Upsert PK" if "upsert_pk" in case["write_shapes"] else "Inserted"
         rows = parse_bind_execute(
             "select_filtered_scan",
             "SELECT deal_id, deal_name FROM public.deals WHERE deal_name = $1",
@@ -630,6 +681,38 @@ def execute_read_shape(shape):
         )
         if not any(row == [f"{canary_id}-insert-values"] for row in rows):
             fail(f"select_is_null did not return the committed NULL-status row: {rows!r}")
+    elif shape == "select_in_list":
+        expected_name = "Updated By Predicate" if "update_by_predicate" in case["write_shapes"] else "Upsert Unique" if "upsert_unique" in case["write_shapes"] else "Upsert PK" if "upsert_pk" in case["write_shapes"] else "Inserted"
+        rows = parse_bind_execute(
+            "select_in_list",
+            f"SELECT deal_id FROM public.deals WHERE deal_name IN ('{expected_name}', 'missing')",
+            [],
+            expect_select=True,
+            ready_status=b"I",
+        )
+        if not any(row == [f"{canary_id}-insert-values"] for row in rows):
+            fail(f"select_in_list did not return the committed status row: {rows!r}")
+    elif shape == "select_between":
+        rows = parse_bind_execute(
+            "select_between",
+            "SELECT deal_id FROM public.deals WHERE amount BETWEEN 100 AND 130",
+            [],
+            expect_select=True,
+            ready_status=b"I",
+        )
+        if not any(row == [f"{canary_id}-insert-values"] for row in rows):
+            fail(f"select_between did not return the committed amount row: {rows!r}")
+    elif shape == "aggregate_basic_group_by":
+        expected_name = "Updated By Predicate" if "update_by_predicate" in case["write_shapes"] else "Upsert Unique" if "upsert_unique" in case["write_shapes"] else "Upsert PK" if "upsert_pk" in case["write_shapes"] else "Inserted"
+        rows = parse_bind_execute(
+            "aggregate_basic_group_by",
+            "SELECT deal_name, COUNT(*) AS row_count FROM public.deals GROUP BY deal_name",
+            [],
+            expect_select=True,
+            ready_status=b"I",
+        )
+        if rows != [[expected_name, "1"]]:
+            fail(f"aggregate_basic_group_by returned unexpected rows: {rows!r}")
     elif shape == "information_schema_public_base_tables":
         rows = parse_bind_execute(
             "information_schema_public_base_tables",
@@ -686,6 +769,8 @@ def execute_required_sqlstate(sqlstate):
 startup()
 query("BEGIN", b"T")
 for write_shape in case["write_shapes"]:
+    if write_shape == "delete_by_predicate":
+        continue
     execute_write_shape(write_shape)
 query("COMMIT", b"I")
 
@@ -694,6 +779,9 @@ for read_shape in case["read_shapes"]:
 
 for sqlstate in case["required_sqlstates"]:
     execute_required_sqlstate(sqlstate)
+
+if "delete_by_predicate" in case["write_shapes"]:
+    execute_write_shape("delete_by_predicate")
 
 if case["unsupported_policy"] == "refusal":
     expect_prepare_refusal("bad_statement", "BEGIN", "0A000")

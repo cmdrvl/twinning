@@ -108,6 +108,18 @@ pub fn materialization_requires_schema() -> RefusalEnvelope {
     )
 }
 
+pub fn ambiguous_live_mode(engine: Engine) -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_AMBIGUOUS_LIVE_MODE",
+        "Use either --run for one child command or --serve for standalone interactive mode, not both.",
+        json!({ "engine": engine.as_str(), "disallowed_combination": ["run", "serve"] }),
+        Some(format!(
+            "twinning {} --schema schema.sql --serve --json",
+            engine.as_str()
+        )),
+    )
+}
+
 pub fn engine_unimplemented(engine: Engine) -> RefusalEnvelope {
     RefusalEnvelope::new(
         "E_ENGINE_UNIMPLEMENTED",

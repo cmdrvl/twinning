@@ -1,10 +1,11 @@
 use thiserror::Error;
 
-use crate::result::{AckResult, KernelResult, ResultTag};
+use crate::result::{AckResult, KernelResult, RefusalResult, ResultTag};
 
 use super::frames::{ResultFrameMetadata, encode_kernel_result_frames};
 
 pub const DEFAULT_MAX_CYCLES: usize = 1024;
+pub const FAILED_TRANSACTION_SQLSTATE: &str = "25P02";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransactionStatus {
@@ -96,6 +97,16 @@ pub fn ready_for_query_frame(status: TransactionStatus) -> Vec<u8> {
 }
 
 fn next_transaction_status(current: TransactionStatus, result: &KernelResult) -> TransactionStatus {
+    if current == TransactionStatus::FailedTransaction {
+        return match result {
+            KernelResult::Ack(AckResult {
+                tag: ResultTag::Commit | ResultTag::Rollback,
+                ..
+            }) => TransactionStatus::Idle,
+            _ => TransactionStatus::FailedTransaction,
+        };
+    }
+
     match result {
         KernelResult::Ack(AckResult {
             tag: ResultTag::Begin,
@@ -112,6 +123,22 @@ fn next_transaction_status(current: TransactionStatus, result: &KernelResult) ->
     }
 }
 
+pub fn failed_transaction_result(transport: &str) -> KernelResult {
+    KernelResult::Refusal(RefusalResult {
+        code: String::from("in_failed_sql_transaction"),
+        message: String::from(
+            "current transaction is aborted, commands ignored until end of transaction block",
+        ),
+        sqlstate: String::from(FAILED_TRANSACTION_SQLSTATE),
+        detail: [
+            (String::from("scope"), String::from("session")),
+            (String::from("transport"), transport.to_owned()),
+        ]
+        .into_iter()
+        .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -122,7 +149,8 @@ mod tests {
     };
 
     use super::{
-        DEFAULT_MAX_CYCLES, SessionLoop, SessionLoopError, TransactionStatus, ready_for_query_frame,
+        DEFAULT_MAX_CYCLES, FAILED_TRANSACTION_SQLSTATE, SessionLoop, SessionLoopError,
+        TransactionStatus, failed_transaction_result, ready_for_query_frame,
     };
 
     #[test]
@@ -226,6 +254,69 @@ mod tests {
         assert_eq!(rollback.transaction_status, TransactionStatus::Idle);
         assert_eq!(
             decode_ready_status(rollback.frames.last().expect("ready frame")),
+            b'I'
+        );
+    }
+
+    #[test]
+    fn failed_transaction_rejects_work_until_transaction_end() {
+        let mut session = SessionLoop::new();
+        session.process_result(
+            &KernelResult::Ack(AckResult {
+                tag: ResultTag::Begin,
+                rows_affected: 0,
+            }),
+            Default::default(),
+        );
+        session.process_result(
+            &failed_transaction_result("extended_query"),
+            Default::default(),
+        );
+
+        let attempted_work = session.process_result(
+            &failed_transaction_result("extended_query"),
+            Default::default(),
+        );
+        assert_eq!(
+            attempted_work.transaction_status,
+            TransactionStatus::FailedTransaction
+        );
+        assert_eq!(
+            decode_ready_status(attempted_work.frames.last().expect("ready frame")),
+            b'E'
+        );
+        assert_eq!(
+            decode_error_frame(attempted_work.frames.first().expect("error frame"))
+                .expect("error frame should contain SQLSTATE"),
+            FAILED_TRANSACTION_SQLSTATE
+        );
+
+        let begin_inside_failed = session.process_result(
+            &KernelResult::Ack(AckResult {
+                tag: ResultTag::Begin,
+                rows_affected: 0,
+            }),
+            Default::default(),
+        );
+        assert_eq!(
+            begin_inside_failed.transaction_status,
+            TransactionStatus::FailedTransaction
+        );
+        assert_eq!(
+            decode_ready_status(begin_inside_failed.frames.last().expect("ready frame")),
+            b'E'
+        );
+
+        let commit = session.process_result(
+            &KernelResult::Ack(AckResult {
+                tag: ResultTag::Commit,
+                rows_affected: 0,
+            }),
+            Default::default(),
+        );
+        assert_eq!(commit.transaction_status, TransactionStatus::Idle);
+        assert_eq!(
+            decode_ready_status(commit.frames.last().expect("ready frame")),
             b'I'
         );
     }

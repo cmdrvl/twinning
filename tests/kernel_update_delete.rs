@@ -41,6 +41,7 @@ fn update_by_predicate_rewrites_overlay_and_reports_rows_affected() {
         panic!("expected mutation result");
     };
     assert_eq!(result.rows_affected, 2);
+    assert!(result.returning_rows.is_empty());
 
     let deals = backend
         .visible_table("public.deals")
@@ -104,6 +105,7 @@ fn delete_by_predicate_removes_rows_and_reports_rows_affected() {
         panic!("expected mutation result");
     };
     assert_eq!(result.rows_affected, 1);
+    assert!(result.returning_rows.is_empty());
 
     let deals = backend
         .visible_table("public.deals")

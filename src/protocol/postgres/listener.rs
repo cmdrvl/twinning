@@ -12,8 +12,10 @@ use std::{
 use crate::{
     backend::{Backend, BackendError, BaseSnapshotBackend, OverlayError, SessionOverlayManager},
     catalog::Catalog,
+    ir::{normalize_mutation_sql, normalize_read_sql, normalize_session_sql},
     kernel::storage::TableStorage,
-    result::{KernelResult, RefusalResult, ResultTag},
+    query_trace::{QueryTraceEventSeed, QueryTraceResult, SharedQueryTrace},
+    result::{AckResult, KernelResult, RefusalResult, ResultTag},
 };
 
 #[cfg(unix)]
@@ -26,7 +28,7 @@ use super::{
     extended_execute::{DescribeTarget, ExecuteRequest, ExtendedExecuteState},
     extended_parse::{BindRequest, ExtendedParseState, ParseRequest},
     frames::{ResultFrameMetadata, unsupported_live_shape_result},
-    session::{SessionLoop, ready_for_query_frame},
+    session::{SessionLoop, TransactionStatus, failed_transaction_result, ready_for_query_frame},
     simple_query::{dispatch_simple_query_result, dispatch_simple_query_result_with_catalog},
     startup::{StartupOutcome, encode_startup_response, negotiate_startup, parse_startup_packet},
     writer_gate::WRITER_CONTENTION_SQLSTATE,
@@ -109,6 +111,7 @@ impl ShutdownHook {
 pub struct SharedPgwireState {
     catalog: Catalog,
     overlays: Arc<Mutex<SessionOverlayManager>>,
+    query_trace: Option<SharedQueryTrace>,
 }
 
 impl SharedPgwireState {
@@ -116,7 +119,13 @@ impl SharedPgwireState {
         Self {
             catalog,
             overlays: Arc::new(Mutex::new(SessionOverlayManager::new(backend))),
+            query_trace: None,
         }
+    }
+
+    pub fn with_query_trace(mut self, query_trace: SharedQueryTrace) -> Self {
+        self.query_trace = Some(query_trace);
+        self
     }
 
     pub fn from_committed_tables(
@@ -151,6 +160,10 @@ impl SharedPgwireState {
         self.overlays.lock().map_err(|error| {
             io::Error::other(format!("shared pgwire state lock poisoned: {error}"))
         })
+    }
+
+    fn query_trace(&self) -> Option<&SharedQueryTrace> {
+        self.query_trace.as_ref()
     }
 }
 
@@ -305,6 +318,7 @@ fn serve_connection_with_shutdown(
     let mut session = SessionLoop::new();
     let mut parse_state = ExtendedParseState::new();
     let mut execute_state = ExtendedExecuteState::new();
+    let mut pending_query_trace: Option<PendingQueryTrace> = None;
     let mut live_state = live_state;
     while let Some(message) = read_frontend_message(stream, shutdown)? {
         match message {
@@ -314,9 +328,16 @@ fn serve_connection_with_shutdown(
             }
             FrontendMessage::Sync => {
                 let cycle = execute_state.process_sync(&mut session);
+                if let Some(pending) = pending_query_trace.take() {
+                    record_completed_query_trace(
+                        live_state.as_ref(),
+                        pending.finish(cycle.transaction_status),
+                    )?;
+                }
                 write_frames(stream, &cycle.frames)?;
             }
             FrontendMessage::Query(sql) => {
+                let transaction_status = session.transaction_status();
                 let result = match live_state.as_ref() {
                     Some(state) => dispatch_simple_query_result_with_catalog(
                         session_id.as_str(),
@@ -325,12 +346,32 @@ fn serve_connection_with_shutdown(
                     ),
                     None => dispatch_simple_query_result(session_id.as_str(), &sql),
                 };
+                let result = if matches!(transaction_status, TransactionStatus::FailedTransaction) {
+                    failed_transaction_simple_query_result(result)
+                } else {
+                    result
+                };
+                abort_live_write_if_transaction_failed(
+                    live_state.as_ref(),
+                    session_id.as_str(),
+                    transaction_status,
+                    &result,
+                )?;
                 let result = apply_live_session_side_effect(
                     live_state.as_ref(),
                     session_id.as_str(),
+                    transaction_status,
                     result,
                 )?;
                 let cycle = session.process_result(&result, ResultFrameMetadata::default());
+                record_simple_query_trace(
+                    live_state.as_ref(),
+                    session_id.as_str(),
+                    &sql,
+                    transaction_status,
+                    cycle.transaction_status,
+                    &result,
+                )?;
                 write_frames(stream, &cycle.frames)?;
             }
             FrontendMessage::Parse(request) => {
@@ -364,17 +405,80 @@ fn serve_connection_with_shutdown(
             FrontendMessage::Execute(request) => {
                 let frames = match live_state.as_mut() {
                     Some(state) => {
-                        let overlays = state.lock_overlays()?;
-                        let mut backend = SessionScopedBackend {
-                            session_id: session_id.as_str(),
-                            overlays,
-                        };
-                        execute_state.process_execute(
-                            &state.catalog,
-                            &mut backend,
-                            &parse_state,
-                            request,
-                        )
+                        let transaction_status = session.transaction_status();
+                        let trace_identity =
+                            execute_state.trace_identity(&state.catalog, &parse_state, &request);
+                        if matches!(transaction_status, TransactionStatus::FailedTransaction) {
+                            let frames = execute_state.process_failed_transaction_execute();
+                            pending_query_trace =
+                                execute_state.pending_result_for_trace().map(|result| {
+                                    PendingQueryTrace::new(
+                                        session_id.as_str(),
+                                        trace_identity,
+                                        transaction_status,
+                                        result,
+                                    )
+                                });
+                            frames
+                        } else {
+                            let autocommit_write =
+                                matches!(transaction_status, TransactionStatus::Idle)
+                                    && execute_state.request_is_mutation(&parse_state, &request);
+                            if autocommit_write
+                                && let Some(result) =
+                                    begin_autocommit_write(Some(state), session_id.as_str())?
+                            {
+                                let frames = execute_state.process_kernel_result(result);
+                                pending_query_trace =
+                                    execute_state.pending_result_for_trace().map(|result| {
+                                        PendingQueryTrace::new(
+                                            session_id.as_str(),
+                                            trace_identity,
+                                            transaction_status,
+                                            result,
+                                        )
+                                    });
+                                write_frames(stream, &frames)?;
+                                continue;
+                            }
+
+                            let overlays = state.lock_overlays()?;
+                            let mut backend = SessionScopedBackend {
+                                session_id: session_id.as_str(),
+                                overlays,
+                            };
+                            let frames = execute_state.process_execute(
+                                &state.catalog,
+                                &mut backend,
+                                &parse_state,
+                                request,
+                            );
+                            drop(backend);
+                            if autocommit_write {
+                                finish_autocommit_write(
+                                    Some(state),
+                                    session_id.as_str(),
+                                    &execute_state,
+                                )?;
+                            } else {
+                                abort_live_write_if_pending_execute_failed(
+                                    Some(state),
+                                    session_id.as_str(),
+                                    transaction_status,
+                                    &execute_state,
+                                )?;
+                            }
+                            pending_query_trace =
+                                execute_state.pending_result_for_trace().map(|result| {
+                                    PendingQueryTrace::new(
+                                        session_id.as_str(),
+                                        trace_identity,
+                                        transaction_status,
+                                        result,
+                                    )
+                                });
+                            frames
+                        }
                     }
                     None => {
                         session
@@ -406,6 +510,107 @@ fn serve_connection_with_shutdown(
     Ok(())
 }
 
+struct PendingQueryTrace {
+    session_id: String,
+    protocol: String,
+    statement_kind: String,
+    sql_hash: Option<String>,
+    operation_hash: Option<String>,
+    binds: Option<crate::query_trace::BindTrace>,
+    transaction_before: String,
+    result: QueryTraceResult,
+}
+
+impl PendingQueryTrace {
+    fn new(
+        session_id: &str,
+        identity: super::extended_execute::TraceIdentity,
+        transaction_before: TransactionStatus,
+        result: &KernelResult,
+    ) -> Self {
+        Self {
+            session_id: session_id.to_owned(),
+            protocol: String::from("extended_query"),
+            statement_kind: identity.statement_kind,
+            sql_hash: identity.sql_hash,
+            operation_hash: identity.operation_hash,
+            binds: identity.binds,
+            transaction_before: transaction_status_token(transaction_before),
+            result: QueryTraceResult::from_kernel_result(result),
+        }
+    }
+
+    fn finish(self, transaction_after: TransactionStatus) -> QueryTraceEventSeed {
+        QueryTraceEventSeed {
+            session_id: self.session_id,
+            protocol: self.protocol,
+            statement_kind: self.statement_kind,
+            sql_hash: self.sql_hash,
+            operation_hash: self.operation_hash,
+            binds: self.binds,
+            transaction_before: self.transaction_before,
+            transaction_after: transaction_status_token(transaction_after),
+            result: self.result,
+        }
+    }
+}
+
+fn record_simple_query_trace(
+    live_state: Option<&SharedPgwireState>,
+    session_id: &str,
+    sql: &str,
+    transaction_before: TransactionStatus,
+    transaction_after: TransactionStatus,
+    result: &KernelResult,
+) -> io::Result<()> {
+    let Some(live_state) = live_state else {
+        return Ok(());
+    };
+    let operation_hash = trace_operation_hash(&live_state.catalog, session_id, sql);
+    record_completed_query_trace(
+        Some(live_state),
+        QueryTraceEventSeed {
+            session_id: session_id.to_owned(),
+            protocol: String::from("simple_query"),
+            statement_kind: crate::query_trace::statement_kind(sql),
+            sql_hash: Some(crate::query_trace::sql_hash(sql)),
+            operation_hash,
+            binds: None,
+            transaction_before: transaction_status_token(transaction_before),
+            transaction_after: transaction_status_token(transaction_after),
+            result: QueryTraceResult::from_kernel_result(result),
+        },
+    )
+}
+
+fn record_completed_query_trace(
+    live_state: Option<&SharedPgwireState>,
+    seed: QueryTraceEventSeed,
+) -> io::Result<()> {
+    if let Some(query_trace) = live_state.and_then(SharedPgwireState::query_trace) {
+        query_trace.record(seed)?;
+    }
+    Ok(())
+}
+
+fn trace_operation_hash(catalog: &Catalog, session_id: &str, sql: &str) -> Option<String> {
+    let operation = match crate::query_trace::statement_kind(sql).as_str() {
+        "begin" | "commit" | "rollback" | "set" | "show" => normalize_session_sql(session_id, sql),
+        "select" => normalize_read_sql(catalog, session_id, sql),
+        "delete" | "insert" | "update" => normalize_mutation_sql(catalog, session_id, sql),
+        _ => return None,
+    };
+    crate::query_trace::operation_hash(&operation)
+}
+
+fn transaction_status_token(status: TransactionStatus) -> String {
+    match status {
+        TransactionStatus::Idle => String::from("idle"),
+        TransactionStatus::InTransaction => String::from("in_transaction"),
+        TransactionStatus::FailedTransaction => String::from("failed_transaction"),
+    }
+}
+
 struct SessionScopedBackend<'a> {
     session_id: &'a str,
     overlays: MutexGuard<'a, SessionOverlayManager>,
@@ -434,6 +639,7 @@ impl Backend for SessionScopedBackend<'_> {
 fn apply_live_session_side_effect(
     live_state: Option<&SharedPgwireState>,
     session_id: &str,
+    transaction_status: TransactionStatus,
     result: KernelResult,
 ) -> io::Result<KernelResult> {
     let Some(live_state) = live_state else {
@@ -447,6 +653,12 @@ fn apply_live_session_side_effect(
     let mut overlays = live_state.lock_overlays()?;
     let outcome = match tag {
         ResultTag::Begin => overlays.begin_write(session_id),
+        ResultTag::Commit if matches!(transaction_status, TransactionStatus::FailedTransaction) => {
+            overlays.rollback(session_id).or_else(|error| match error {
+                OverlayError::SessionNotWriter { .. } => Ok(()),
+                other => Err(other),
+            })
+        }
         ResultTag::Commit
             if overlays
                 .writer_session_id()
@@ -466,6 +678,108 @@ fn apply_live_session_side_effect(
     };
 
     Ok(outcome.map_or_else(overlay_refusal_result, |_| result))
+}
+
+fn failed_transaction_simple_query_result(result: KernelResult) -> KernelResult {
+    match result {
+        KernelResult::Ack(AckResult {
+            tag: ResultTag::Rollback,
+            rows_affected,
+        }) => KernelResult::Ack(AckResult {
+            tag: ResultTag::Rollback,
+            rows_affected,
+        }),
+        KernelResult::Ack(AckResult {
+            tag: ResultTag::Commit,
+            ..
+        }) => KernelResult::Ack(AckResult {
+            tag: ResultTag::Rollback,
+            rows_affected: 0,
+        }),
+        _ => failed_transaction_result("simple_query"),
+    }
+}
+
+fn begin_autocommit_write(
+    live_state: Option<&SharedPgwireState>,
+    session_id: &str,
+) -> io::Result<Option<KernelResult>> {
+    let Some(live_state) = live_state else {
+        return Ok(None);
+    };
+    let mut overlays = live_state.lock_overlays()?;
+    Ok(overlays
+        .begin_write(session_id)
+        .err()
+        .map(overlay_refusal_result))
+}
+
+fn finish_autocommit_write(
+    live_state: Option<&SharedPgwireState>,
+    session_id: &str,
+    execute_state: &ExtendedExecuteState,
+) -> io::Result<()> {
+    let Some(live_state) = live_state else {
+        return Ok(());
+    };
+    let mut overlays = live_state.lock_overlays()?;
+    if execute_state.pending_result_is_successful_mutation() {
+        overlays.commit(session_id).map_err(|error| {
+            io::Error::other(format!("failed to commit autocommit write: {error}"))
+        })?;
+    } else if overlays
+        .writer_session_id()
+        .is_some_and(|writer| writer.eq(session_id))
+    {
+        overlays.rollback(session_id).map_err(|error| {
+            io::Error::other(format!("failed to roll back autocommit write: {error}"))
+        })?;
+    }
+    Ok(())
+}
+
+fn abort_live_write_if_pending_execute_failed(
+    live_state: Option<&SharedPgwireState>,
+    session_id: &str,
+    transaction_status: TransactionStatus,
+    execute_state: &ExtendedExecuteState,
+) -> io::Result<()> {
+    if execute_state.pending_result_is_refusal() {
+        abort_live_write_if_transaction_failed(
+            live_state,
+            session_id,
+            transaction_status,
+            &failed_transaction_result("extended_query"),
+        )?;
+    }
+    Ok(())
+}
+
+fn abort_live_write_if_transaction_failed(
+    live_state: Option<&SharedPgwireState>,
+    session_id: &str,
+    transaction_status: TransactionStatus,
+    result: &KernelResult,
+) -> io::Result<()> {
+    if !matches!(transaction_status, TransactionStatus::InTransaction)
+        || !matches!(result, KernelResult::Refusal(_))
+    {
+        return Ok(());
+    }
+
+    let Some(live_state) = live_state else {
+        return Ok(());
+    };
+    let mut overlays = live_state.lock_overlays()?;
+    if overlays
+        .writer_session_id()
+        .is_some_and(|writer| writer.eq(session_id))
+    {
+        overlays.abort_write(session_id).map_err(|error| {
+            io::Error::other(format!("failed to abort transaction overlay: {error}"))
+        })?;
+    }
+    Ok(())
 }
 
 fn overlay_refusal_result(error: OverlayError) -> KernelResult {

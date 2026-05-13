@@ -34,6 +34,7 @@ fn seeded_catalog() -> twinning::catalog::Catalog {
 fn seeded_report() -> TwinReport {
     let catalog = seeded_catalog();
     TwinReport::from_seed(TwinReportSeed {
+        mode: None,
         engine: "postgres",
         host: "127.0.0.1",
         port: 5432,

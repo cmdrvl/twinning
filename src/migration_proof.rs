@@ -6,9 +6,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use sqlparser::{dialect::PostgreSqlDialect, parser::Parser};
 
 use crate::{
-    backend::BaseSnapshotBackend,
+    backend::{Backend, BaseSnapshotBackend},
     catalog::{Catalog, parse_postgres_schema},
     cli::{
         Engine, ProofArgs, ProofCommand, TwinPairOrchestrateArgs, TwinPairProofArgs,
@@ -16,21 +17,23 @@ use crate::{
     },
     declaration::{CatalogDeclarationIdentity, load_catalog_declaration},
     ir::{
-        AggregateKind, AggregateSpec, PredicateComparison, PredicateExpr, PredicateOperator,
-        ReadOp, ReadShape, ScalarValue,
+        AggregateKind, AggregateSpec, Operation, PredicateComparison, PredicateExpr,
+        PredicateOperator, ReadOp, ReadShape, ScalarValue, normalize_mutation_statement,
     },
-    kernel::read::execute_read,
+    kernel::{mutation::execute_mutation, read::execute_read, storage::TableStorage},
     orchestration_manifest::{
         ManifestArtifactRef, TwinPairEndpointBootstrap, TwinPairEndpointSpec,
         TwinPairOrchestrationManifest, load_twin_pair_orchestration_manifest,
     },
     refusal::{self, RefusalEnvelope, RefusalResult},
+    report::SourceMaterializationReport,
     result::KernelResult,
     runtime::Execution,
     snapshot::{self, TwinSnapshot, restore},
 };
 
 pub const TWIN_PAIR_PROOF_VERSION: &str = "twinning.twin-pair-proof.v0";
+pub const TWIN_PAIR_REPLAY_MANIFEST_VERSION: &str = "twinning.twin-pair-replay-manifest.v0";
 pub const TWIN_PAIR_REPLAY_RESULT_VERSION: &str = "twinning.twin-pair-replay-result.v0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +63,8 @@ pub struct TwinPairEndpointIdentity {
     pub committed_state_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catalog_declaration_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_materialization: Option<SourceMaterializationReport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_identities: Vec<TwinPairEvidenceIdentity>,
 }
@@ -99,6 +104,7 @@ pub struct TwinPairProofCase {
 pub enum TwinPairCaseVerdict {
     Pass,
     Fail,
+    Skip,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,7 +126,14 @@ pub struct TwinPairReplayResultArtifact {
     pub right_snapshot_hash: String,
     pub left_result_hash: String,
     pub right_result_hash: String,
+    pub result_hashes_match: bool,
+    pub row_count_parity: TwinPairOptionalU64Parity,
+    pub command_tag_parity: TwinPairOptionalStringParity,
     pub sqlstate_parity: TwinPairSqlstateParity,
+    pub refusal_parity: TwinPairOptionalStringParity,
+    pub ordering_policy_parity: TwinPairOptionalStringParity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +142,24 @@ pub struct TwinPairSqlstateParity {
     pub left: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub right: Option<String>,
+    pub matches: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TwinPairOptionalStringParity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<String>,
+    pub matches: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TwinPairOptionalU64Parity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<u64>,
     pub matches: bool,
 }
 
@@ -141,11 +172,11 @@ impl TwinPairProofReport {
     ) -> Self {
         let outcome = if cases
             .iter()
-            .all(|case| case.verdict == TwinPairCaseVerdict::Pass)
+            .any(|case| case.verdict == TwinPairCaseVerdict::Fail)
         {
-            TwinPairProofOutcome::Pass
-        } else {
             TwinPairProofOutcome::Fail
+        } else {
+            TwinPairProofOutcome::Pass
         };
 
         Self {
@@ -165,17 +196,38 @@ impl TwinPairProofCase {
         left: TwinPairObservation,
         right: TwinPairObservation,
     ) -> Self {
-        let mismatches = if left.result_hash == right.result_hash && left.result == right.result {
-            Vec::new()
-        } else {
-            vec![String::from("query_result")]
-        };
-        let verdict = if mismatches.is_empty() {
+        let replay_result = TwinPairReplayResultArtifact::from_observations(&left, &right);
+        let mut mismatches = Vec::new();
+        if !replay_result.result_hashes_match {
+            mismatches.push(String::from("result_hash"));
+        }
+        if !replay_result.row_count_parity.matches {
+            mismatches.push(String::from("row_count"));
+        }
+        if !replay_result.command_tag_parity.matches {
+            mismatches.push(String::from("command_tag"));
+        }
+        if !replay_result.sqlstate_parity.matches {
+            mismatches.push(String::from("sqlstate"));
+        }
+        if !replay_result.refusal_parity.matches {
+            mismatches.push(String::from("refusal_envelope"));
+        }
+        if !replay_result.ordering_policy_parity.matches {
+            mismatches.push(String::from("ordering_policy"));
+        }
+
+        let verdict = if is_skip_observation(&left) && is_skip_observation(&right) {
+            if mismatches.is_empty() {
+                TwinPairCaseVerdict::Skip
+            } else {
+                TwinPairCaseVerdict::Fail
+            }
+        } else if mismatches.is_empty() {
             TwinPairCaseVerdict::Pass
         } else {
             TwinPairCaseVerdict::Fail
         };
-        let replay_result = TwinPairReplayResultArtifact::from_observations(&left, &right);
 
         Self {
             case_id: case_id.into(),
@@ -193,6 +245,14 @@ impl TwinPairReplayResultArtifact {
         let left_sqlstate = observation_sqlstate(&left.result);
         let right_sqlstate = observation_sqlstate(&right.result);
         let sqlstate_matches = left_sqlstate == right_sqlstate;
+        let left_row_count = observation_u64(&left.result, "row_count");
+        let right_row_count = observation_u64(&right.result, "row_count");
+        let left_command_tag = observation_string(&left.result, "command_tag");
+        let right_command_tag = observation_string(&right.result, "command_tag");
+        let left_refusal_hash = observation_string(&left.result, "refusal_hash");
+        let right_refusal_hash = observation_string(&right.result, "refusal_hash");
+        let left_ordering_policy = observation_string(&left.result, "ordering_policy");
+        let right_ordering_policy = observation_string(&right.result, "ordering_policy");
 
         Self {
             version: TWIN_PAIR_REPLAY_RESULT_VERSION.to_owned(),
@@ -203,11 +263,37 @@ impl TwinPairReplayResultArtifact {
             right_snapshot_hash: right.snapshot_hash.clone(),
             left_result_hash: left.result_hash.clone(),
             right_result_hash: right.result_hash.clone(),
+            result_hashes_match: left.result_hash == right.result_hash,
+            row_count_parity: TwinPairOptionalU64Parity {
+                left: left_row_count,
+                right: right_row_count,
+                matches: left_row_count == right_row_count,
+            },
+            command_tag_parity: TwinPairOptionalStringParity {
+                left: left_command_tag.clone(),
+                right: right_command_tag.clone(),
+                matches: left_command_tag == right_command_tag,
+            },
             sqlstate_parity: TwinPairSqlstateParity {
                 left: left_sqlstate,
                 right: right_sqlstate,
                 matches: sqlstate_matches,
             },
+            refusal_parity: TwinPairOptionalStringParity {
+                left: left_refusal_hash.clone(),
+                right: right_refusal_hash.clone(),
+                matches: left_refusal_hash == right_refusal_hash,
+            },
+            ordering_policy_parity: TwinPairOptionalStringParity {
+                left: left_ordering_policy.clone(),
+                right: right_ordering_policy.clone(),
+                matches: left_ordering_policy == right_ordering_policy,
+            },
+            skip_reason_code: observation_string(&left.result, "reason_code").filter(
+                |left_reason| {
+                    Some(left_reason.clone()) == observation_string(&right.result, "reason_code")
+                },
+            ),
         }
     }
 }
@@ -466,19 +552,6 @@ fn orchestration_endpoint_snapshot(
             declaration,
             load,
         } => {
-            if !load.is_empty() {
-                return Err(Box::new(proof_refusal(
-                    "Twin-pair orchestration schema bootstraps with load scripts are not implemented.",
-                    json!({
-                        "field": field,
-                        "endpoint_id": endpoint.endpoint_id,
-                        "bootstrap": "schema",
-                        "load": load,
-                        "policy": "restore_existing_snapshot_or_empty_schema_only",
-                    }),
-                )));
-            }
-
             let schema_path = resolve_manifest_path(manifest_path, schema);
             let schema_bytes = fs::read(&schema_path)
                 .map_err(|error| Box::new(refusal::io_read(&schema_path, &error)))?;
@@ -504,7 +577,7 @@ fn orchestration_endpoint_snapshot(
                 })
                 .transpose()?;
 
-            TwinSnapshot::new(
+            let snapshot = TwinSnapshot::new(
                 Engine::Postgres,
                 schema_path.display().to_string(),
                 schema_hash,
@@ -512,9 +585,191 @@ fn orchestration_endpoint_snapshot(
                 None,
                 catalog,
             )?
-            .with_catalog_declaration(declaration)
+            .with_catalog_declaration(declaration)?;
+
+            if load.is_empty() {
+                return Ok(snapshot);
+            }
+
+            let loaded = materialize_schema_loads(manifest_path, field, endpoint, &snapshot, load)?;
+            snapshot
+                .with_source_materialization(Some(loaded.report))?
+                .with_committed_tables(loaded.committed_tables)
         }
     }
+}
+
+struct MaterializedEndpointLoad {
+    committed_tables: Vec<TableStorage>,
+    report: SourceMaterializationReport,
+}
+
+fn materialize_schema_loads(
+    manifest_path: &Path,
+    field: &str,
+    endpoint: &TwinPairEndpointSpec,
+    snapshot: &TwinSnapshot,
+    load: &[String],
+) -> RefusalResult<MaterializedEndpointLoad> {
+    let mut backend = BaseSnapshotBackend::new(empty_tables(&snapshot.catalog)?)
+        .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
+    let mut source_hasher = Sha256::new();
+    let dialect = PostgreSqlDialect {};
+
+    for load_item in load {
+        let load_path = resolve_manifest_path(manifest_path, load_item);
+        let load_bytes =
+            fs::read(&load_path).map_err(|error| Box::new(refusal::io_read(&load_path, &error)))?;
+        source_hasher.update(load_item.as_bytes());
+        source_hasher.update([0]);
+        source_hasher.update(sha256_prefixed(&load_bytes).as_bytes());
+        source_hasher.update([0xff]);
+
+        let load_sql = String::from_utf8(load_bytes).map_err(|error| {
+            Box::new(proof_refusal(
+                "Twin-pair orchestration schema load file must be UTF-8 Postgres SQL.",
+                json!({
+                    "field": field,
+                    "endpoint_id": endpoint.endpoint_id,
+                    "load": load_path.display().to_string(),
+                    "error": error.to_string(),
+                }),
+            ))
+        })?;
+        let statements = Parser::parse_sql(&dialect, &load_sql).map_err(|error| {
+            Box::new(proof_refusal(
+                "Twin-pair orchestration schema load file failed to parse.",
+                json!({
+                    "field": field,
+                    "endpoint_id": endpoint.endpoint_id,
+                    "load": load_path.display().to_string(),
+                    "error": error.to_string(),
+                }),
+            ))
+        })?;
+        if statements.is_empty() {
+            return Err(Box::new(proof_refusal(
+                "Twin-pair orchestration schema load file did not contain any statements.",
+                json!({
+                    "field": field,
+                    "endpoint_id": endpoint.endpoint_id,
+                    "load": load_path.display().to_string(),
+                }),
+            )));
+        }
+
+        for (statement_index, statement) in statements.iter().enumerate() {
+            let mutation = match normalize_mutation_statement(
+                &snapshot.catalog,
+                format!("{}:load", endpoint.endpoint_id),
+                statement,
+            ) {
+                Operation::Mutation(mutation) => mutation,
+                Operation::Refusal(refusal) => {
+                    return Err(Box::new(proof_refusal(
+                        "Twin-pair orchestration schema load contains an unsupported statement.",
+                        json!({
+                            "field": field,
+                            "endpoint_id": endpoint.endpoint_id,
+                            "load": load_path.display().to_string(),
+                            "statement_index": statement_index,
+                            "statement": statement.to_string(),
+                            "refusal": refusal,
+                            "policy": "manifest_sql_load_supports_declared_mutations_only",
+                        }),
+                    )));
+                }
+                other => {
+                    return Err(Box::new(proof_refusal(
+                        "Twin-pair orchestration schema load normalized to an unexpected operation.",
+                        json!({
+                            "field": field,
+                            "endpoint_id": endpoint.endpoint_id,
+                            "load": load_path.display().to_string(),
+                            "statement_index": statement_index,
+                            "operation": format!("{other:?}"),
+                        }),
+                    )));
+                }
+            };
+
+            match execute_mutation(&snapshot.catalog, &mut backend, &mutation) {
+                KernelResult::Mutation(_) => {}
+                KernelResult::Refusal(refusal) => {
+                    return Err(Box::new(proof_refusal(
+                        "Twin-pair orchestration schema load failed kernel mutation execution.",
+                        json!({
+                            "field": field,
+                            "endpoint_id": endpoint.endpoint_id,
+                            "load": load_path.display().to_string(),
+                            "statement_index": statement_index,
+                            "statement": statement.to_string(),
+                            "refusal": refusal,
+                        }),
+                    )));
+                }
+                other => {
+                    return Err(Box::new(proof_refusal(
+                        "Twin-pair orchestration schema load produced an unexpected kernel result.",
+                        json!({
+                            "field": field,
+                            "endpoint_id": endpoint.endpoint_id,
+                            "load": load_path.display().to_string(),
+                            "statement_index": statement_index,
+                            "result": format!("{other:?}"),
+                        }),
+                    )));
+                }
+            }
+        }
+    }
+
+    let committed_tables = committed_tables_from_backend(&snapshot.catalog, &backend)?;
+    let table_rows = committed_tables
+        .iter()
+        .map(|table| (table.table_name().to_owned(), table.row_count() as u64))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let row_count = table_rows.values().copied().sum();
+
+    Ok(MaterializedEndpointLoad {
+        committed_tables,
+        report: SourceMaterializationReport {
+            source_identity: format!("sha256:{:x}", source_hasher.finalize()),
+            method: String::from("manifest_sql_load"),
+            table_count: snapshot.catalog.tables.len(),
+            row_count,
+            tables: table_rows,
+        },
+    })
+}
+
+fn empty_tables(catalog: &Catalog) -> RefusalResult<Vec<TableStorage>> {
+    catalog
+        .tables
+        .iter()
+        .map(|table| {
+            TableStorage::new(table)
+                .map_err(|error| Box::new(refusal::serialization(error.to_string())))
+        })
+        .collect()
+}
+
+fn committed_tables_from_backend(
+    catalog: &Catalog,
+    backend: &BaseSnapshotBackend,
+) -> RefusalResult<Vec<TableStorage>> {
+    catalog
+        .tables
+        .iter()
+        .map(|table| {
+            backend.visible_table(&table.name).cloned().ok_or_else(|| {
+                Box::new(refusal::serialization(format!(
+                    "schema load backend did not retain table `{}`",
+                    table.name
+                )))
+            })
+        })
+        .collect()
 }
 
 fn validate_orchestration_declaration(
@@ -643,6 +898,7 @@ fn endpoint_identity(
             .catalog_declaration
             .as_ref()
             .map(|declaration| declaration.hash.clone()),
+        source_materialization: snapshot.source_materialization.clone(),
         evidence_identities,
     })
 }
@@ -654,32 +910,58 @@ fn observe_query(
     backend: &BaseSnapshotBackend,
     query: &TwinPairProofQuery,
 ) -> TwinPairObservation {
-    let result = match query.read_op() {
-        Ok(read_op) => match execute_read(catalog, backend, &read_op) {
-            KernelResult::Read(read) => json!({
-                "outcome_class": "success",
-                "columns": read.columns,
-                "rows": read.rows,
-            }),
-            KernelResult::Refusal(refusal) => json!({
-                "outcome_class": "refusal",
-                "code": refusal.code,
-                "sqlstate": refusal.sqlstate,
-                "detail": refusal.detail,
-            }),
-            other => json!({
-                "outcome_class": "unexpected",
-                "debug": format!("{other:?}"),
-            }),
-        },
-        Err(message) => json!({
-            "outcome_class": "refusal",
-            "code": "unsupported_query_shape",
-            "sqlstate": "0A000",
-            "detail": {
-                "message": message,
+    let result = if query.policy == "skip" {
+        json!({
+            "outcome_class": "skip",
+            "reason_code": query.reason_code.as_deref().unwrap_or("unspecified_skip"),
+            "reason": query.reason.as_deref().unwrap_or("not executed by replay policy"),
+            "ordering_policy": "not_applicable",
+        })
+    } else {
+        match query.read_op() {
+            Ok(read_op) => match execute_read(catalog, backend, &read_op) {
+                KernelResult::Read(read) => {
+                    let row_count = read.rows.len() as u64;
+                    let rows_value = serde_json::to_value(&read.rows)
+                        .expect("read rows should serialize for replay hashing");
+                    json!({
+                        "outcome_class": "success",
+                        "command_tag": format!("SELECT {row_count}"),
+                        "columns": read.columns,
+                        "row_count": row_count,
+                        "rows_hash": sha256_json(&rows_value),
+                        "ordering_policy": "kernel_deterministic_order",
+                    })
+                }
+                KernelResult::Refusal(refusal) => json!({
+                    "outcome_class": "refusal",
+                    "code": refusal.code,
+                    "sqlstate": refusal.sqlstate,
+                    "refusal_hash": sha256_json(&serde_json::to_value(&refusal).expect("refusal should serialize")),
+                    "detail": refusal.detail,
+                    "ordering_policy": "not_applicable",
+                }),
+                other => json!({
+                    "outcome_class": "unexpected",
+                    "debug": format!("{other:?}"),
+                    "ordering_policy": "not_applicable",
+                }),
             },
-        }),
+            Err(message) => json!({
+                "outcome_class": "refusal",
+                "code": "unsupported_query_shape",
+                "sqlstate": "0A000",
+                "refusal_hash": sha256_json(&json!({
+                    "code": "unsupported_query_shape",
+                    "sqlstate": "0A000",
+                    "message": message,
+                })),
+                "detail": {
+                    "message": message,
+                },
+                "ordering_policy": "not_applicable",
+            }),
+        }
     };
 
     TwinPairObservation {
@@ -692,10 +974,23 @@ fn observe_query(
 }
 
 fn observation_sqlstate(result: &Value) -> Option<String> {
-    result
-        .get("sqlstate")
+    observation_string(result, "sqlstate")
+}
+
+fn observation_string(result: &Value, field: &str) -> Option<String> {
+    result.get(field).and_then(Value::as_str).map(str::to_owned)
+}
+
+fn observation_u64(result: &Value, field: &str) -> Option<u64> {
+    result.get(field).and_then(Value::as_u64)
+}
+
+fn is_skip_observation(observation: &TwinPairObservation) -> bool {
+    observation
+        .result
+        .get("outcome_class")
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        == Some("skip")
 }
 
 fn read_query_file(path: &Path) -> RefusalResult<TwinPairProofQueryFile> {
@@ -714,11 +1009,49 @@ fn read_query_file(path: &Path) -> RefusalResult<TwinPairProofQueryFile> {
         )));
     }
 
+    if let Some(replay_manifest_version) = &query_file.replay_manifest_version
+        && replay_manifest_version != TWIN_PAIR_REPLAY_MANIFEST_VERSION
+    {
+        return Err(Box::new(proof_parse(
+            path,
+            format!(
+                "unsupported replay_manifest_version `{replay_manifest_version}` (expected `{TWIN_PAIR_REPLAY_MANIFEST_VERSION}`)"
+            ),
+        )));
+    }
+
     if query_file.queries.is_empty() {
         return Err(Box::new(proof_parse(
             path,
             "twin-pair proof query file must contain at least one query",
         )));
+    }
+
+    for query in &query_file.queries {
+        match query.policy.as_str() {
+            "execute" => {}
+            "skip" => {
+                if query
+                    .reason_code
+                    .as_deref()
+                    .is_none_or(|reason| reason.trim().is_empty())
+                {
+                    return Err(Box::new(proof_parse(
+                        path,
+                        format!("skip query `{}` must provide reason_code", query.id),
+                    )));
+                }
+            }
+            other => {
+                return Err(Box::new(proof_parse(
+                    path,
+                    format!(
+                        "query `{}` has unsupported replay policy `{}` (supported: execute, skip)",
+                        query.id, other
+                    ),
+                )));
+            }
+        }
     }
 
     Ok(query_file)
@@ -786,6 +1119,8 @@ struct TwinPairProofQueryFile {
     #[serde(default)]
     proof_version: Option<String>,
     #[serde(default)]
+    replay_manifest_version: Option<String>,
+    #[serde(default)]
     target_evidence: Vec<TwinPairEvidenceIdentity>,
     queries: Vec<TwinPairProofQuery>,
 }
@@ -804,6 +1139,16 @@ struct TwinPairProofQuery {
     aggregate_alias: Option<String>,
     #[serde(default)]
     limit: Option<u64>,
+    #[serde(default = "default_replay_policy")]
+    policy: String,
+    #[serde(default)]
+    reason_code: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+fn default_replay_policy() -> String {
+    String::from("execute")
 }
 
 impl TwinPairProofQuery {

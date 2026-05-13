@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlparser::{
     ast::{
-        Assignment, AssignmentTarget, BinaryOperator, ConflictTarget as SqlConflictTarget, Expr,
-        Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Insert, ObjectName,
-        OnConflictAction, OnInsert, OneOrManyWithParens, Query, Select, SelectItem, SetExpr,
-        Statement, TableFactor, TableWithJoins, UnaryOperator, Value as SqlValue,
+        Assignment, AssignmentTarget, BinaryOperator, ConflictTarget as SqlConflictTarget, Delete,
+        Expr, FromTable, Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr,
+        Insert, ObjectName, OnConflictAction, OnInsert, OneOrManyWithParens, Query, Select,
+        SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, UnaryOperator,
+        Value as SqlValue,
     },
     dialect::PostgreSqlDialect,
     parser::Parser,
@@ -221,6 +222,15 @@ pub enum ScalarValue {
 
 type NormalizationResult<T> = Result<T, RefusalOp>;
 type RefusalBuilder = fn(&str, &[(&str, String)]) -> RefusalOp;
+
+struct UpdateStatementParts<'a> {
+    table: &'a TableWithJoins,
+    assignments: &'a [Assignment],
+    from: Option<&'a TableWithJoins>,
+    selection: Option<&'a Expr>,
+    returning: Option<&'a [SelectItem]>,
+    or: Option<&'a sqlparser::ast::SqliteOnConflict>,
+}
 
 const UNSUPPORTED_SHAPE_CODE: &str = "unsupported_shape";
 pub const UNDEFINED_TABLE_CODE: &str = "undefined_table";
@@ -461,7 +471,10 @@ fn normalize_prepare_statement_inner(
     param_types: Vec<String>,
 ) -> NormalizationResult<PrepareOp> {
     match statement {
-        Statement::Insert(_) | Statement::Query(_) => Ok(PrepareOp {
+        Statement::Delete(_)
+        | Statement::Insert(_)
+        | Statement::Query(_)
+        | Statement::Update { .. } => Ok(PrepareOp {
             session_id,
             statement_id,
             sql_hash: statement_hash(statement),
@@ -983,6 +996,14 @@ fn normalize_read_predicate(
     table: &TableCatalog,
     expr: &Expr,
 ) -> NormalizationResult<PredicateExpr> {
+    normalize_predicate_with(table, expr, read_refusal)
+}
+
+fn normalize_predicate_with(
+    table: &TableCatalog,
+    expr: &Expr,
+    refusal: RefusalBuilder,
+) -> NormalizationResult<PredicateExpr> {
     match strip_nested_expr(expr) {
         Expr::BinaryOp {
             left,
@@ -993,6 +1014,7 @@ fn normalize_read_predicate(
             left,
             right,
             BinaryOperator::And,
+            refusal,
         )?)),
         Expr::BinaryOp {
             left,
@@ -1003,8 +1025,9 @@ fn normalize_read_predicate(
             left,
             right,
             BinaryOperator::Or,
+            refusal,
         )?)),
-        expr => normalize_read_comparison(table, expr).map(PredicateExpr::Comparison),
+        expr => normalize_comparison_with(table, expr, refusal).map(PredicateExpr::Comparison),
     }
 }
 
@@ -1013,10 +1036,11 @@ fn flatten_predicate(
     left: &Expr,
     right: &Expr,
     operator: BinaryOperator,
+    refusal: RefusalBuilder,
 ) -> NormalizationResult<Vec<PredicateComparison>> {
     let mut comparisons = Vec::new();
-    collect_predicate_comparisons(table, left, &operator, &mut comparisons)?;
-    collect_predicate_comparisons(table, right, &operator, &mut comparisons)?;
+    collect_predicate_comparisons(table, left, &operator, refusal, &mut comparisons)?;
+    collect_predicate_comparisons(table, right, &operator, refusal, &mut comparisons)?;
     Ok(comparisons)
 }
 
@@ -1024,37 +1048,39 @@ fn collect_predicate_comparisons(
     table: &TableCatalog,
     expr: &Expr,
     operator: &BinaryOperator,
+    refusal: RefusalBuilder,
     comparisons: &mut Vec<PredicateComparison>,
 ) -> NormalizationResult<()> {
     match strip_nested_expr(expr) {
         Expr::BinaryOp { left, op, right } if op.eq(operator) => {
-            collect_predicate_comparisons(table, left, operator, comparisons)?;
-            collect_predicate_comparisons(table, right, operator, comparisons)
+            collect_predicate_comparisons(table, left, operator, refusal, comparisons)?;
+            collect_predicate_comparisons(table, right, operator, refusal, comparisons)
         }
         Expr::BinaryOp {
             op: BinaryOperator::And | BinaryOperator::Or,
             ..
-        } => Err(read_refusal(
+        } => Err(refusal(
             "predicate_boolean_mixed",
             &[("predicate", expr.to_string())],
         )),
         expr => {
-            comparisons.push(normalize_read_comparison(table, expr)?);
+            comparisons.push(normalize_comparison_with(table, expr, refusal)?);
             Ok(())
         }
     }
 }
 
-fn normalize_read_comparison(
+fn normalize_comparison_with(
     table: &TableCatalog,
     expr: &Expr,
+    refusal: RefusalBuilder,
 ) -> NormalizationResult<PredicateComparison> {
     match strip_nested_expr(expr) {
         Expr::BinaryOp { left, op, right } => {
-            normalize_binary_read_comparison(table, left, op, right)
+            normalize_binary_comparison_with(table, left, op, right, refusal)
         }
         Expr::IsNull(expr) => Ok(PredicateComparison {
-            column: normalize_read_column_expr(table, expr)?,
+            column: normalize_column_expr_with_refusal(table, expr, refusal)?,
             operator: PredicateOperator::IsNull,
             values: Vec::new(),
         }),
@@ -1064,18 +1090,18 @@ fn normalize_read_comparison(
             negated,
         } => {
             if *negated {
-                return Err(read_refusal(
+                return Err(refusal(
                     "predicate_not_in",
                     &[("predicate", expr.to_string())],
                 ));
             }
 
-            let column = normalize_read_column_expr(table, expr)?;
+            let column = normalize_column_expr_with_refusal(table, expr, refusal)?;
             let values = list
                 .iter()
-                .map(normalize_read_scalar_expr)
+                .map(|expr| normalize_scalar_expr_with(expr, refusal))
                 .collect::<NormalizationResult<Vec<_>>>()?;
-            validate_predicate_values(expr, &values)?;
+            validate_predicate_values_with(expr, &values, refusal)?;
             Ok(PredicateComparison {
                 column,
                 operator: PredicateOperator::InList,
@@ -1089,44 +1115,45 @@ fn normalize_read_comparison(
             high,
         } => {
             if *negated {
-                return Err(read_refusal(
+                return Err(refusal(
                     "predicate_not_between",
                     &[("predicate", expr.to_string())],
                 ));
             }
 
-            let column = normalize_read_column_expr(table, expr)?;
+            let column = normalize_column_expr_with_refusal(table, expr, refusal)?;
             let values = [
-                normalize_read_scalar_expr(low)?,
-                normalize_read_scalar_expr(high)?,
+                normalize_scalar_expr_with(low, refusal)?,
+                normalize_scalar_expr_with(high, refusal)?,
             ];
-            validate_predicate_values(expr, &values)?;
+            validate_predicate_values_with(expr, &values, refusal)?;
             Ok(PredicateComparison {
                 column,
                 operator: PredicateOperator::Between,
                 values: values.into(),
             })
         }
-        expr => Err(read_refusal(
+        expr => Err(refusal(
             "predicate_expression",
             &[("expr", expr.to_string())],
         )),
     }
 }
 
-fn normalize_binary_read_comparison(
+fn normalize_binary_comparison_with(
     table: &TableCatalog,
     left: &Expr,
     operator: &BinaryOperator,
     right: &Expr,
+    refusal: RefusalBuilder,
 ) -> NormalizationResult<PredicateComparison> {
     let normalized_operator = binary_operator_to_predicate(operator.clone())
-        .ok_or_else(|| read_refusal("predicate_operator", &[("operator", operator.to_string())]))?;
+        .ok_or_else(|| refusal("predicate_operator", &[("operator", operator.to_string())]))?;
 
     if is_column_expr(left) {
-        let column = normalize_read_column_expr(table, left)?;
-        let value = normalize_read_scalar_expr(right)?;
-        validate_predicate_values(left, std::slice::from_ref(&value))?;
+        let column = normalize_column_expr_with_refusal(table, left, refusal)?;
+        let value = normalize_scalar_expr_with(right, refusal)?;
+        validate_predicate_values_with(left, std::slice::from_ref(&value), refusal)?;
         return Ok(PredicateComparison {
             column,
             operator: normalized_operator,
@@ -1135,9 +1162,9 @@ fn normalize_binary_read_comparison(
     }
 
     if is_column_expr(right) {
-        let column = normalize_read_column_expr(table, right)?;
-        let value = normalize_read_scalar_expr(left)?;
-        validate_predicate_values(right, std::slice::from_ref(&value))?;
+        let column = normalize_column_expr_with_refusal(table, right, refusal)?;
+        let value = normalize_scalar_expr_with(left, refusal)?;
+        validate_predicate_values_with(right, std::slice::from_ref(&value), refusal)?;
         return Ok(PredicateComparison {
             column,
             operator: reverse_predicate_operator(normalized_operator),
@@ -1145,32 +1172,34 @@ fn normalize_binary_read_comparison(
         });
     }
 
-    Err(read_refusal(
+    Err(refusal(
         "predicate_expression",
         &[("expr", format!("{left} {operator} {right}"))],
     ))
 }
 
-fn normalize_read_column_expr(
+fn normalize_column_expr_with_refusal(
     table: &TableCatalog,
     expr: &Expr,
+    refusal: RefusalBuilder,
 ) -> NormalizationResult<ColumnName> {
-    resolve_column_expr_with(table, strip_nested_expr(expr), read_refusal)
+    resolve_column_expr_with(table, strip_nested_expr(expr), refusal)
 }
 
 fn normalize_read_scalar_expr(expr: &Expr) -> NormalizationResult<ScalarValue> {
     normalize_scalar_expr_with(expr, read_refusal)
 }
 
-fn validate_predicate_values(expr: &Expr, values: &[ScalarValue]) -> NormalizationResult<()> {
+fn validate_predicate_values_with(
+    expr: &Expr,
+    values: &[ScalarValue],
+    refusal: RefusalBuilder,
+) -> NormalizationResult<()> {
     if values
         .iter()
         .any(|value| matches!(value, ScalarValue::Null))
     {
-        return Err(read_refusal(
-            "predicate_null",
-            &[("expr", expr.to_string())],
-        ));
+        return Err(refusal("predicate_null", &[("expr", expr.to_string())]));
     }
 
     Ok(())
@@ -1328,6 +1357,34 @@ pub fn normalize_mutation_statement(
                 Err(refusal) => Operation::Refusal(refusal),
             }
         }
+        Statement::Update {
+            table,
+            assignments,
+            from,
+            selection,
+            returning,
+            or,
+        } => match normalize_update_statement(
+            catalog,
+            session_id,
+            UpdateStatementParts {
+                table,
+                assignments,
+                from: from.as_ref(),
+                selection: selection.as_ref(),
+                returning: returning.as_deref(),
+                or: or.as_ref(),
+            },
+        ) {
+            Ok(mutation) => Operation::Mutation(mutation),
+            Err(refusal) => Operation::Refusal(refusal),
+        },
+        Statement::Delete(delete) => {
+            match normalize_delete_statement(catalog, session_id, delete) {
+                Ok(mutation) => Operation::Mutation(mutation),
+                Err(refusal) => Operation::Refusal(refusal),
+            }
+        }
         other => Operation::Refusal(mutation_refusal(
             "unsupported_statement",
             &[("statement", other.to_string())],
@@ -1363,6 +1420,211 @@ fn normalize_insert_statement(
         predicate: None,
         returning,
     })
+}
+
+fn normalize_update_statement(
+    catalog: &Catalog,
+    session_id: SessionId,
+    update: UpdateStatementParts<'_>,
+) -> NormalizationResult<MutationOp> {
+    if update.or.is_some() {
+        return Err(mutation_refusal(
+            "update_conflict_resolution",
+            &[("statement", update.table.to_string())],
+        ));
+    }
+    if let Some(from) = update.from {
+        return Err(mutation_refusal(
+            "update_from",
+            &[("from", from.to_string())],
+        ));
+    }
+    if let Some(returning) = update.returning {
+        return Err(mutation_refusal(
+            "update_returning",
+            &[("returning", returning_items_to_string(returning))],
+        ));
+    }
+
+    let (table, table_name) = resolve_mutation_table_factor(catalog, update.table, "update_table")?;
+    let (columns, row) = normalize_update_assignments(table, update.assignments)?;
+    let predicate = update
+        .selection
+        .map(|expr| normalize_mutation_predicate(table, expr))
+        .transpose()?;
+
+    Ok(MutationOp {
+        session_id,
+        table: table_name,
+        kind: MutationKind::Update,
+        columns,
+        rows: vec![row],
+        conflict_target: None,
+        update_columns: Vec::new(),
+        predicate,
+        returning: Vec::new(),
+    })
+}
+
+fn normalize_delete_statement(
+    catalog: &Catalog,
+    session_id: SessionId,
+    delete: &Delete,
+) -> NormalizationResult<MutationOp> {
+    if !delete.tables.is_empty() {
+        return Err(mutation_refusal(
+            "delete_tables",
+            &[(
+                "tables",
+                columns_to_string(delete.tables.iter().map(object_name_to_string)),
+            )],
+        ));
+    }
+    if let Some(using) = &delete.using {
+        return Err(mutation_refusal(
+            "delete_using",
+            &[("using", table_joins_to_string(using))],
+        ));
+    }
+    if !delete.order_by.is_empty() {
+        return Err(mutation_refusal(
+            "delete_order_by",
+            &[(
+                "order_by",
+                delete
+                    .order_by
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )],
+        ));
+    }
+    if let Some(limit) = &delete.limit {
+        return Err(mutation_refusal(
+            "delete_limit",
+            &[("limit", limit.to_string())],
+        ));
+    }
+    if let Some(returning) = delete.returning.as_deref() {
+        return Err(mutation_refusal(
+            "delete_returning",
+            &[("returning", returning_items_to_string(returning))],
+        ));
+    }
+
+    let from = match &delete.from {
+        FromTable::WithFromKeyword(from) => from.as_slice(),
+        FromTable::WithoutKeyword(from) => {
+            return Err(mutation_refusal(
+                "delete_from",
+                &[("from", table_joins_to_string(from))],
+            ));
+        }
+    };
+    if from.len() != 1 {
+        return Err(mutation_refusal(
+            "delete_from",
+            &[("from_count", from.len().to_string())],
+        ));
+    }
+
+    let (table, table_name) = resolve_mutation_table_factor(catalog, &from[0], "delete_from")?;
+    let predicate = delete
+        .selection
+        .as_ref()
+        .map(|expr| normalize_mutation_predicate(table, expr))
+        .transpose()?;
+
+    Ok(MutationOp {
+        session_id,
+        table: table_name,
+        kind: MutationKind::Delete,
+        columns: Vec::new(),
+        rows: Vec::new(),
+        conflict_target: None,
+        update_columns: Vec::new(),
+        predicate,
+        returning: Vec::new(),
+    })
+}
+
+fn resolve_mutation_table_factor<'a>(
+    catalog: &'a Catalog,
+    table: &TableWithJoins,
+    reason: &str,
+) -> NormalizationResult<(&'a TableCatalog, TableName)> {
+    if !table.joins.is_empty() {
+        return Err(mutation_refusal(reason, &[("table", table.to_string())]));
+    }
+
+    match &table.relation {
+        TableFactor::Table {
+            name,
+            args,
+            with_hints,
+            version,
+            with_ordinality,
+            partitions,
+            json_path,
+            ..
+        } if args.is_none()
+            && with_hints.is_empty()
+            && version.is_none()
+            && !with_ordinality
+            && partitions.is_empty()
+            && json_path.is_none() =>
+        {
+            resolve_table(catalog, name)
+        }
+        _ => Err(mutation_refusal(reason, &[("table", table.to_string())])),
+    }
+}
+
+fn normalize_update_assignments(
+    table: &TableCatalog,
+    assignments: &[Assignment],
+) -> NormalizationResult<(Vec<ColumnName>, Vec<ScalarValue>)> {
+    if assignments.is_empty() {
+        return Err(mutation_refusal("update_assignments", &[]));
+    }
+
+    let mut columns = Vec::with_capacity(assignments.len());
+    let mut row = Vec::with_capacity(assignments.len());
+    let mut seen = BTreeSet::new();
+    for assignment in assignments {
+        let column = update_assignment_target_column(table, &assignment.target)?;
+        if !seen.insert(column.clone()) {
+            return Err(mutation_refusal("duplicate_column", &[("column", column)]));
+        }
+        columns.push(column);
+        row.push(normalize_scalar_expr(&assignment.value)?);
+    }
+
+    Ok((columns, row))
+}
+
+fn update_assignment_target_column(
+    table: &TableCatalog,
+    target: &AssignmentTarget,
+) -> NormalizationResult<ColumnName> {
+    match target {
+        AssignmentTarget::ColumnName(name) => resolve_object_name_column(table, name),
+        AssignmentTarget::Tuple(columns) => Err(mutation_refusal(
+            "update_assignment_target",
+            &[(
+                "assignment",
+                columns_to_string(columns.iter().map(object_name_to_string)),
+            )],
+        )),
+    }
+}
+
+fn normalize_mutation_predicate(
+    table: &TableCatalog,
+    expr: &Expr,
+) -> NormalizationResult<PredicateExpr> {
+    normalize_predicate_with(table, expr, mutation_refusal)
 }
 
 fn resolve_table<'a>(
@@ -1680,20 +1942,16 @@ fn normalize_conflict_target(
                 .map(|column| resolve_column(table, &column.value))
                 .collect::<NormalizationResult<Vec<_>>>()?;
 
-            if table
-                .primary_key
-                .as_ref()
-                .is_some_and(|key| key.columns.eq(&resolved))
-            {
+            if table.primary_key.as_ref().is_some_and(|key| {
+                columns_match_declared_set(key.columns.as_slice(), resolved.as_slice())
+            }) {
                 return Ok(ConflictTarget::PrimaryKey);
             }
 
-            if table
-                .unique_constraints
-                .iter()
-                .any(|constraint| constraint.columns.eq(&resolved))
-            {
-                return Ok(ConflictTarget::Columns(resolved));
+            if let Some(constraint) = table.unique_constraints.iter().find(|constraint| {
+                columns_match_declared_set(constraint.columns.as_slice(), resolved.as_slice())
+            }) {
+                return Ok(ConflictTarget::Columns(constraint.columns.clone()));
             }
 
             Err(mutation_refusal(
@@ -1727,6 +1985,12 @@ fn normalize_conflict_target(
             ))
         }
     }
+}
+
+fn columns_match_declared_set(declared: &[ColumnName], candidate: &[ColumnName]) -> bool {
+    let declared_set = declared.iter().collect::<BTreeSet<_>>();
+    let candidate_set = candidate.iter().collect::<BTreeSet<_>>();
+    declared.len() == candidate.len() && declared_set.is_subset(&candidate_set)
 }
 
 fn validate_upsert_assignments(
@@ -2014,6 +2278,22 @@ fn object_name_to_string(name: &ObjectName) -> String {
         .map(|ident| ident.value.as_str())
         .collect::<Vec<_>>()
         .join(".")
+}
+
+fn returning_items_to_string(items: &[SelectItem]) -> String {
+    items
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn table_joins_to_string(tables: &[TableWithJoins]) -> String {
+    tables
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[cfg(test)]
@@ -2570,6 +2850,71 @@ mod tests {
     }
 
     #[test]
+    fn composite_conflict_targets_normalize_by_declared_column_set() {
+        let catalog = parse_postgres_schema(
+            r#"
+            CREATE TABLE public.financials (
+                property_id TEXT NOT NULL,
+                period TEXT NOT NULL,
+                noi INTEGER NOT NULL,
+                CONSTRAINT financials_property_period_key UNIQUE (property_id, period)
+            );
+
+            CREATE TABLE public.positions (
+                account_id TEXT NOT NULL,
+                period TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                PRIMARY KEY (account_id, period)
+            );
+            "#,
+        )
+        .expect("schema should parse");
+
+        let declared_order = expect_mutation(normalize_mutation_sql(
+            &catalog,
+            "session-composite",
+            "INSERT INTO public.financials (property_id, period, noi) VALUES ('p-1', '2026-01', 100) ON CONFLICT (property_id, period) DO UPDATE SET noi = EXCLUDED.noi",
+        ))
+        .expect("declared-order composite unique target should normalize");
+        let reordered = expect_mutation(normalize_mutation_sql(
+            &catalog,
+            "session-composite",
+            "INSERT INTO public.financials (property_id, period, noi) VALUES ('p-1', '2026-01', 125) ON CONFLICT (period, property_id) DO UPDATE SET noi = EXCLUDED.noi",
+        ))
+        .expect("reordered composite unique target should normalize");
+        let reordered_pk = expect_mutation(normalize_mutation_sql(
+            &catalog,
+            "session-composite",
+            "INSERT INTO public.positions (account_id, period, amount) VALUES ('a-1', '2026-01', 50) ON CONFLICT (period, account_id) DO UPDATE SET amount = EXCLUDED.amount",
+        ))
+        .expect("reordered composite primary key target should normalize");
+        let unknown_target = expect_refusal(normalize_mutation_sql(
+            &catalog,
+            "session-composite",
+            "INSERT INTO public.financials (property_id, period, noi) VALUES ('p-1', '2026-01', 150) ON CONFLICT (period, noi) DO UPDATE SET noi = EXCLUDED.noi",
+        ))
+        .expect("non-unique composite target should refuse");
+
+        assert_eq!(
+            declared_order.conflict_target,
+            Some(ConflictTarget::Columns(vec![
+                String::from("property_id"),
+                String::from("period")
+            ]))
+        );
+        assert_eq!(reordered.conflict_target, declared_order.conflict_target);
+        assert_eq!(
+            reordered_pk.conflict_target,
+            Some(ConflictTarget::PrimaryKey)
+        );
+        assert_eq!(unknown_target.code, "unsupported_shape");
+        assert_eq!(
+            unknown_target.detail.get("reason").map(String::as_str),
+            Some("unknown_conflict_target")
+        );
+    }
+
+    #[test]
     fn upsert_allows_omitted_unchanged_non_target_columns() {
         let catalog = mutation_catalog();
         let upsert = expect_mutation(normalize_mutation_sql(
@@ -2593,6 +2938,52 @@ mod tests {
     }
 
     #[test]
+    fn update_and_delete_by_predicate_normalize_to_declared_mutation_ir() {
+        let catalog = mutation_catalog();
+        let update = expect_mutation(normalize_mutation_sql(
+            &catalog,
+            "session-update-delete",
+            "UPDATE public.deals SET deal_name = 'Alpha Updated' WHERE external_key = 'alpha-1'",
+        ))
+        .expect("predicate UPDATE should normalize into a mutation op");
+        let delete = expect_mutation(normalize_mutation_sql(
+            &catalog,
+            "session-update-delete",
+            "DELETE FROM public.deals WHERE deal_id = 'deal-1'",
+        ))
+        .expect("predicate DELETE should normalize into a mutation op");
+
+        assert_eq!(update.kind, MutationKind::Update);
+        assert_eq!(update.table, "public.deals");
+        assert_eq!(update.columns, vec![String::from("deal_name")]);
+        assert_eq!(
+            update.rows,
+            vec![vec![ScalarValue::Text(String::from("Alpha Updated"))]]
+        );
+        assert_eq!(
+            update.predicate,
+            Some(PredicateExpr::Comparison(PredicateComparison {
+                column: String::from("external_key"),
+                operator: PredicateOperator::Eq,
+                values: vec![ScalarValue::Text(String::from("alpha-1"))],
+            }))
+        );
+
+        assert_eq!(delete.kind, MutationKind::Delete);
+        assert_eq!(delete.table, "public.deals");
+        assert!(delete.columns.is_empty());
+        assert!(delete.rows.is_empty());
+        assert_eq!(
+            delete.predicate,
+            Some(PredicateExpr::Comparison(PredicateComparison {
+                column: String::from("deal_id"),
+                operator: PredicateOperator::Eq,
+                values: vec![ScalarValue::Text(String::from("deal-1"))],
+            }))
+        );
+    }
+
+    #[test]
     fn unsupported_mutation_near_misses_become_refusals() {
         let catalog = mutation_catalog();
         let do_nothing = expect_refusal(normalize_mutation_sql(
@@ -2613,6 +3004,24 @@ mod tests {
             "INSERT INTO deals (deal_id, external_key, deal_name) VALUES ($1, 'alpha-1', 'Alpha')",
         ))
         .expect("placeholder insert should refuse");
+        let update_from = expect_refusal(normalize_mutation_sql(
+            &catalog,
+            "session-3",
+            "UPDATE deals SET deal_name = 'Beta' FROM deals other WHERE deals.deal_id = other.deal_id",
+        ))
+        .expect("UPDATE FROM should refuse");
+        let update_returning = expect_refusal(normalize_mutation_sql(
+            &catalog,
+            "session-3",
+            "UPDATE deals SET deal_name = 'Beta' WHERE deal_id = 'deal-1' RETURNING deal_id",
+        ))
+        .expect("UPDATE RETURNING should refuse until declared");
+        let delete_using = expect_refusal(normalize_mutation_sql(
+            &catalog,
+            "session-3",
+            "DELETE FROM deals USING deals other WHERE deals.deal_id = other.deal_id",
+        ))
+        .expect("DELETE USING should refuse");
 
         assert_eq!(
             do_nothing.detail.get("reason"),
@@ -2625,6 +3034,18 @@ mod tests {
         assert_eq!(
             placeholder.detail.get("reason"),
             Some(&String::from("placeholder_value"))
+        );
+        assert_eq!(
+            update_from.detail.get("reason"),
+            Some(&String::from("update_from"))
+        );
+        assert_eq!(
+            update_returning.detail.get("reason"),
+            Some(&String::from("update_returning"))
+        );
+        assert_eq!(
+            delete_using.detail.get("reason"),
+            Some(&String::from("delete_using"))
         );
     }
 

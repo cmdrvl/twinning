@@ -110,6 +110,12 @@ impl SessionOverlayManager {
         Ok(())
     }
 
+    pub fn abort_write(&mut self, session_id: &str) -> Result<(), OverlayError> {
+        let writer = self.require_writer(session_id)?;
+        writer.overlay_tables.clear();
+        Ok(())
+    }
+
     fn require_writer(&mut self, session_id: &str) -> Result<&mut ActiveWriter, OverlayError> {
         match self.active_writer.as_mut() {
             Some(writer) if writer.session_id.as_str().eq(session_id) => Ok(writer),
@@ -313,5 +319,46 @@ mod tests {
                 .row_count(),
             1
         );
+    }
+
+    #[test]
+    fn abort_discards_overlay_but_keeps_writer_lease_until_transaction_end() {
+        let mut overlays = SessionOverlayManager::new(committed_backend());
+        overlays.begin_write("writer").expect("begin writer");
+
+        let mut overlay_deals = overlays
+            .snapshot_visible_table("writer", "public.deals")
+            .expect("clone deals");
+        overlay_deals
+            .insert_row(vec![
+                KernelValue::Text(String::from("deal-2")),
+                KernelValue::Text(String::from("Beta")),
+            ])
+            .expect("insert overlay row");
+        overlays
+            .write_overlay_table("writer", overlay_deals)
+            .expect("write overlay");
+
+        overlays.abort_write("writer").expect("abort writer");
+
+        assert_eq!(overlays.writer_session_id(), Some("writer"));
+        assert_eq!(
+            overlays
+                .visible_table("writer", "public.deals")
+                .expect("writer visible deals after abort")
+                .row_count(),
+            1
+        );
+        assert_eq!(
+            overlays
+                .begin_write("reader")
+                .expect_err("aborted transaction still owns the writer lease"),
+            OverlayError::WriterBusy {
+                active_session: String::from("writer"),
+            }
+        );
+
+        overlays.rollback("writer").expect("rollback writer");
+        assert!(overlays.writer_session_id().is_none());
     }
 }

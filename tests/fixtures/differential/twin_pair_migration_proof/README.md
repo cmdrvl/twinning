@@ -15,10 +15,10 @@ that both endpoints surface the same protocol-visible SQLSTATE for an
 out-of-subset relation.
 
 The replay matrix currently exercises translated Postgres-compatible point
-lookup, filtered scan, aggregate count, intentional divergence, and SQLSTATE
-refusal-parity rows. Join replay, catalog introspection, and historical workload
-families remain explicit SKIP entries until the live v0 center declares and
-proves those shapes.
+lookup, filtered scan, aggregate count, intentional divergence, SQLSTATE
+refusal-parity rows, and one executable SKIP row for deferred join replay.
+Catalog introspection and historical workload families remain matrix-only SKIP
+entries until the live v0 center declares and proves those shapes.
 
 The fixture also attaches target-side evidence identities for raw `verify`,
 `benchmark`, and `assess` artifacts. Those identities are references only: the
@@ -26,5 +26,6 @@ proof report does not read, score, or reinterpret the target artifacts.
 
 Each proof case also emits a `twinning.twin-pair-replay-result.v0` replay-result
 artifact section with timing-independent diff inputs: endpoint snapshot hashes,
-left/right result hashes, and SQLSTATE parity. It intentionally excludes scores
-and timing measurements.
+left/right result hashes, row-count parity, command-tag parity, SQLSTATE parity,
+refusal parity, and ordering-policy parity. It intentionally excludes scores,
+timing measurements, and full row payloads.

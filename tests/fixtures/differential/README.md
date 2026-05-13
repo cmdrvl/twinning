@@ -11,4 +11,5 @@ manifest fixture.
   and records an interface-equivalence proof report with both endpoint
   identities.
 - `twin_pair_orchestration/` pins the manifest-first proof orchestration
-  contract, including explicit refusal coverage for schema load scripts.
+  contract, including schema-plus-load endpoint materialization and explicit
+  refusal coverage for unsupported load shapes.

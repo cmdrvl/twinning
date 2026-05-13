@@ -91,11 +91,16 @@
       "write_shapes": [
         "insert_values",
         "upsert_pk",
-        "upsert_unique"
+        "upsert_unique",
+        "update_by_predicate",
+        "delete_by_predicate"
       ],
       "read_shapes": [
         "select_filtered_scan",
-        "select_is_null"
+        "select_is_null",
+        "select_in_list",
+        "select_between",
+        "aggregate_basic_group_by"
       ],
       "required_sqlstates": [
         "23502",

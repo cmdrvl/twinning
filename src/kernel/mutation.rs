@@ -207,14 +207,16 @@ fn execute_update_inner<B: Backend>(
         .write_overlay_table(candidate_table)
         .map_err(refusal_from_backend_error)?;
 
+    let returning_rows = if mutation.returning.is_empty() {
+        Vec::new()
+    } else {
+        extract_returning_rows(table.columns.as_slice(), &mutation.returning, &updated_rows)?
+    };
+
     Ok(MutationResult {
         tag: ResultTag::Update,
         rows_affected: matched_rows.len() as u64,
-        returning_rows: extract_returning_rows(
-            table.columns.as_slice(),
-            &mutation.returning,
-            &updated_rows,
-        )?,
+        returning_rows,
     })
 }
 
@@ -254,14 +256,16 @@ fn execute_delete_inner<B: Backend>(
         .write_overlay_table(candidate_table)
         .map_err(refusal_from_backend_error)?;
 
+    let returning_rows = if mutation.returning.is_empty() {
+        Vec::new()
+    } else {
+        extract_returning_rows(table.columns.as_slice(), &mutation.returning, &deleted_rows)?
+    };
+
     Ok(MutationResult {
         tag: ResultTag::Delete,
         rows_affected: matched_rows.len() as u64,
-        returning_rows: extract_returning_rows(
-            table.columns.as_slice(),
-            &mutation.returning,
-            &deleted_rows,
-        )?,
+        returning_rows,
     })
 }
 
@@ -626,30 +630,21 @@ fn find_conflicting_row_id(
             .lookup_primary_key(&values)
             .map(|row| row.map(|row| row.id))
             .map_err(refusal_from_storage_error),
-        ConflictTarget::Columns(columns) => {
-            lookup_unique_conflict_row_id(visible_table, columns, &values)
+        ConflictTarget::Columns(columns)
+            if table.primary_key.as_ref().is_some_and(|key| {
+                columns_match_declared_set(key.columns.as_slice(), columns.as_slice())
+            }) =>
+        {
+            visible_table
+                .lookup_primary_key(&values)
+                .map(|row| row.map(|row| row.id))
+                .map_err(refusal_from_storage_error)
         }
-        ConflictTarget::NamedConstraint(name) => {
-            let columns = table
-                .unique_constraints
-                .iter()
-                .find(|constraint| constraint.name.as_deref() == Some(name.as_str()))
-                .map(|constraint| constraint.columns.clone())
-                .ok_or_else(|| {
-                    refusal(
-                        "unknown_conflict_target",
-                        format!(
-                            "constraint `{name}` is not a declared unique surface on `{}`",
-                            table.name
-                        ),
-                        "0A000",
-                        [
-                            (String::from("table"), table.name.clone()),
-                            (String::from("target"), name.clone()),
-                        ],
-                    )
-                })?;
-            lookup_unique_conflict_row_id(visible_table, columns.as_slice(), &values)
+        ConflictTarget::Columns(_) => {
+            lookup_unique_conflict_row_id(visible_table, target_columns.as_slice(), &values)
+        }
+        ConflictTarget::NamedConstraint(_) => {
+            lookup_unique_conflict_row_id(visible_table, target_columns.as_slice(), &values)
         }
     }
 }
@@ -700,7 +695,35 @@ fn conflict_target_columns(
                     [(String::from("table"), table.name.clone())],
                 )
             }),
-        ConflictTarget::Columns(columns) => Ok(columns.clone()),
+        ConflictTarget::Columns(columns) => {
+            if let Some(key) = table.primary_key.as_ref().filter(|key| {
+                columns_match_declared_set(key.columns.as_slice(), columns.as_slice())
+            }) {
+                return Ok(key.columns.clone());
+            }
+
+            table
+                .unique_constraints
+                .iter()
+                .find(|constraint| {
+                    columns_match_declared_set(constraint.columns.as_slice(), columns.as_slice())
+                })
+                .map(|constraint| constraint.columns.clone())
+                .ok_or_else(|| {
+                    refusal(
+                        "unknown_conflict_target",
+                        format!(
+                            "columns {:?} are not a declared conflict surface on `{}`",
+                            columns, table.name
+                        ),
+                        "0A000",
+                        [
+                            (String::from("table"), table.name.clone()),
+                            (String::from("target"), columns.join(",")),
+                        ],
+                    )
+                })
+        }
         ConflictTarget::NamedConstraint(name) => table
             .unique_constraints
             .iter()
@@ -721,6 +744,12 @@ fn conflict_target_columns(
                 )
             }),
     }
+}
+
+fn columns_match_declared_set(declared: &[String], candidate: &[String]) -> bool {
+    let declared_set = declared.iter().collect::<BTreeSet<_>>();
+    let candidate_set = candidate.iter().collect::<BTreeSet<_>>();
+    declared.len() == candidate.len() && declared_set.is_subset(&candidate_set)
 }
 
 fn lookup_row_values(

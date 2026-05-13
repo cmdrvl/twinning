@@ -17,8 +17,10 @@ pub struct TwinConfig {
     pub verify_path: Option<PathBuf>,
     pub declaration_path: Option<PathBuf>,
     pub run_command: Option<String>,
+    pub serve: bool,
     pub report_path: Option<PathBuf>,
     pub snapshot_path: Option<PathBuf>,
+    pub query_trace_path: Option<PathBuf>,
     pub restore_path: Option<PathBuf>,
     pub materialize_source_url: Option<String>,
     pub json: bool,
@@ -52,6 +54,10 @@ impl TwinConfig {
             return Err(Box::new(refusal::materialization_requires_schema()));
         }
 
+        if args.serve && args.run.is_some() {
+            return Err(Box::new(refusal::ambiguous_live_mode(engine)));
+        }
+
         Ok(Self {
             engine,
             host: args.host.clone(),
@@ -60,8 +66,10 @@ impl TwinConfig {
             verify_path: args.verify.clone(),
             declaration_path: args.declaration.clone(),
             run_command: args.run.clone(),
+            serve: args.serve,
             report_path: args.report.clone(),
             snapshot_path: args.snapshot.clone(),
+            query_trace_path: args.query_trace.clone(),
             restore_path: args.restore.clone(),
             materialize_source_url: args.materialize_source_url.clone(),
             json,
@@ -84,8 +92,10 @@ mod tests {
             host: "127.0.0.1".to_owned(),
             port: None,
             run: None,
+            serve: false,
             report: None,
             snapshot: None,
+            query_trace: None,
             restore: None,
             materialize_source_url: None,
         };

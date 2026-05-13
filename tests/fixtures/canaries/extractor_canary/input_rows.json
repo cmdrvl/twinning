@@ -51,6 +51,19 @@
       }
     },
     {
+      "name": "update_existing_by_predicate",
+      "shape": "update_by_predicate",
+      "expect_sqlstate": null,
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-002",
+        "external_key": "alpha-001",
+        "deal_name": "Alpha Predicate Update",
+        "status": "open",
+        "amount_text": "110.00"
+      }
+    },
+    {
       "name": "reject_missing_required_name",
       "shape": "insert_values",
       "expect_sqlstate": "23502",
@@ -101,6 +114,19 @@
         "status": "not-a-valid-status",
         "amount_text": "N/A"
       }
+    },
+    {
+      "name": "delete_existing_by_predicate",
+      "shape": "delete_by_predicate",
+      "expect_sqlstate": null,
+      "row": {
+        "tenant_id": "tenant-a",
+        "deal_id": "deal-002",
+        "external_key": "alpha-001",
+        "deal_name": "Alpha Predicate Update",
+        "status": "open",
+        "amount_text": "110.00"
+      }
     }
   ],
   "read_cases": [
@@ -126,6 +152,45 @@
       },
       "expected_deal_ids": [
         "deal-001"
+      ]
+    },
+    {
+      "name": "filter_status_in_list",
+      "shape": "select_in_list",
+      "predicate": {
+        "column": "status",
+        "operator": "in_list",
+        "values": ["open", "closed"]
+      },
+      "expected_deal_ids": [
+        "deal-002",
+        "deal-999"
+      ]
+    },
+    {
+      "name": "filter_amount_between",
+      "shape": "select_between",
+      "predicate": {
+        "column": "amount",
+        "operator": "between",
+        "values": ["100", "110"]
+      },
+      "expected_deal_ids": [
+        "deal-001",
+        "deal-002"
+      ]
+    },
+    {
+      "name": "group_by_tenant_count",
+      "shape": "aggregate_basic_group_by",
+      "predicate": {
+        "column": "tenant_id",
+        "operator": "group_by"
+      },
+      "expected_columns": ["tenant_id", "row_count"],
+      "expected_rows": [
+        ["tenant-a", "2"],
+        ["tenant-b", "1"]
       ]
     }
   ]

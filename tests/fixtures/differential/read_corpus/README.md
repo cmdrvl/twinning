@@ -13,10 +13,13 @@ Current scope:
 - declared `select_by_pk`
 - declared `select_filtered_scan`
 - declared `select_is_null`
-- explicit refusal classification for out-of-subset locking reads
-- explicit `skip` classification for read/query shapes that exist in the wider
-  controlled vocabulary but are not yet in the manifest-backed differential
-  subset
+- declared `select_in_list` for non-null literal lists
+- declared `select_between`
+- declared `aggregate_basic_group_by`
+- explicit refusal classification for IN-list NULL members, type-mismatched
+  BETWEEN, and out-of-subset locking reads
+- explicit refusal classification for empty IN lists, HAVING, windows, and
+  subqueries
 
 The live twin-vs-Postgres executor is still a later lane. This fixture contract
 exists now so read/query corpus drift is caught before that runner lands.

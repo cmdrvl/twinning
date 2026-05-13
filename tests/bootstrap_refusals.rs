@@ -160,6 +160,28 @@ fn invalid_bootstrap_source_combinations_fail_before_file_io() {
 }
 
 #[test]
+fn ambiguous_live_mode_refuses_run_and_serve_together() {
+    let dir = tempdir().expect("tempdir");
+    let schema_path = write_schema(dir.path());
+
+    let result = run_twinning(&[
+        "postgres",
+        "--schema",
+        schema_path.to_str().expect("schema path"),
+        "--run",
+        "true",
+        "--serve",
+        "--json",
+    ]);
+
+    assert_refusal(&result, "E_AMBIGUOUS_LIVE_MODE");
+    assert_eq!(
+        result.json["refusal"]["detail"]["disallowed_combination"],
+        serde_json::json!(["run", "serve"])
+    );
+}
+
+#[test]
 fn malformed_schema_and_verify_inputs_stay_process_level_refusals() {
     let dir = tempdir().expect("tempdir");
     let invalid_schema_path = dir.path().join("invalid.sql");

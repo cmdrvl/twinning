@@ -14,6 +14,7 @@ pub mod materialize;
 pub mod migration_proof;
 pub mod orchestration_manifest;
 pub mod protocol;
+pub mod query_trace;
 pub mod refusal;
 pub mod report;
 pub mod result;

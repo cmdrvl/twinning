@@ -137,10 +137,51 @@
         "catalog_declaration_hash": {
           "$ref": "#/$defs/sha256"
         },
+        "source_materialization": {
+          "$ref": "#/$defs/source_materialization"
+        },
         "evidence_identities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/evidence_identity"
+          }
+        }
+      }
+    },
+    "source_materialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_identity",
+        "method",
+        "table_count",
+        "row_count",
+        "tables"
+      ],
+      "properties": {
+        "source_identity": {
+          "$ref": "#/$defs/sha256"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "psql_copy_stdout",
+            "manifest_sql_load"
+          ]
+        },
+        "table_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tables": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
@@ -199,7 +240,8 @@
           "type": "string",
           "enum": [
             "pass",
-            "fail"
+            "fail",
+            "skip"
           ]
         },
         "left": {
@@ -260,7 +302,12 @@
         "right_snapshot_hash",
         "left_result_hash",
         "right_result_hash",
-        "sqlstate_parity"
+        "result_hashes_match",
+        "row_count_parity",
+        "command_tag_parity",
+        "sqlstate_parity",
+        "refusal_parity",
+        "ordering_policy_parity"
       ],
       "properties": {
         "version": {
@@ -291,8 +338,67 @@
         "right_result_hash": {
           "$ref": "#/$defs/sha256"
         },
+        "result_hashes_match": {
+          "type": "boolean"
+        },
+        "row_count_parity": {
+          "$ref": "#/$defs/optional_u64_parity"
+        },
+        "command_tag_parity": {
+          "$ref": "#/$defs/optional_string_parity"
+        },
         "sqlstate_parity": {
           "$ref": "#/$defs/sqlstate_parity"
+        },
+        "refusal_parity": {
+          "$ref": "#/$defs/optional_string_parity"
+        },
+        "ordering_policy_parity": {
+          "$ref": "#/$defs/optional_string_parity"
+        },
+        "skip_reason_code": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "optional_u64_parity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matches"
+      ],
+      "properties": {
+        "left": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "right": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matches": {
+          "type": "boolean"
+        }
+      }
+    },
+    "optional_string_parity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matches"
+      ],
+      "properties": {
+        "left": {
+          "type": "string",
+          "minLength": 1
+        },
+        "right": {
+          "type": "string",
+          "minLength": 1
+        },
+        "matches": {
+          "type": "boolean"
         }
       }
     },

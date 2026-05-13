@@ -208,7 +208,7 @@
         },
         "method": {
           "type": "string",
-          "const": "psql_copy_stdout"
+          "enum": ["psql_copy_stdout", "manifest_sql_load"]
         },
         "table_count": {
           "type": "integer",

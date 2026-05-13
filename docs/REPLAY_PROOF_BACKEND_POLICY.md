@@ -8,13 +8,15 @@ bounded-memory Postgres twin with explicit single-writer overlay semantics.
 
 ## Current State
 
-The implemented proof runner is restore-backed:
+The implemented proof runner is in-memory snapshot backed:
 
-- endpoints are materialized from `twinning.snapshot.v0` artifacts
+- endpoints are materialized from `twinning.snapshot.v0` artifacts or from a
+  schema plus deterministic manifest SQL load scripts
 - replay runs through the declared Postgres kernel subset
 - reports and emitted snapshots cover committed state only
-- schema bootstraps with load scripts are refused until live materialization is
-  implemented
+- replay reports emit deterministic summaries and hashes by default, not full
+  row payloads
+- unsupported load shapes are refused before proof artifacts are emitted
 
 No snapshot-backed, disk-backed, or delegated replay/proof backend is enabled
 yet.
@@ -23,7 +25,7 @@ yet.
 
 | Backend class | Status | Allowed use |
 |---|---:|---|
-| `in_memory_snapshot` | implemented | Current tournament, snapshot-pair proof, and restore-backed orchestration when committed state fits the memory budget |
+| `in_memory_snapshot` | implemented | Current tournament, snapshot-pair proof, restore-backed orchestration, and schema-plus-load orchestration when committed state fits the memory budget |
 | `snapshot_backed` | deferred | Large read-mostly replay sets if reset starts from a content-addressed snapshot and emits the same canonical committed-state surface |
 | `disk_backed` | deferred | Large Twin A or Twin B proof runs if SQLSTATEs, row encoding, ordering, constraints, and final snapshots are indistinguishable from the in-memory kernel |
 | `delegated_postgres` | deferred | Twin A read-only historical replay only, when the delegated source is Postgres-compatible for the declared replay subset and every observation remains deterministic |
@@ -71,5 +73,6 @@ slice proves:
 - explicit backend provenance in operator-facing artifacts
 - no new multi-writer or dirty-read semantics
 
-Until those gates exist, restore-backed orchestration is the production
-replay/proof boundary.
+Until those gates exist, in-memory snapshot orchestration, from either restored
+snapshots or schema-plus-load endpoints, is the production replay/proof
+boundary.

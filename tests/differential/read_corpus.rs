@@ -43,15 +43,20 @@ fn read_corpus() {
         }
         let committed_backend = committed_backend(&catalog, &backend);
 
-        match case.id.as_str() {
-            "select_by_pk" | "select_filtered_scan" | "select_is_null" => {
-                let TwinReadOutcome::Success { columns, rows } =
-                    execute_read_sql(&catalog, &committed_backend, case.id.as_str(), &case.sql)
-                else {
-                    panic!("read corpus case `{}` unexpectedly refused", case.id);
-                };
+        let expected_outcome = case.expected.outcome_class();
+        if expected_outcome == OutcomeClass::Skip {
+            assert_skip_classification(
+                expected_outcome,
+                format!("read corpus {} classification", case.id).as_str(),
+            );
+            continue;
+        }
+
+        let outcome = execute_read_sql(&catalog, &committed_backend, case.id.as_str(), &case.sql);
+        match (expected_outcome, outcome) {
+            (OutcomeClass::Success, TwinReadOutcome::Success { columns, rows }) => {
                 assert_outcome_class(
-                    case.expected.outcome_class(),
+                    expected_outcome,
                     OutcomeClass::Success,
                     format!("read corpus {} classification", case.id).as_str(),
                 );
@@ -63,29 +68,30 @@ fn read_corpus() {
                     format!("read corpus {} rowset", case.id).as_str(),
                 );
             }
-            "unsupported_select_for_update" => {
-                let TwinReadOutcome::Refusal { sqlstate } =
-                    execute_read_sql(&catalog, &committed_backend, case.id.as_str(), &case.sql)
-                else {
-                    panic!("read corpus case `{}` unexpectedly succeeded", case.id);
-                };
+            (OutcomeClass::Refusal, TwinReadOutcome::Refusal { sqlstate }) => {
                 assert_refusal_classification(
-                    case.expected.outcome_class(),
-                    "read corpus unsupported_select_for_update classification",
+                    expected_outcome,
+                    format!("read corpus {} classification", case.id).as_str(),
                 );
                 assert_sqlstate(
                     Some(sqlstate.as_str()),
-                    "0A000",
-                    "read corpus unsupported_select_for_update sqlstate",
+                    case.expected.sqlstate.as_deref().unwrap_or("<missing>"),
+                    format!("read corpus {} sqlstate", case.id).as_str(),
                 );
             }
-            "aggregate_count_skip" => {
-                assert_skip_classification(
-                    case.expected.outcome_class(),
-                    "read corpus aggregate_count_skip classification",
+            (OutcomeClass::Success, TwinReadOutcome::Refusal { sqlstate }) => {
+                panic!(
+                    "read corpus case `{}` unexpectedly refused with SQLSTATE `{sqlstate}`",
+                    case.id
                 );
             }
-            other => panic!("unexpected read corpus case `{other}`"),
+            (OutcomeClass::Refusal, TwinReadOutcome::Success { columns, rows }) => {
+                panic!(
+                    "read corpus case `{}` unexpectedly succeeded with columns {columns:?} and rows {rows:?}",
+                    case.id
+                );
+            }
+            (OutcomeClass::Skip, _) => unreachable!("skip cases continue before execution"),
         }
     }
 }
@@ -102,7 +108,7 @@ fn read_corpus_fixture_is_checked_in_and_wired() {
     assert!(runner.fixture().schema_path().exists());
     assert!(runner.fixture().corpus_path().exists());
     assert_eq!(corpus.version, "twinning.differential.read-corpus.v0");
-    assert_eq!(corpus.cases.len(), 5);
+    assert_eq!(corpus.cases.len(), 13);
 
     let case_ids = corpus
         .cases
@@ -115,8 +121,16 @@ fn read_corpus_fixture_is_checked_in_and_wired() {
             "select_by_pk",
             "select_filtered_scan",
             "select_is_null",
+            "select_in_list",
+            "unsupported_in_list_null_member",
+            "select_between",
+            "aggregate_basic_group_by",
+            "unsupported_between_type_mismatch",
+            "unsupported_empty_in_list",
             "unsupported_select_for_update",
-            "aggregate_count_skip",
+            "unsupported_having",
+            "unsupported_window",
+            "unsupported_subquery",
         ]
     );
 
@@ -181,21 +195,80 @@ fn read_corpus_fixture_is_checked_in_and_wired() {
                     "read corpus select_is_null rowset",
                 );
             }
-            "unsupported_select_for_update" => {
+            "select_in_list" => {
+                assert_outcome_class(
+                    case.expected.outcome_class(),
+                    OutcomeClass::Success,
+                    "read corpus select_in_list classification",
+                );
+                assert_rowset_eq(
+                    case.expected.columns(),
+                    case.expected.rows(),
+                    ["deal_id"],
+                    &[
+                        row([("deal_id", json!("deal-002"))]),
+                        row([("deal_id", json!("deal-003"))]),
+                    ],
+                    "read corpus select_in_list rowset",
+                );
+            }
+            "select_between" => {
+                assert_outcome_class(
+                    case.expected.outcome_class(),
+                    OutcomeClass::Success,
+                    "read corpus select_between classification",
+                );
+                assert_rowset_eq(
+                    case.expected.columns(),
+                    case.expected.rows(),
+                    ["deal_id", "amount"],
+                    &[
+                        row([("deal_id", json!("deal-001")), ("amount", json!(100))]),
+                        row([("deal_id", json!("deal-002")), ("amount", json!(125))]),
+                    ],
+                    "read corpus select_between rowset",
+                );
+            }
+            "aggregate_basic_group_by" => {
+                assert_outcome_class(
+                    case.expected.outcome_class(),
+                    OutcomeClass::Success,
+                    "read corpus aggregate_basic_group_by classification",
+                );
+                assert_rowset_eq(
+                    case.expected.columns(),
+                    case.expected.rows(),
+                    ["tenant_id", "row_count"],
+                    &[
+                        row([("tenant_id", json!("tenant-a")), ("row_count", json!(2))]),
+                        row([("tenant_id", json!("tenant-b")), ("row_count", json!(1))]),
+                    ],
+                    "read corpus aggregate_basic_group_by rowset",
+                );
+            }
+            "unsupported_between_type_mismatch"
+            | "unsupported_in_list_null_member"
+            | "unsupported_empty_in_list"
+            | "unsupported_select_for_update" => {
                 assert_refusal_classification(
                     case.expected.outcome_class(),
-                    "read corpus unsupported_select_for_update classification",
+                    format!("read corpus {} classification", case.id).as_str(),
                 );
                 assert_sqlstate(
                     case.expected.sqlstate.as_deref(),
                     "0A000",
-                    "read corpus unsupported_select_for_update sqlstate",
+                    format!("read corpus {} sqlstate", case.id).as_str(),
                 );
             }
-            "aggregate_count_skip" => {
-                assert_skip_classification(
+            "unsupported_having" | "unsupported_window" | "unsupported_subquery" => {
+                assert_refusal_classification(
                     case.expected.outcome_class(),
-                    "read corpus aggregate_count_skip classification",
+                    format!("read corpus {} classification", case.id).as_str(),
+                );
+                assert_sqlstate(
+                    case.expected.sqlstate.as_deref(),
+                    "0A000",
+                    format!("read corpus {} sqlstate", case.id).as_str(),
                 );
             }
             other => panic!("unexpected read corpus case `{other}`"),
