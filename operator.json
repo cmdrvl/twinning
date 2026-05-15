@@ -68,6 +68,12 @@
       "description": "Run one child command against the live pgwire shell, then freeze final artifacts"
     },
     {
+      "name": "serve",
+      "flag": "--serve",
+      "type": "flag",
+      "description": "Run a standalone interactive pgwire shell until SIGINT/SIGTERM, then freeze final artifacts"
+    },
+    {
       "name": "report",
       "flag": "--report",
       "type": "file_path",
@@ -78,6 +84,12 @@
       "flag": "--snapshot",
       "type": "file_path",
       "description": "Write a deterministic bootstrap snapshot"
+    },
+    {
+      "name": "query_trace",
+      "flag": "--query-trace",
+      "type": "file_path",
+      "description": "Write a redacted live query trace artifact for --run or --serve"
     },
     {
       "name": "restore",
@@ -149,7 +161,7 @@
   },
   "current_runtime_behavior": {
     "engine_support": {
-      "postgres": "bootstrap-ready plus run_once pgwire shell for the proven subset",
+      "postgres": "bootstrap-ready plus run_once and interactive pgwire shells for the proven subset",
       "mysql": "declared but refused",
       "oracle": "declared but refused"
     },
@@ -162,6 +174,7 @@
       "committed-state snapshot freeze/restore",
       "schema-declared live source materialization through psql COPY",
       "run_once pgwire listener for the declared Postgres subset",
+      "interactive pgwire listener for the declared Postgres subset",
       "prototype twin-pair proof report model, fixture harness, target evidence identities, and snapshot-pair CLI",
       "restore-backed twin-pair orchestration runner, manifest parser, and schema",
       "replay/proof backend policy for snapshot-backed, disk-backed, and delegated storage boundaries",
@@ -171,7 +184,7 @@
     "deferred_surface": [
       "snapshot-backed, disk-backed, and delegated replay/proof backend implementations behind policy gates",
       "schema-load materialization inside production twin-pair orchestration",
-      "long-lived general-purpose database server mode",
+      "broad general-purpose database server compatibility",
       "non-Postgres protocol families"
     ]
   },

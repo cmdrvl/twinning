@@ -426,6 +426,96 @@ fn upsert_preserves_omitted_non_target_columns_from_conflicting_row() {
 }
 
 #[test]
+fn upsert_matches_composite_conflict_targets_by_declared_column_set() {
+    for target_columns in [
+        vec![String::from("property_id"), String::from("period")],
+        vec![String::from("period"), String::from("property_id")],
+    ] {
+        let (catalog, mut backend) = financials_backend();
+        let result = execute_insert(
+            &catalog,
+            &mut backend,
+            &MutationOp {
+                session_id: String::from("session-composite"),
+                table: String::from("public.financials"),
+                kind: MutationKind::Upsert,
+                columns: vec![
+                    String::from("property_id"),
+                    String::from("period"),
+                    String::from("noi"),
+                ],
+                rows: vec![vec![
+                    ScalarValue::Text(String::from("property-1")),
+                    ScalarValue::Text(String::from("2026-01")),
+                    ScalarValue::Integer(125),
+                ]],
+                conflict_target: Some(ConflictTarget::Columns(target_columns)),
+                update_columns: vec![String::from("noi")],
+                predicate: None,
+                returning: Vec::new(),
+            },
+        );
+
+        let KernelResult::Mutation(result) = result else {
+            panic!("expected mutation result");
+        };
+        assert_eq!(result.tag, ResultTag::Upsert);
+        assert_eq!(result.rows_affected, 1);
+
+        let financials = backend
+            .visible_table("public.financials")
+            .expect("visible financials table");
+        assert_eq!(financials.row_count(), 1);
+        let row = financials.rows().next().expect("financials row");
+        assert_eq!(row.values[2], KernelValue::Integer(125));
+    }
+}
+
+#[test]
+fn upsert_matches_reordered_composite_primary_key_target() {
+    let (catalog, mut backend) = positions_backend();
+    let result = execute_insert(
+        &catalog,
+        &mut backend,
+        &MutationOp {
+            session_id: String::from("session-composite-pk"),
+            table: String::from("public.positions"),
+            kind: MutationKind::Upsert,
+            columns: vec![
+                String::from("account_id"),
+                String::from("period"),
+                String::from("amount"),
+            ],
+            rows: vec![vec![
+                ScalarValue::Text(String::from("account-1")),
+                ScalarValue::Text(String::from("2026-01")),
+                ScalarValue::Integer(75),
+            ]],
+            conflict_target: Some(ConflictTarget::Columns(vec![
+                String::from("period"),
+                String::from("account_id"),
+            ])),
+            update_columns: vec![String::from("amount")],
+            predicate: None,
+            returning: Vec::new(),
+        },
+    );
+
+    let KernelResult::Mutation(result) = result else {
+        panic!("expected mutation result");
+    };
+    assert_eq!(result.tag, ResultTag::Upsert);
+    assert_eq!(result.rows_affected, 1);
+
+    let positions = backend
+        .visible_table("public.positions")
+        .expect("visible positions table");
+    assert_eq!(positions.row_count(), 1);
+    let row = positions.rows().next().expect("positions row");
+    assert_eq!(row.values[2], KernelValue::Integer(75));
+}
+
+#[test]
 fn upsert_refuses_unknown_conflict_target_surface() {
     let (catalog, mut backend) = deals_backend();
 
@@ -517,4 +607,70 @@ fn deals_backend() -> (Catalog, BaseSnapshotBackend) {
 
     let backend = BaseSnapshotBackend::new([tenants, deals]).expect("backend should build");
     (catalog, backend)
+}
+
+fn financials_backend() -> (Catalog, BaseSnapshotBackend) {
+    let catalog = parse_postgres_schema(
+        r#"
+        CREATE TABLE public.financials (
+            property_id TEXT NOT NULL,
+            period TEXT NOT NULL,
+            noi INTEGER NOT NULL,
+            CONSTRAINT financials_property_period_key UNIQUE (property_id, period)
+        );
+        "#,
+    )
+    .expect("schema should parse");
+
+    let mut financials = TableStorage::new(
+        catalog
+            .table("public.financials")
+            .expect("financials table should exist"),
+    )
+    .expect("financials storage should build");
+    financials
+        .insert_row(vec![
+            KernelValue::Text(String::from("property-1")),
+            KernelValue::Text(String::from("2026-01")),
+            KernelValue::Integer(100),
+        ])
+        .expect("insert financials row");
+
+    (
+        catalog,
+        BaseSnapshotBackend::new([financials]).expect("build financials backend"),
+    )
+}
+
+fn positions_backend() -> (Catalog, BaseSnapshotBackend) {
+    let catalog = parse_postgres_schema(
+        r#"
+        CREATE TABLE public.positions (
+            account_id TEXT NOT NULL,
+            period TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            PRIMARY KEY (account_id, period)
+        );
+        "#,
+    )
+    .expect("schema should parse");
+
+    let mut positions = TableStorage::new(
+        catalog
+            .table("public.positions")
+            .expect("positions table should exist"),
+    )
+    .expect("positions storage should build");
+    positions
+        .insert_row(vec![
+            KernelValue::Text(String::from("account-1")),
+            KernelValue::Text(String::from("2026-01")),
+            KernelValue::Integer(50),
+        ])
+        .expect("insert position row");
+
+    (
+        catalog,
+        BaseSnapshotBackend::new([positions]).expect("build positions backend"),
+    )
 }

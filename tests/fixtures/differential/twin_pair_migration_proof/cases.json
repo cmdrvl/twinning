@@ -1,6 +1,7 @@
 {
   "version": "twinning.twin-pair-proof-fixture.v0",
   "proof_version": "twinning.twin-pair-proof.v0",
+  "replay_manifest_version": "twinning.twin-pair-replay-manifest.v0",
   "legacy_query_boundary": {
     "first_cut": "translated_postgres_compatible",
     "reference_protocol": "postgres",
@@ -84,7 +85,9 @@
     {
       "shape": "join",
       "policy": "skip",
-      "cases": [],
+      "cases": [
+        "join_replay_skip"
+      ],
       "reason": "join replay is not in the current translated Postgres-compatible proof fixture subset"
     },
     {
@@ -159,6 +162,21 @@
       },
       "count_column": "deal_id",
       "aggregate_alias": "deal_count"
+    },
+    {
+      "id": "join_shape_deferred",
+      "table": "public.deals",
+      "shape": "join",
+      "projection": [
+        "deal_id"
+      ],
+      "lookup_column": "tenant_id",
+      "lookup_value": {
+        "text": "tenant-b"
+      },
+      "policy": "skip",
+      "reason_code": "join_replay_deferred",
+      "reason": "join replay is outside the current translated Postgres-compatible proof fixture subset"
     }
   ],
   "cases": [
@@ -193,7 +211,7 @@
         "relations": "relations-diverged-right.json"
       },
       "expected_mismatches": [
-        "query_result"
+        "result_hash"
       ]
     },
     {
@@ -232,6 +250,22 @@
       "id": "aggregate_count_parity",
       "query_id": "tenant_b_deal_count",
       "expected_verdict": "pass",
+      "left": {
+        "endpoint_id": "legacy",
+        "role": "legacy-source",
+        "relations": "relations-pass-left.json"
+      },
+      "right": {
+        "endpoint_id": "candidate",
+        "role": "candidate-target",
+        "relations": "relations-pass-right.json"
+      },
+      "expected_mismatches": []
+    },
+    {
+      "id": "join_replay_skip",
+      "query_id": "join_shape_deferred",
+      "expected_verdict": "skip",
       "left": {
         "endpoint_id": "legacy",
         "role": "legacy-source",

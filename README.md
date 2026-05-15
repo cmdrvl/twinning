@@ -12,16 +12,16 @@ It answers one narrow question:
 
 Current status:
 
-- repository status: Phase 0 bootstrap + live `run_once` shell and source materialization for the proven Postgres subset
+- repository status: Phase 0 bootstrap + live `run_once` and `--serve` shells for the proven Postgres subset, plus source materialization
 - source of truth: [docs/PLAN_TWINNING.md](./docs/PLAN_TWINNING.md)
 - current repo contents: plan + execution graph + Rust bootstrap crate + report/snapshot schemas
 - first deferred direction after the v0 center: twin-pair migration proof
 
 The repo is still intentionally narrow and honest. Bootstrap mode remains the
-default artifact-validation lane, and live mode currently runs as a single
-`run_once` shell: twinning binds pgwire on `--host`/`--port`, runs one child
-command, then shuts down and freezes committed-state artifacts for the proven
-subset. It is not yet a long-lived general-purpose database server.
+default artifact-validation lane. Live mode is explicit: `--run` binds pgwire,
+runs one child command, then freezes committed-state artifacts; `--serve` binds
+pgwire until SIGINT/SIGTERM and then emits the same final artifacts. Both modes
+cover only the proven Postgres subset, not a general-purpose database server.
 
 ---
 
@@ -54,7 +54,7 @@ cargo run -- --json proof twin-pair \
   --queries tests/fixtures/differential/twin_pair_migration_proof/cases.json \
   --report out/twin-pair-proof.json
 
-# Run manifest-first twin-pair proof orchestration over restore-backed endpoints
+# Run manifest-first twin-pair proof orchestration over restore-backed or schema-load endpoints
 cargo run -- --json proof twin-pair orchestrate \
   --manifest proof-run.json \
   --report out/twin-pair-proof.json \
@@ -63,6 +63,19 @@ cargo run -- --json proof twin-pair orchestrate \
 # Run one child command against the live run_once shell
 # The child must connect to the configured --host/--port.
 cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
+
+# Run a standalone interactive twin until SIGINT/SIGTERM
+cargo run -- postgres --schema schema.sql \
+  --serve \
+  --report out/interactive.json \
+  --snapshot out/interactive.twin \
+  --json
+
+# Opt in to a redacted query trace artifact for a live run_once session
+cargo run -- postgres --schema schema.sql \
+  --run 'your-client-command' \
+  --query-trace out/query-trace.json \
+  --json
 
 # Print the operator manifest
 cargo run -- --describe
@@ -76,8 +89,8 @@ cargo run -- doctor --robot-triage
 The first materialization example shells out to `psql` and captures only the
 tables declared by the schema. Use it against a source account/database that is
 safe for deterministic reads; `TWINNING_PSQL_BIN` can point at a specific
-`psql` binary in test harnesses. The `--run` example uses the current live
-`run_once` shell and final artifact path.
+`psql` binary in test harnesses. The `--run` and `--serve` examples use the
+current live pgwire shell and final artifact path.
 
 ### Example Output
 
@@ -90,7 +103,7 @@ schema: schema.sql (4 tables, 28 columns, 3 indexes, hash sha256:a1b2c3...)
 storage: tournament=bounded-memory hot working set with per-twin overlay | replay=disk-backed, snapshot-backed, or delegated real-database backend
 verify: constraints.verify.json (12 loaded, hash sha256:d4e5f6...)
 snapshot: out/bootstrap.twin (sha256:7a8b9c...)
-next: Bootstrap mode validated the schema assets and deterministic artifact path. Use --run to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands.
+next: Bootstrap mode validated the schema assets and deterministic artifact path. Use --run or --serve to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands.
 ```
 
 **JSON mode** (`--json`):
@@ -144,7 +157,7 @@ next: Bootstrap mode validated the schema assets and deterministic artifact path
     "written_to": "out/bootstrap.twin",
     "snapshot_hash": "sha256:7a8b9c..."
   },
-  "next_step": "Bootstrap mode validated the schema assets and deterministic artifact path. Use --run to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands."
+  "next_step": "Bootstrap mode validated the schema assets and deterministic artifact path. Use --run or --serve to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands."
 }
 ```
 
@@ -168,6 +181,20 @@ operators at the final `run` metadata instead.
     "timed_out": false
   },
   "next_step": "Inspect the run metadata, fix the child failure or drift, and rerun the candidate against the twin."
+}
+```
+
+**Interactive mode** (`--serve`):
+
+```json
+{
+  "version": "twinning.v0",
+  "outcome": "READY",
+  "mode": "interactive",
+  "engine": "postgres",
+  "host": "127.0.0.1",
+  "port": 5432,
+  "next_step": "Interactive mode finalized committed-state artifacts after shutdown. Inspect the snapshot and embedded verify payload before reusing this twin state."
 }
 ```
 
@@ -226,28 +253,28 @@ Implemented now:
 - bootstrap report generation
 - bootstrap snapshot hashing and restore verification
 - pgwire listener + startup/session shell for the declared live subset
-- normalized read/mutation IR plus row-store execution for the canary-defined SQL shapes
+- normalized read/mutation IR plus row-store execution for the canary-defined SQL shapes, including point lookups, filtered scans, `IN`, `BETWEEN`, and basic `COUNT ... GROUP BY`
 - exact `information_schema.tables` public base-table introspection for the declared catalog
 - constraint enforcement and single-writer overlay behavior for committed-state snapshots
 - live `--run` child orchestration, run metadata capture, and final artifact emission
+- live `--serve` interactive listener with SIGINT/SIGTERM finalization
 - embedded verify execution over committed twin state
 - storage-boundary reporting for tournament mode vs replay/proof mode
 - explicit [replay/proof backend policy](./docs/REPLAY_PROOF_BACKEND_POLICY.md)
 - refusal envelopes for process-level failures and protocol-visible live subset boundaries
-- restore-backed twin-pair orchestration runner, manifest parser, and schema
+- restore-backed and schema-plus-load twin-pair orchestration runner, manifest parser, and schema
+- restore-backed twin-pair replay summaries with PASS / FAIL / SKIP cases and deterministic diff hashes
 
 Not implemented yet:
 
-- long-lived standalone server mode beyond `run_once`
 - SQL/session shapes outside the checked-in canary manifest
 - joined reads; the current manifest pins these as explicit protocol-visible refusals
 - concurrent writers or multi-writer semantics
 - non-Postgres runtime engines
-- replay/proof backends beyond the current tournament-mode live shell
-- schema-load materialization inside production twin-pair orchestration
+- heavier replay/proof backends beyond the in-memory snapshot-backed proof path
 
-This means the repo can validate bootstrap assets and run one child command
-against a live twin shell for the proven subset, but it still refuses broader
+This means the repo can validate bootstrap assets, run one child command, or
+serve interactive clients for the proven subset, but it still refuses broader
 live traffic instead of pretending to be a complete database.
 
 ---
@@ -268,9 +295,12 @@ Current options:
 - `--host <HOST>`: bind host (default `127.0.0.1`)
 - `--port <PORT>`: bind port (default `5432`)
 - `--run <COMMAND>`: run one child command against the live pgwire shell, then freeze final artifacts
+- `--serve`: run a standalone interactive pgwire shell until SIGINT/SIGTERM, then freeze final artifacts
 - `--report <FILE>`: write `twinning.v0`
 - `--snapshot <FILE>`: write `twinning.snapshot.v0`
+- `--query-trace <FILE>`: write a redacted live query trace artifact in `--run` or `--serve`
 - `--restore <FILE>`: restore a prior `twinning.snapshot.v0`
+- `--materialize-source-url <URL>`: capture declared source rows into the final report/snapshot
 - `--json`: emit machine-readable status
 - `--describe`: print `operator.json`
 
@@ -291,8 +321,8 @@ Exit codes:
 
 | Exit | Meaning |
 |------|---------|
-| `0` | clean bootstrap, or `run_once` completion without embedded verify failure |
-| `1` | `run_once` completed but embedded verify reported `FAIL` |
+| `0` | clean bootstrap, `run_once`, or `--serve` completion without embedded verify failure |
+| `1` | live finalization completed but embedded verify reported `FAIL` |
 | `2` | refusal / bootstrap failure / CLI error |
 
 Live-shape discipline:
@@ -369,8 +399,10 @@ Current artifact contracts:
 
 - `twinning.v0` — bootstrap or later runtime report
 - `twinning.snapshot.v0` — content-addressed snapshot
+- `twinning.query-trace.v0` — opt-in, redacted live query lineage artifact
 - `twinning.twin-pair-proof.v0` — interface-equivalence receipt for two Postgres twins
 - `twinning.twin-pair-replay-result.v0` — per-case replay diff inputs nested in twin-pair proof reports
+- `twinning.twin-pair-replay-manifest.v0` — declared Postgres-subset replay manifest for twin-pair proof queries
 - `twinning.twin-pair-orchestration-manifest.v0` — manifest-first twin-pair proof orchestration contract
 - `twinning.canary-manifest.v0` — normative compatibility manifest for the supported subset
 
@@ -382,7 +414,9 @@ Schemas:
 
 - [schemas/twinning.v0.schema.json](./schemas/twinning.v0.schema.json)
 - [schemas/twinning.snapshot.v0.schema.json](./schemas/twinning.snapshot.v0.schema.json)
+- [schemas/twinning.query-trace.v0.schema.json](./schemas/twinning.query-trace.v0.schema.json)
 - [schemas/twinning.twin-pair-proof.v0.schema.json](./schemas/twinning.twin-pair-proof.v0.schema.json)
+- [schemas/twinning.twin-pair-replay-manifest.v0.schema.json](./schemas/twinning.twin-pair-replay-manifest.v0.schema.json)
 - [schemas/twinning.canary-manifest.v0.schema.json](./schemas/twinning.canary-manifest.v0.schema.json)
 
 Snapshot contract highlights:
@@ -468,7 +502,7 @@ result=$(cargo run -- postgres --schema schema.sql --json 2>/dev/null)
 outcome=$(echo "$result" | jq -r '.outcome')
 
 case $outcome in
-  READY)    echo "Twin ready for bootstrap or live run_once mode" ;;
+  READY)    echo "Twin ready for bootstrap or live mode" ;;
   REFUSAL)  echo "Refused: $(echo "$result" | jq -r '.refusal.code')" ;;
 esac
 
@@ -508,10 +542,10 @@ Only the Postgres engine is implemented. MySQL and Oracle are declared in the CL
 ## Limitations (v0)
 
 - **Postgres only.** MySQL, Oracle, VSAM, IMS are deferred.
-- **Run-once shell only.** Live mode binds pgwire for one child command and then exits; there is no standalone long-lived server mode yet.
+- **Canary-defined live shells only.** `--run` and `--serve` bind pgwire for the manifest-backed subset; unsupported SQL and protocol shapes remain explicit live errors.
 - **Canary-defined subset.** Only SQL shapes named in the [canary manifest](./canaries/manifest.v0.json) will be supported.
 - **No concurrent writers.** The intended live model is single-writer admission with explicit contention refusal.
-- **Restore-backed proof orchestration only.** Schema-load materialization and heavier replay/proof backends remain deferred behind the [backend policy](./docs/REPLAY_PROOF_BACKEND_POLICY.md).
+- **In-memory snapshot-backed proof orchestration only.** Restore-backed and schema-plus-load proof endpoints are supported when the committed state fits the current memory budget; heavier replay/proof backends remain deferred behind the [backend policy](./docs/REPLAY_PROOF_BACKEND_POLICY.md).
 
 ---
 

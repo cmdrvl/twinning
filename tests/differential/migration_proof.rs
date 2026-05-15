@@ -21,9 +21,10 @@ use twinning::{
     },
     kernel::read::execute_read,
     migration_proof::{
-        TWIN_PAIR_PROOF_VERSION, TWIN_PAIR_REPLAY_RESULT_VERSION, TwinPairCaseVerdict,
-        TwinPairEndpointIdentity, TwinPairEvidenceIdentity, TwinPairEvidenceKind,
-        TwinPairObservation, TwinPairProofCase, TwinPairProofOutcome, TwinPairProofReport,
+        TWIN_PAIR_PROOF_VERSION, TWIN_PAIR_REPLAY_MANIFEST_VERSION,
+        TWIN_PAIR_REPLAY_RESULT_VERSION, TwinPairCaseVerdict, TwinPairEndpointIdentity,
+        TwinPairEvidenceIdentity, TwinPairEvidenceKind, TwinPairObservation, TwinPairProofCase,
+        TwinPairProofOutcome, TwinPairProofReport,
     },
     result::KernelResult,
     snapshot::{SnapshotRelations, TwinSnapshot, restore},
@@ -38,9 +39,14 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
 
     assert_eq!(fixture.version, FIXTURE_VERSION);
     assert_eq!(fixture.proof_version, TWIN_PAIR_PROOF_VERSION);
+    assert_eq!(
+        fixture.replay_manifest_version,
+        TWIN_PAIR_REPLAY_MANIFEST_VERSION
+    );
     assert!(schema_path().exists());
     assert!(declaration_path().exists());
     assert!(proof_schema_path().exists());
+    assert!(replay_manifest_schema_path().exists());
     assert_eq!(
         fixture.legacy_query_boundary.first_cut,
         "translated_postgres_compatible"
@@ -133,8 +139,12 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
         coverage_by_shape["aggregate_count"].cases,
         vec![String::from("aggregate_count_parity")]
     );
+    assert_eq!(coverage_by_shape["join"].policy, "skip");
+    assert_eq!(
+        coverage_by_shape["join"].cases,
+        vec![String::from("join_replay_skip")]
+    );
     for skipped_shape in [
-        "join",
         "introspection",
         "historical_query_family",
         "historical_query_family_refusal",
@@ -175,6 +185,7 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
             "outside_subset_lookup",
             "tenant_b_filtered_scan",
             "tenant_b_deal_count",
+            "join_shape_deferred",
         ])
     );
 
@@ -185,7 +196,11 @@ fn twin_pair_migration_proof_fixture_pins_contract_dependencies() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         expected_verdicts,
-        BTreeSet::from([TwinPairCaseVerdict::Pass, TwinPairCaseVerdict::Fail])
+        BTreeSet::from([
+            TwinPairCaseVerdict::Pass,
+            TwinPairCaseVerdict::Fail,
+            TwinPairCaseVerdict::Skip,
+        ])
     );
 }
 
@@ -197,6 +212,7 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     let refusal_case = fixture.case("outside_subset_sqlstate_parity");
     let filtered_case = fixture.case("filtered_scan_parity");
     let aggregate_case = fixture.case("aggregate_count_parity");
+    let skip_case = fixture.case("join_replay_skip");
 
     let pass_report = build_report(&fixture, pass_case);
     assert_eq!(pass_report.version, TWIN_PAIR_PROOF_VERSION);
@@ -217,6 +233,27 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
         pass_report.endpoints[1].snapshot_hash
     );
     assert!(pass_report.cases[0].replay_result.sqlstate_parity.matches);
+    assert!(pass_report.cases[0].replay_result.row_count_parity.matches);
+    assert_eq!(
+        pass_report.cases[0].replay_result.row_count_parity.left,
+        Some(1)
+    );
+    assert!(
+        pass_report.cases[0]
+            .replay_result
+            .command_tag_parity
+            .matches
+    );
+    assert_eq!(
+        pass_report.cases[0].replay_result.command_tag_parity.left,
+        Some(String::from("SELECT 1"))
+    );
+    assert!(
+        pass_report.cases[0]
+            .replay_result
+            .ordering_policy_parity
+            .matches
+    );
     assert!(
         pass_report.cases[0]
             .replay_result
@@ -258,7 +295,7 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     let fail_report = build_report(&fixture, fail_case);
     assert_eq!(fail_report.outcome, TwinPairProofOutcome::Fail);
     assert_eq!(fail_report.cases[0].verdict, TwinPairCaseVerdict::Fail);
-    assert_eq!(fail_report.cases[0].mismatches, vec!["query_result"]);
+    assert_eq!(fail_report.cases[0].mismatches, vec!["result_hash"]);
     assert_ne!(
         fail_report.cases[0].replay_result.left_result_hash,
         fail_report.cases[0].replay_result.right_result_hash
@@ -270,6 +307,13 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     assert_ne!(
         fail_report.cases[0].left.result,
         fail_report.cases[0].right.result
+    );
+    assert!(fail_report.cases[0].replay_result.row_count_parity.matches);
+    assert!(
+        fail_report.cases[0]
+            .replay_result
+            .command_tag_parity
+            .matches
     );
 
     let refusal_report = build_report(&fixture, refusal_case);
@@ -287,6 +331,12 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
         refusal_report.cases[0].left.result["code"],
         json!("unknown_table")
     );
+    assert!(
+        refusal_report.cases[0].left.result["refusal_hash"]
+            .as_str()
+            .expect("refusal hash")
+            .starts_with("sha256:")
+    );
     assert_eq!(
         refusal_report.cases[0].replay_result.sqlstate_parity.left,
         Some(String::from("42P01"))
@@ -301,13 +351,16 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
             .sqlstate_parity
             .matches
     );
+    assert!(refusal_report.cases[0].replay_result.refusal_parity.matches);
 
     let filtered_report = build_report(&fixture, filtered_case);
     assert_eq!(filtered_report.outcome, TwinPairProofOutcome::Pass);
+    assert_eq!(filtered_report.cases[0].left.result["row_count"], json!(1));
     assert_eq!(
-        filtered_report.cases[0].left.result["rows"][0][0],
-        json!({ "text": "deal-002" })
+        filtered_report.cases[0].left.result["command_tag"],
+        json!("SELECT 1")
     );
+    assert!(filtered_report.cases[0].left.result.get("rows").is_none());
 
     let aggregate_report = build_report(&fixture, aggregate_case);
     assert_eq!(aggregate_report.outcome, TwinPairProofOutcome::Pass);
@@ -315,9 +368,34 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
         aggregate_report.cases[0].left.result["columns"],
         json!(["deal_count"])
     );
+    assert_eq!(aggregate_report.cases[0].left.result["row_count"], json!(1));
+    assert!(aggregate_report.cases[0].left.result.get("rows").is_none());
+
+    let skip_report = build_report(&fixture, skip_case);
+    assert_eq!(skip_report.outcome, TwinPairProofOutcome::Pass);
+    assert_eq!(skip_report.cases[0].verdict, TwinPairCaseVerdict::Skip);
+    assert_eq!(skip_report.cases[0].left.result["outcome_class"], "skip");
     assert_eq!(
-        aggregate_report.cases[0].left.result["rows"][0][0],
-        json!({ "integer": 1 })
+        skip_report.cases[0].replay_result.skip_reason_code,
+        Some(String::from("join_replay_deferred"))
+    );
+    assert!(skip_report.cases[0].mismatches.is_empty());
+
+    let sqlstate_mismatch = TwinPairProofCase::compare(
+        String::from("sqlstate-mismatch"),
+        synthetic_refusal_observation("left", "query", "42P01", "unknown_table"),
+        synthetic_refusal_observation("right", "query", "0A000", "unsupported_query_shape"),
+    );
+    assert_eq!(sqlstate_mismatch.verdict, TwinPairCaseVerdict::Fail);
+    assert!(
+        sqlstate_mismatch
+            .mismatches
+            .contains(&String::from("sqlstate"))
+    );
+    assert!(
+        sqlstate_mismatch
+            .mismatches
+            .contains(&String::from("refusal_envelope"))
     );
 
     let workspace = tempdir().expect("proof report workspace");
@@ -340,7 +418,7 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     );
     assert_eq!(
         rendered_fail["cases"][0]["mismatches"],
-        json!(["query_result"])
+        json!(["result_hash"])
     );
     assert_eq!(
         rendered_fail["cases"][0]["replay_result"]["version"],
@@ -361,6 +439,10 @@ fn twin_pair_migration_proof_reports_pass_and_intentional_divergence() {
     assert_eq!(
         proof_schema["$defs"]["replay_result"]["properties"]["version"]["const"],
         TWIN_PAIR_REPLAY_RESULT_VERSION
+    );
+    assert_eq!(
+        proof_schema["$defs"]["case"]["properties"]["verdict"]["enum"],
+        json!(["pass", "fail", "skip"])
     );
 }
 
@@ -436,6 +518,7 @@ fn build_endpoint(
             snapshot_hash: snapshot.snapshot_hash,
             committed_state_hash,
             catalog_declaration_hash: Some(declaration.hash.clone()),
+            source_materialization: None,
             evidence_identities: if endpoint.role == "candidate-target" {
                 fixture.target_evidence.clone()
             } else {
@@ -453,24 +536,50 @@ fn observe_query(
     backend: &BaseSnapshotBackend,
     query: &ProofQuery,
 ) -> TwinPairObservation {
+    if query.policy == "skip" {
+        let result = json!({
+            "outcome_class": "skip",
+            "reason_code": query.reason_code.as_deref().unwrap_or("unspecified_skip"),
+            "reason": query.reason.as_deref().unwrap_or("not executed by replay policy"),
+            "ordering_policy": "not_applicable",
+        });
+        return TwinPairObservation {
+            endpoint_id: endpoint_id.to_owned(),
+            snapshot_hash: snapshot_hash.to_owned(),
+            query_id: query.id.clone(),
+            result_hash: sha256_json(&result),
+            result,
+        };
+    }
+
     let read_op = query
         .read_op()
         .expect("proof query shape should be declared in the replay fixture subset");
     let result = match execute_read(catalog, backend, &read_op) {
-        KernelResult::Read(read) => json!({
-            "outcome_class": "success",
-            "columns": read.columns,
-            "rows": read.rows,
-        }),
+        KernelResult::Read(read) => {
+            let row_count = read.rows.len() as u64;
+            let rows_value = serde_json::to_value(&read.rows).expect("serialize rows");
+            json!({
+                "outcome_class": "success",
+                "command_tag": format!("SELECT {row_count}"),
+                "columns": read.columns,
+                "row_count": row_count,
+                "rows_hash": sha256_json(&rows_value),
+                "ordering_policy": "kernel_deterministic_order",
+            })
+        }
         KernelResult::Refusal(refusal) => json!({
             "outcome_class": "refusal",
             "code": refusal.code,
             "sqlstate": refusal.sqlstate,
+            "refusal_hash": sha256_json(&serde_json::to_value(&refusal).expect("serialize refusal")),
             "detail": refusal.detail,
+            "ordering_policy": "not_applicable",
         }),
         other => json!({
             "outcome_class": "unexpected",
             "debug": format!("{other:?}"),
+            "ordering_policy": "not_applicable",
         }),
     };
 
@@ -478,6 +587,34 @@ fn observe_query(
         endpoint_id: endpoint_id.to_owned(),
         snapshot_hash: snapshot_hash.to_owned(),
         query_id: query.id.clone(),
+        result_hash: sha256_json(&result),
+        result,
+    }
+}
+
+fn synthetic_refusal_observation(
+    endpoint_id: &str,
+    query_id: &str,
+    sqlstate: &str,
+    code: &str,
+) -> TwinPairObservation {
+    let refusal = json!({
+        "code": code,
+        "sqlstate": sqlstate,
+        "detail": { "synthetic": "true" },
+    });
+    let result = json!({
+        "outcome_class": "refusal",
+        "code": code,
+        "sqlstate": sqlstate,
+        "refusal_hash": sha256_json(&refusal),
+        "detail": { "synthetic": "true" },
+        "ordering_policy": "not_applicable",
+    });
+    TwinPairObservation {
+        endpoint_id: endpoint_id.to_owned(),
+        snapshot_hash: format!("sha256:{:064x}", if endpoint_id == "left" { 1 } else { 2 }),
+        query_id: query_id.to_owned(),
         result_hash: sha256_json(&result),
         result,
     }
@@ -541,6 +678,12 @@ fn proof_schema_path() -> PathBuf {
         .join("twinning.twin-pair-proof.v0.schema.json")
 }
 
+fn replay_manifest_schema_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("schemas")
+        .join("twinning.twin-pair-replay-manifest.v0.schema.json")
+}
+
 struct BuiltEndpoint {
     identity: TwinPairEndpointIdentity,
     backend: BaseSnapshotBackend,
@@ -550,6 +693,7 @@ struct BuiltEndpoint {
 struct ProofFixture {
     version: String,
     proof_version: String,
+    replay_manifest_version: String,
     legacy_query_boundary: LegacyQueryBoundary,
     #[serde(default)]
     target_evidence: Vec<TwinPairEvidenceIdentity>,
@@ -613,6 +757,16 @@ struct ProofQuery {
     aggregate_alias: Option<String>,
     #[serde(default)]
     limit: Option<u64>,
+    #[serde(default = "default_replay_policy")]
+    policy: String,
+    #[serde(default)]
+    reason_code: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+fn default_replay_policy() -> String {
+    String::from("execute")
 }
 
 impl ProofQuery {

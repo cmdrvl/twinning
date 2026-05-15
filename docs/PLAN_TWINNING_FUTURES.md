@@ -169,17 +169,16 @@ twin-pair proof is:
 The remaining blocking gaps are:
 
 - **Live dual-endpoint orchestration runner gap.** The proposed manifest-first
-  operator surface above now has a restore-backed runner that names endpoints,
-  replays the manifest, emits report/snapshot artifacts, and prepares a bundle
-  handoff directory without sealing inside `twinning`. Schema bootstraps with
-  load scripts still refuse until live materialization can execute them without
-  widening the v0 Postgres subset.
+  operator surface above now has a restore-backed and schema-plus-load runner
+  that names endpoints, replays the manifest, emits report/snapshot artifacts,
+  and prepares a bundle handoff directory without sealing inside `twinning`.
+  Live production source capture for proof endpoints remains deferred.
 - **Replay corpus gap.** The current proof fixture covers translated
   Postgres-compatible point lookup, filtered scan, aggregate count, intentional
-  divergence, and SQLSTATE parity. Its replay matrix now explicitly records
-  PASS / FAIL / SKIP coverage, including SKIP accounting for join,
-  introspection, and historical-query families. Twin A still needs executable
-  fixtures for those broader replay families once the declared subset widens.
+  divergence, SQLSTATE parity, and an executable SKIP row for deferred join
+  replay. Its replay matrix records PASS / FAIL / SKIP coverage without full
+  row payloads. Twin A still needs executable fixtures for introspection and
+  historical-query families once the declared subset widens.
 - **Legacy-query breadth gap.** The first cut is explicitly translated
   Postgres-compatible replay. True Oracle/TNS fidelity is deferred to a later
   adapter. The remaining work is breadth: more translated replay families and

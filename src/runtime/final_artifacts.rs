@@ -30,6 +30,7 @@ pub struct FinalArtifactEmitter {
     port: u16,
     report_path: Option<PathBuf>,
     snapshot_path: Option<PathBuf>,
+    mode: Option<String>,
     emitted: Option<FinalizedArtifacts>,
 }
 
@@ -57,8 +58,14 @@ impl FinalArtifactEmitter {
             port,
             report_path,
             snapshot_path,
+            mode: None,
             emitted: None,
         }
+    }
+
+    pub fn with_mode(mut self, mode: impl Into<String>) -> Self {
+        self.mode = Some(mode.into());
+        self
     }
 
     pub fn emit_once(
@@ -76,6 +83,7 @@ impl FinalArtifactEmitter {
                 &frozen_snapshot,
             )?;
             let mut report = TwinReport::from_seed(TwinReportSeed {
+                mode: self.mode.as_deref(),
                 engine: self.engine.as_str(),
                 host: &self.host,
                 port: self.port,

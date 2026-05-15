@@ -15,7 +15,8 @@ Pinned subset boundaries:
 
 - session flow: startup/auth baseline, parameter status, `BEGIN`, `COMMIT`, and
   extended query parse/bind/execute/sync
-- write shapes: `insert_values`, `upsert_pk`, `upsert_unique`
+- write shapes: `insert_values`, `upsert_pk`, `upsert_unique`,
+  `update_by_predicate`, `delete_by_predicate`
 - read shapes: `select_filtered_scan`, `select_is_null`
 - required SQLSTATE coverage: `23502`, `23503`, `23505`, `23514`, `22P02`
 

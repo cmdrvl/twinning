@@ -10,6 +10,7 @@ Subtrees:
 - `differential/` — read and write parity corpora for real-Postgres comparison
 - `doctor_detectors/` — failure-mode fixtures backing the read-only doctor detector catalog
 - `snapshots/` — committed-row snapshot fixtures for deterministic freeze/restore checks
+- `storage/` — tournament-mode budget gate notes and storage-economics fixtures
 
 The current files are active contract inputs:
 
@@ -24,3 +25,5 @@ The current files are active contract inputs:
   any future doctor fix mode can be exposed
 - `snapshots/` pins canonical committed-state bytes independently of artifact
   metadata such as creation time and restore lineage
+- `storage/` documents which budget metrics are mandatory in CI and which can
+  be explicitly platform-skipped when RSS measurement is unavailable

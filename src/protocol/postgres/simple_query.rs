@@ -82,7 +82,7 @@ fn simple_statement_kind(sql: &str) -> Option<SimpleStatementKind> {
         .as_str()
     {
         "select" => Some(SimpleStatementKind::Read),
-        "insert" => Some(SimpleStatementKind::Mutation),
+        "delete" | "insert" | "update" => Some(SimpleStatementKind::Mutation),
         _ => None,
     }
 }

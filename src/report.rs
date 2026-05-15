@@ -145,6 +145,7 @@ pub struct RunReport {
 pub type RatioMap = BTreeMap<String, f64>;
 
 pub struct TwinReportSeed<'a> {
+    pub mode: Option<&'a str>,
     pub engine: &'a str,
     pub host: &'a str,
     pub port: u16,
@@ -163,11 +164,11 @@ pub struct TwinReportSeed<'a> {
 
 impl TwinReport {
     pub fn from_seed(seed: TwinReportSeed<'_>) -> Self {
-        let mode = if seed.run.is_some() {
+        let mode = seed.mode.unwrap_or(if seed.run.is_some() {
             "run_once"
         } else {
             "bootstrap"
-        };
+        });
         let outcome = report_outcome(seed.run.as_ref(), seed.verify.as_ref());
         let tables = seed
             .catalog
@@ -380,9 +381,14 @@ fn next_step(mode: &str) -> String {
             "Inspect the run metadata, fix the child failure or drift, and rerun the candidate against the twin.",
         );
     }
+    if mode == "interactive" {
+        return String::from(
+            "Interactive mode finalized committed-state artifacts after shutdown. Inspect the snapshot and embedded verify payload before reusing this twin state.",
+        );
+    }
 
     String::from(
-        "Bootstrap mode validated the schema assets and deterministic artifact path. Use --run to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands.",
+        "Bootstrap mode validated the schema assets and deterministic artifact path. Use --run or --serve to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands.",
     )
 }
 
@@ -599,6 +605,7 @@ mod tests {
         .expect("parse schema");
 
         let report = TwinReport::from_seed(TwinReportSeed {
+            mode: None,
             engine: "postgres",
             host: "127.0.0.1",
             port: 5432,

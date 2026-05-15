@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.twin-pair-replay-manifest.v0.schema.json",
+  "title": "twinning.twin-pair-replay-manifest.v0",
+  "description": "Declared Postgres-subset replay manifest for twin-pair proof queries.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["replay_manifest_version", "queries"],
+  "properties": {
+    "replay_manifest_version": {
+      "type": "string",
+      "const": "twinning.twin-pair-replay-manifest.v0"
+    },
+    "queries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/query"
+      }
+    }
+  },
+  "$defs": {
+    "scalar_value": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "null": { "type": "null" },
+        "boolean": { "type": "boolean" },
+        "integer": { "type": "integer" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "table",
+        "shape",
+        "projection",
+        "lookup_column",
+        "lookup_value"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "table": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shape": {
+          "type": "string",
+          "enum": ["point_lookup", "filtered_scan", "aggregate_count", "join"]
+        },
+        "projection": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "lookup_column": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lookup_value": {
+          "$ref": "#/$defs/scalar_value"
+        },
+        "count_column": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aggregate_alias": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "policy": {
+          "type": "string",
+          "enum": ["execute", "skip"],
+          "default": "execute"
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -90,13 +90,20 @@ fn proof_cli_writes_report_for_matching_snapshots() {
         "assess"
     );
     let cases = report["cases"].as_array().expect("cases");
-    assert_eq!(cases.len(), 4);
+    assert_eq!(cases.len(), 5);
 
     let sqlstate_case = cases
         .iter()
         .find(|case| case["case_id"] == "outside_subset_lookup")
         .expect("outside-subset SQLSTATE case");
     assert_eq!(sqlstate_case["left"]["result"]["sqlstate"], "42P01");
+    assert!(sqlstate_case["left"]["result"].get("rows").is_none());
+    assert!(
+        sqlstate_case["left"]["result"]["refusal_hash"]
+            .as_str()
+            .expect("refusal hash")
+            .starts_with("sha256:")
+    );
     assert_eq!(
         sqlstate_case["replay_result"]["sqlstate_parity"]["left"],
         "42P01"
@@ -107,6 +114,10 @@ fn proof_cli_writes_report_for_matching_snapshots() {
     );
     assert_eq!(
         sqlstate_case["replay_result"]["sqlstate_parity"]["matches"],
+        true
+    );
+    assert_eq!(
+        sqlstate_case["replay_result"]["refusal_parity"]["matches"],
         true
     );
     assert_eq!(
@@ -124,9 +135,14 @@ fn proof_cli_writes_report_for_matching_snapshots() {
         .iter()
         .find(|case| case["case_id"] == "tenant_b_filtered_scan")
         .expect("filtered-scan replay case");
-    assert_eq!(
-        filtered_case["left"]["result"]["rows"][0][0]["text"],
-        "deal-002"
+    assert_eq!(filtered_case["left"]["result"]["row_count"], 1);
+    assert_eq!(filtered_case["left"]["result"]["command_tag"], "SELECT 1");
+    assert!(filtered_case["left"]["result"].get("rows").is_none());
+    assert!(
+        filtered_case["left"]["result"]["rows_hash"]
+            .as_str()
+            .expect("rows hash")
+            .starts_with("sha256:")
     );
 
     let aggregate_case = cases
@@ -134,7 +150,48 @@ fn proof_cli_writes_report_for_matching_snapshots() {
         .find(|case| case["case_id"] == "tenant_b_deal_count")
         .expect("aggregate-count replay case");
     assert_eq!(aggregate_case["left"]["result"]["columns"][0], "deal_count");
-    assert_eq!(aggregate_case["left"]["result"]["rows"][0][0]["integer"], 1);
+    assert_eq!(aggregate_case["left"]["result"]["row_count"], 1);
+    assert!(aggregate_case["left"]["result"].get("rows").is_none());
+
+    let skip_case = cases
+        .iter()
+        .find(|case| case["case_id"] == "join_shape_deferred")
+        .expect("skip replay case");
+    assert_eq!(skip_case["verdict"], "skip");
+    assert_eq!(skip_case["left"]["result"]["outcome_class"], "skip");
+    assert_eq!(
+        skip_case["replay_result"]["skip_reason_code"],
+        "join_replay_deferred"
+    );
+    assert_eq!(
+        skip_case["replay_result"]["ordering_policy_parity"]["matches"],
+        true
+    );
+
+    let second_output = Command::new(twinning_bin())
+        .arg("--json")
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("--left")
+        .arg(&left_snapshot)
+        .arg("--right")
+        .arg(&right_snapshot)
+        .arg("--queries")
+        .arg(fixture_dir().join("cases.json"))
+        .output()
+        .expect("rerun proof cli");
+    let second_stdout = String::from_utf8(second_output.stdout).expect("stdout utf-8");
+    let second_stderr = String::from_utf8(second_output.stderr).expect("stderr utf-8");
+    assert!(
+        second_output.status.success(),
+        "proof CLI rerun failed: stdout={second_stdout}; stderr={second_stderr}"
+    );
+    assert!(
+        second_stderr.is_empty(),
+        "unexpected stderr: {second_stderr}"
+    );
+    let second_report: Value = serde_json::from_str(&second_stdout).expect("parse rerun report");
+    assert_eq!(second_report, report);
 }
 
 #[test]
@@ -248,7 +305,7 @@ fn proof_cli_orchestrates_restore_manifest_and_writes_outputs() {
 }
 
 #[test]
-fn proof_cli_orchestrate_refuses_schema_load_bootstrap_until_materialization_exists() {
+fn proof_cli_orchestrates_schema_load_materialized_endpoint_and_keeps_hashes_stable() {
     let workspace = tempdir().expect("workspace");
     let left_input = workspace.path().join("input-left.twin");
     let left_output = workspace.path().join("out").join("legacy.twin");
@@ -270,7 +327,123 @@ fn proof_cli_orchestrate_refuses_schema_load_bootstrap_until_materialization_exi
         "kind": "schema",
         "schema": schema_path().display().to_string(),
         "declaration": declaration_path().display().to_string(),
-        "load": ["load/candidate.sql"]
+        "load": [load_path().display().to_string()]
+    });
+    write_json(&manifest_path, &manifest);
+
+    let first_output = Command::new(twinning_bin())
+        .arg("--json")
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("orchestrate")
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .output()
+        .expect("run proof orchestrator");
+    let first_stdout = String::from_utf8(first_output.stdout).expect("stdout utf-8");
+    let first_stderr = String::from_utf8(first_output.stderr).expect("stderr utf-8");
+    assert!(
+        first_output.status.success(),
+        "schema-load proof orchestrator failed: stdout={first_stdout}; stderr={first_stderr}"
+    );
+    assert!(first_stderr.is_empty(), "unexpected stderr: {first_stderr}");
+
+    let first_report: Value = serde_json::from_str(&first_stdout).expect("parse first report");
+    assert_eq!(first_report["outcome"], "PASS");
+    assert_eq!(first_report["endpoints"][0]["endpoint_id"], "legacy");
+    assert_eq!(first_report["endpoints"][1]["endpoint_id"], "candidate");
+    assert_eq!(
+        first_report["endpoints"][1]["source_materialization"]["method"],
+        "manifest_sql_load"
+    );
+    assert_eq!(
+        first_report["endpoints"][1]["source_materialization"]["row_count"],
+        4
+    );
+    assert_eq!(
+        first_report["endpoints"][1]["source_materialization"]["tables"]["public.deals"],
+        2
+    );
+    assert!(
+        first_report["endpoints"][1]["source_materialization"]["source_identity"]
+            .as_str()
+            .expect("source identity")
+            .starts_with("sha256:")
+    );
+    assert!(
+        first_report["endpoints"][0]
+            .get("source_materialization")
+            .is_none()
+    );
+
+    let right_snapshot: Value =
+        serde_json::from_str(&fs::read_to_string(&right_output).expect("read right output"))
+            .expect("parse right output");
+    assert_eq!(
+        right_snapshot["source_materialization"],
+        first_report["endpoints"][1]["source_materialization"]
+    );
+    assert_eq!(right_snapshot["table_rows"]["public.deals"], 2);
+    assert_eq!(right_snapshot["table_rows"]["public.tenants"], 2);
+    assert_eq!(
+        right_snapshot["snapshot_hash"],
+        first_report["endpoints"][1]["snapshot_hash"]
+    );
+
+    let second_output = Command::new(twinning_bin())
+        .arg("--json")
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("orchestrate")
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .output()
+        .expect("rerun proof orchestrator");
+    let second_stdout = String::from_utf8(second_output.stdout).expect("stdout utf-8");
+    let second_stderr = String::from_utf8(second_output.stderr).expect("stderr utf-8");
+    assert!(
+        second_output.status.success(),
+        "schema-load proof orchestrator rerun failed: stdout={second_stdout}; stderr={second_stderr}"
+    );
+    assert!(
+        second_stderr.is_empty(),
+        "unexpected stderr: {second_stderr}"
+    );
+    let second_report: Value = serde_json::from_str(&second_stdout).expect("parse second report");
+    assert_eq!(
+        second_report["endpoints"][1]["snapshot_hash"],
+        first_report["endpoints"][1]["snapshot_hash"],
+        "same schema and load data must produce the same materialized endpoint snapshot hash"
+    );
+    assert_eq!(second_report, first_report);
+}
+
+#[test]
+fn proof_cli_orchestrate_refuses_unsupported_schema_load_statement() {
+    let workspace = tempdir().expect("workspace");
+    let left_input = workspace.path().join("input-left.twin");
+    let left_output = workspace.path().join("out").join("legacy.twin");
+    let right_output = workspace.path().join("out").join("candidate.twin");
+    let report_path = workspace.path().join("out").join("proof.json");
+    let bundle_dir = workspace.path().join("bundle");
+    let manifest_path = workspace.path().join("manifest.json");
+    let unsupported_load = workspace.path().join("unsupported-load.sql");
+    write_fixture_snapshot(&left_input, "relations-pass-left.json", true);
+    fs::write(&unsupported_load, "SELECT * FROM public.deals;\n").expect("write bad load");
+
+    let mut manifest = restore_orchestration_manifest(
+        &left_input,
+        &workspace.path().join("unused-right.twin"),
+        &report_path,
+        &left_output,
+        &right_output,
+        &bundle_dir,
+    );
+    manifest["right_endpoint"]["bootstrap"] = json!({
+        "kind": "schema",
+        "schema": schema_path().display().to_string(),
+        "declaration": declaration_path().display().to_string(),
+        "load": [unsupported_load.display().to_string()]
     });
     write_json(&manifest_path, &manifest);
 
@@ -283,7 +456,6 @@ fn proof_cli_orchestrate_refuses_schema_load_bootstrap_until_materialization_exi
         .arg(&manifest_path)
         .output()
         .expect("run proof orchestrator");
-
     let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr utf-8");
     assert_eq!(output.status.code(), Some(2), "stdout={stdout}");
@@ -292,11 +464,11 @@ fn proof_cli_orchestrate_refuses_schema_load_bootstrap_until_materialization_exi
     let refusal: Value = serde_json::from_str(&stdout).expect("parse refusal");
     assert_eq!(refusal["outcome"], "REFUSAL");
     assert_eq!(refusal["refusal"]["code"], "E_TWIN_PAIR_PROOF");
+    assert_eq!(refusal["refusal"]["detail"]["endpoint_id"], "candidate");
     assert_eq!(
         refusal["refusal"]["detail"]["policy"],
-        "restore_existing_snapshot_or_empty_schema_only"
+        "manifest_sql_load_supports_declared_mutations_only"
     );
-    assert_eq!(refusal["refusal"]["detail"]["endpoint_id"], "candidate");
     assert!(!report_path.exists());
     assert!(!right_output.exists());
 }
@@ -423,6 +595,16 @@ fn schema_path() -> PathBuf {
 
 fn declaration_path() -> PathBuf {
     fixture_dir().join("declaration.json")
+}
+
+fn load_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("differential")
+        .join("twin_pair_orchestration")
+        .join("load")
+        .join("candidate.sql")
 }
 
 fn fixture_dir() -> PathBuf {

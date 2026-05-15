@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.query-trace.v0.schema.json",
+  "title": "twinning.query-trace.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "policy", "events"],
+  "properties": {
+    "version": {
+      "const": "twinning.query-trace.v0"
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sql_text", "bind_values"],
+      "properties": {
+        "sql_text": {
+          "const": "redacted_hash_only"
+        },
+        "bind_values": {
+          "const": "redacted_hash_or_null"
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    }
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "session_id",
+        "protocol",
+        "statement_kind",
+        "transaction_before",
+        "transaction_after",
+        "result"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocol": {
+          "type": "string",
+          "enum": ["simple_query", "extended_query"]
+        },
+        "statement_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sql_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "operation_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "binds": {
+          "$ref": "#/$defs/binds"
+        },
+        "transaction_before": {
+          "$ref": "#/$defs/transaction_status"
+        },
+        "transaction_after": {
+          "$ref": "#/$defs/transaction_status"
+        },
+        "result": {
+          "$ref": "#/$defs/result"
+        }
+      }
+    },
+    "binds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "values"],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bind_value"
+          }
+        }
+      }
+    },
+    "bind_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "policy"],
+      "properties": {
+        "position": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "policy": {
+          "type": "string",
+          "enum": ["sha256", "null"]
+        },
+        "hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "returned_rows"],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["success", "refusal"]
+        },
+        "tag": {
+          "type": "string"
+        },
+        "rows_affected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "returned_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sqlstate": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5
+        },
+        "refusal_code": {
+          "type": "string"
+        }
+      }
+    },
+    "transaction_status": {
+      "type": "string",
+      "enum": ["idle", "in_transaction", "failed_transaction"]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

@@ -9,7 +9,7 @@ use std::{
 use serde_json::Value;
 use tempfile::tempdir;
 
-const NEXT_STEP: &str = "Bootstrap mode validated the schema assets and deterministic artifact path. Use --run to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands.";
+const NEXT_STEP: &str = "Bootstrap mode validated the schema assets and deterministic artifact path. Use --run or --serve to exercise the declared live Postgres subset, or stay in bootstrap mode while broader protocol and SQL coverage lands.";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

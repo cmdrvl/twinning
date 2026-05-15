@@ -11,6 +11,7 @@ use crate::{
     kernel::storage::TableStorage,
     materialize,
     protocol::postgres::listener::{PgwireListener, SharedPgwireState, ShutdownHook},
+    query_trace::{SharedQueryTrace, write_query_trace},
     refusal,
     refusal::RefusalResult,
     report::{
@@ -68,7 +69,7 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
         return Err(Box::new(refusal::engine_unimplemented(config.engine)));
     }
 
-    let live_mode = config.run_command.is_some();
+    let live_mode = config.run_command.is_some() || config.serve;
 
     let mut state = if let Some(restore_path) = &config.restore_path {
         restore_state(config, restore_path, !live_mode, !live_mode)?
@@ -96,8 +97,12 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
         state.materialized_relations = Some(capture.relations);
     }
 
-    if live_mode {
+    if config.run_command.is_some() {
         return execute_run_mode(config, &state);
+    }
+
+    if config.serve {
+        return execute_serve_mode(config, &state);
     }
 
     let mut emitter = FinalArtifactEmitter::from_config(config);
@@ -142,10 +147,7 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
         })?
         .port();
 
-    let initial_committed_tables = committed_tables_for_live_run(config, state)?;
-    let live_state =
-        SharedPgwireState::from_committed_tables(state.catalog.clone(), initial_committed_tables)
-            .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
+    let (live_state, query_trace) = live_pgwire_state(config, state)?;
     let final_live_state = live_state.clone();
 
     let server_shutdown = shutdown.clone();
@@ -177,6 +179,8 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
             error.to_string(),
         ))
     })?;
+
+    write_live_query_trace(config, query_trace.as_ref())?;
 
     let run = RunReport {
         command: child_outcome.command,
@@ -210,6 +214,105 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
         exit_code: execution_exit_domain(Some(&run), verify_failed),
         stdout,
     })
+}
+
+fn execute_serve_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResult<Execution> {
+    let shutdown = ShutdownHook::install().map_err(|error| {
+        Box::new(refusal::runtime_io(
+            "shutdown_hook_install",
+            error.to_string(),
+        ))
+    })?;
+    let listener = PgwireListener::bind(&config.host, config.port).map_err(|error| {
+        Box::new(refusal::runtime_io(
+            "listener_bind",
+            format!("{}:{}: {error}", config.host, config.port),
+        ))
+    })?;
+    let bound_port = listener
+        .local_addr()
+        .map_err(|error| {
+            Box::new(refusal::runtime_io(
+                "listener_local_addr",
+                error.to_string(),
+            ))
+        })?
+        .port();
+
+    let (live_state, query_trace) = live_pgwire_state(config, state)?;
+    let final_live_state = live_state.clone();
+    listener
+        .accept_until_shutdown_with_state("interactive", &shutdown, live_state)
+        .map_err(|error| {
+            Box::new(refusal::runtime_io(
+                "listener_accept_loop",
+                error.to_string(),
+            ))
+        })?;
+
+    write_live_query_trace(config, query_trace.as_ref())?;
+
+    let committed_tables = final_live_state
+        .committed_tables()
+        .map_err(|error| Box::new(refusal::runtime_io("live_state_freeze", error.to_string())))?;
+    let mut emitter = FinalArtifactEmitter::new(
+        config.engine,
+        config.host.clone(),
+        bound_port,
+        config.report_path.clone(),
+        config.snapshot_path.clone(),
+    )
+    .with_mode("interactive");
+    let finalized = emitter.emit_once(state, Some(committed_tables), None)?;
+    let verify_failed = verify_failed(finalized.report.verify.as_ref());
+
+    let stdout = if config.json {
+        finalized
+            .report
+            .render_json()
+            .map_err(|error| Box::new(refusal::serialization(error.to_string())))?
+    } else {
+        finalized.report.render_human()
+    };
+
+    Ok(Execution {
+        exit_code: execution_exit_domain(None, verify_failed),
+        stdout,
+    })
+}
+
+fn live_pgwire_state(
+    config: &TwinConfig,
+    state: &BootstrapState,
+) -> RefusalResult<(SharedPgwireState, Option<SharedQueryTrace>)> {
+    let initial_committed_tables = committed_tables_for_live_run(config, state)?;
+    let query_trace = config
+        .query_trace_path
+        .as_ref()
+        .map(|_| SharedQueryTrace::new());
+    let mut live_state =
+        SharedPgwireState::from_committed_tables(state.catalog.clone(), initial_committed_tables)
+            .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
+    if let Some(query_trace) = query_trace.clone() {
+        live_state = live_state.with_query_trace(query_trace);
+    }
+
+    Ok((live_state, query_trace))
+}
+
+fn write_live_query_trace(
+    config: &TwinConfig,
+    query_trace: Option<&SharedQueryTrace>,
+) -> RefusalResult<()> {
+    if let (Some(path), Some(query_trace)) = (&config.query_trace_path, query_trace) {
+        let artifact = query_trace.artifact().map_err(|error| {
+            Box::new(refusal::runtime_io("query_trace_freeze", error.to_string()))
+        })?;
+        write_query_trace(path, &artifact)
+            .map_err(|error| Box::new(refusal::io_write(path, &error)))?;
+    }
+
+    Ok(())
 }
 
 fn load_state_from_schema(
@@ -347,6 +450,9 @@ fn preflight_output_targets(config: &TwinConfig) -> RefusalResult<()> {
     }
     if let Some(snapshot_path) = &config.snapshot_path {
         preflight_output_target(snapshot_path)?;
+    }
+    if let Some(query_trace_path) = &config.query_trace_path {
+        preflight_output_target(query_trace_path)?;
     }
     Ok(())
 }
@@ -574,8 +680,10 @@ mod tests {
             verify_path: Some(verify_path.clone()),
             declaration_path: None,
             run_command: None,
+            serve: false,
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -711,8 +819,10 @@ sock.close()
                 "python3 \"{}\" 127.0.0.1 {port}",
                 child_path.display()
             )),
+            serve: false,
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -765,8 +875,10 @@ sock.close()
             verify_path: Some(verify_path),
             declaration_path: None,
             run_command: Some("python extract.py".to_owned()),
+            serve: false,
             report_path: Some(invalid_report_path),
             snapshot_path: None,
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -811,8 +923,10 @@ sock.close()
             verify_path: Some(verify_path),
             declaration_path: None,
             run_command: Some("python extract.py".to_owned()),
+            serve: false,
             report_path: None,
             snapshot_path: None,
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -841,8 +955,10 @@ sock.close()
             verify_path: None,
             declaration_path: None,
             run_command: None,
+            serve: false,
             report_path: Some(report_path),
             snapshot_path: Some(snapshot_path.clone()),
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -882,8 +998,10 @@ sock.close()
             verify_path: Some(malformed_verify_path),
             declaration_path: None,
             run_command: None,
+            serve: false,
             report_path: Some(invalid_report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -904,8 +1022,10 @@ sock.close()
             verify_path: None,
             declaration_path: None,
             run_command: None,
+            serve: false,
             report_path: Some(invalid_report_path),
             snapshot_path: Some(snapshot_path.clone()),
+            query_trace_path: None,
             restore_path: Some(malformed_snapshot_path),
             materialize_source_url: None,
             json: true,
@@ -942,8 +1062,10 @@ sock.close()
             verify_path: None,
             declaration_path: None,
             run_command: None,
+            serve: false,
             report_path: Some(invalid_report_path),
             snapshot_path: Some(blocked_snapshot_path.clone()),
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -971,8 +1093,10 @@ sock.close()
             verify_path: None,
             declaration_path: None,
             run_command: None,
+            serve: false,
             report_path: Some(report_output_path.clone()),
             snapshot_path: Some(invalid_snapshot_path),
+            query_trace_path: None,
             restore_path: None,
             materialize_source_url: None,
             json: true,
@@ -1086,8 +1210,10 @@ sock.close()
             verify_path: Some(verify_path),
             declaration_path: None,
             run_command: Some(String::from("true")),
+            serve: false,
             report_path: None,
             snapshot_path: None,
+            query_trace_path: None,
             restore_path: Some(snapshot_path),
             materialize_source_url: None,
             json: true,

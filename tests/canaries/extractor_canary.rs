@@ -120,14 +120,14 @@ fn extractor_canary_fixture_is_pinned_and_manifest_aligned() {
             .as_array()
             .expect("mutation_cases array")
             .len(),
-        7
+        9
     );
     assert_eq!(
         input_corpus["read_cases"]
             .as_array()
             .expect("read_cases array")
             .len(),
-        2
+        5
     );
 }
 
@@ -205,13 +205,17 @@ fn extractor_canary() -> Result<(), String> {
     for case_name in &extractor_output.mutation_case_names {
         let case = input_corpus.mutation_case(case_name)?;
         match case.name.as_str() {
-            "insert_seed_deal" | "upsert_existing_pk" | "upsert_existing_unique" => {
+            "insert_seed_deal"
+            | "upsert_existing_pk"
+            | "upsert_existing_unique"
+            | "update_existing_by_predicate"
+            | "delete_existing_by_predicate" => {
                 let execution = execute_statement(
                     &mut mutation_context,
                     case.name.as_str(),
                     protocol_mutation_sql_for_shape(case.shape.as_str())?,
-                    protocol_mutation_param_types(),
-                    protocol_row_params(&case.row),
+                    protocol_mutation_param_types(case.shape.as_str())?,
+                    protocol_row_params(case.shape.as_str(), &case.row)?,
                 );
                 let first_frame = execution.frames.first().expect("command complete");
                 assert_eq!(
@@ -225,8 +229,8 @@ fn extractor_canary() -> Result<(), String> {
                 );
                 assert_eq!(
                     decode_command_complete(first_frame),
-                    "INSERT 0 1",
-                    "extractor_canary success case `{}` should stay in the declared INSERT/UPSERT lane",
+                    expected_mutation_command_tag(case.shape.as_str())?,
+                    "extractor_canary success case `{}` should stay in its declared mutation lane",
                     case.name
                 );
                 assert_eq!(
@@ -240,8 +244,8 @@ fn extractor_canary() -> Result<(), String> {
                     &mut mutation_context,
                     case.name.as_str(),
                     protocol_mutation_sql_for_shape(case.shape.as_str())?,
-                    protocol_mutation_param_types(),
-                    protocol_row_params(&case.row),
+                    protocol_mutation_param_types(case.shape.as_str())?,
+                    protocol_row_params(case.shape.as_str(), &case.row)?,
                 );
                 let expected = case
                     .expect_sqlstate
@@ -329,12 +333,8 @@ fn extractor_canary() -> Result<(), String> {
         .collect::<Vec<_>>();
     assert_eq!(
         visible_rows,
-        vec![vec![
-            KernelValue::Text(String::from("deal-002")),
-            KernelValue::Text(String::from("alpha-001")),
-            KernelValue::Text(String::from("Alpha Unique Rewrite")),
-        ]],
-        "extractor_canary successful write lane drifted from the pinned UPSERT subset"
+        Vec::<Vec<KernelValue>>::new(),
+        "extractor_canary successful write lane drifted from the pinned mutation subset"
     );
 
     assert_required_sqlstates(
@@ -367,24 +367,22 @@ fn extractor_canary() -> Result<(), String> {
             params,
         );
 
+        let expected_columns = case.expected_columns()?;
         assert_eq!(
             decode_row_description(execution.frames.as_slice()),
-            vec![String::from("deal_id")],
+            expected_columns,
             "extractor_canary read case `{}` projected columns drifted from the declared subset",
             case.name
         );
         assert_eq!(
             decode_data_rows(execution.frames.as_slice()),
-            case.expected_deal_ids
-                .iter()
-                .map(|deal_id| vec![Some(deal_id.clone())])
-                .collect::<Vec<_>>(),
+            case.expected_rows()?,
             "extractor_canary read case `{}` rowset drifted from the pinned input corpus",
             case.name
         );
         assert_eq!(
             decode_command_complete(last_command_complete(execution.frames.as_slice())),
-            format!("SELECT {}", case.expected_deal_ids.len()),
+            format!("SELECT {}", case.expected_rows()?.len()),
             "extractor_canary read case `{}` command tag drifted from the declared row count",
             case.name
         );
@@ -474,7 +472,41 @@ struct ReadCase {
     name: String,
     shape: String,
     predicate: ReadPredicate,
-    expected_deal_ids: Vec<String>,
+    expected_deal_ids: Option<Vec<String>>,
+    expected_columns: Option<Vec<String>>,
+    expected_rows: Option<Vec<Vec<String>>>,
+}
+
+impl ReadCase {
+    fn expected_columns(&self) -> Result<Vec<String>, String> {
+        if let Some(columns) = &self.expected_columns {
+            return Ok(columns.clone());
+        }
+
+        self.expected_deal_ids
+            .as_ref()
+            .map(|_| vec![String::from("deal_id")])
+            .ok_or_else(|| format!("read case `{}` did not declare expected columns", self.name))
+    }
+
+    fn expected_rows(&self) -> Result<Vec<Vec<Option<String>>>, String> {
+        if let Some(rows) = &self.expected_rows {
+            return Ok(rows
+                .iter()
+                .map(|row| row.iter().cloned().map(Some).collect())
+                .collect());
+        }
+
+        self.expected_deal_ids
+            .as_ref()
+            .map(|deal_ids| {
+                deal_ids
+                    .iter()
+                    .map(|deal_id| vec![Some(deal_id.clone())])
+                    .collect()
+            })
+            .ok_or_else(|| format!("read case `{}` did not declare expected rows", self.name))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -482,6 +514,7 @@ struct ReadPredicate {
     column: String,
     operator: String,
     value: Option<String>,
+    values: Option<Vec<String>>,
 }
 
 type ReadQuerySpec = (&'static str, &'static [&'static str], Vec<Option<String>>);
@@ -754,20 +787,41 @@ fn protocol_mutation_sql_for_shape(shape: &str) -> Result<&'static str, String> 
         "upsert_unique" => Ok(
             "INSERT INTO public.deals (deal_id, external_key, deal_name) VALUES ($1, $2, $3) ON CONFLICT ON CONSTRAINT deals_external_key_key DO UPDATE SET deal_id = EXCLUDED.deal_id, deal_name = EXCLUDED.deal_name",
         ),
+        "update_by_predicate" => Ok("UPDATE public.deals SET deal_name = $2 WHERE deal_id = $1"),
+        "delete_by_predicate" => Ok("DELETE FROM public.deals WHERE deal_id = $1"),
         other => Err(format!("unexpected extractor mutation shape `{other}`")),
     }
 }
 
-fn protocol_mutation_param_types() -> &'static [&'static str] {
-    &["text", "text", "text"]
+fn protocol_mutation_param_types(shape: &str) -> Result<&'static [&'static str], String> {
+    match shape {
+        "insert_values" | "upsert_pk" | "upsert_unique" => Ok(&["text", "text", "text"]),
+        "update_by_predicate" => Ok(&["text", "text"]),
+        "delete_by_predicate" => Ok(&["text"]),
+        other => Err(format!("unexpected extractor mutation shape `{other}`")),
+    }
 }
 
-fn protocol_row_params(row: &DealInputRow) -> Vec<Option<String>> {
-    vec![
-        Some(row.deal_id.clone()),
-        Some(row.external_key.clone()),
-        row.deal_name.clone(),
-    ]
+fn protocol_row_params(shape: &str, row: &DealInputRow) -> Result<Vec<Option<String>>, String> {
+    match shape {
+        "insert_values" | "upsert_pk" | "upsert_unique" => Ok(vec![
+            Some(row.deal_id.clone()),
+            Some(row.external_key.clone()),
+            row.deal_name.clone(),
+        ]),
+        "update_by_predicate" => Ok(vec![Some(row.deal_id.clone()), row.deal_name.clone()]),
+        "delete_by_predicate" => Ok(vec![Some(row.deal_id.clone())]),
+        other => Err(format!("unexpected extractor mutation shape `{other}`")),
+    }
+}
+
+fn expected_mutation_command_tag(shape: &str) -> Result<&'static str, String> {
+    match shape {
+        "insert_values" | "upsert_pk" | "upsert_unique" => Ok("INSERT 0 1"),
+        "update_by_predicate" => Ok("UPDATE 1"),
+        "delete_by_predicate" => Ok("DELETE 1"),
+        other => Err(format!("unexpected extractor mutation shape `{other}`")),
+    }
 }
 
 fn read_query_for_case(case: &ReadCase) -> Result<ReadQuerySpec, String> {
@@ -785,6 +839,33 @@ fn read_query_for_case(case: &ReadCase) -> Result<ReadQuerySpec, String> {
         )),
         ("select_is_null", "status", "is_null") => Ok((
             "SELECT deal_id FROM public.deals WHERE status IS NULL",
+            &[],
+            Vec::new(),
+        )),
+        ("select_in_list", "status", "in_list") => Ok((
+            "SELECT deal_id FROM public.deals WHERE status IN ($1, $2)",
+            &["text", "text"],
+            case.predicate
+                .values
+                .clone()
+                .ok_or_else(|| String::from("select_in_list should declare predicate values"))?
+                .into_iter()
+                .map(Some)
+                .collect(),
+        )),
+        ("select_between", "amount", "between") => Ok((
+            "SELECT deal_id FROM public.deals WHERE amount BETWEEN $1 AND $2",
+            &["numeric", "numeric"],
+            case.predicate
+                .values
+                .clone()
+                .ok_or_else(|| String::from("select_between should declare predicate values"))?
+                .into_iter()
+                .map(Some)
+                .collect(),
+        )),
+        ("aggregate_basic_group_by", "tenant_id", "group_by") => Ok((
+            "SELECT tenant_id, COUNT(*) AS row_count FROM public.deals GROUP BY tenant_id",
             &[],
             Vec::new(),
         )),

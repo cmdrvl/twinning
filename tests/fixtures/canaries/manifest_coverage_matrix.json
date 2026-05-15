@@ -1,0 +1,300 @@
+{
+  "version": "twinning.manifest-coverage-matrix.v0",
+  "manifest": "canaries/manifest.v0.json",
+  "entries": [
+    {
+      "category": "session",
+      "token": "startup_auth_v3",
+      "evidence": [
+        "tests/canaries/psql_smoke.rs::psql_smoke",
+        "tests/canaries/extractor_canary.rs::assert_startup_parameter_status_baseline",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["session_behavior", "transaction_state"]
+    },
+    {
+      "category": "session",
+      "token": "parameter_status_baseline",
+      "evidence": [
+        "tests/canaries/psql_smoke.rs::psql_smoke",
+        "tests/canaries/extractor_canary.rs::assert_startup_parameter_status_baseline"
+      ],
+      "dimensions": ["session_behavior"]
+    },
+    {
+      "category": "session",
+      "token": "set_application_name",
+      "evidence": ["tests/canaries/psql_smoke.rs::psql_smoke"],
+      "dimensions": ["session_behavior"]
+    },
+    {
+      "category": "session",
+      "token": "tx_begin",
+      "evidence": [
+        "tests/canaries/psql_smoke.rs::psql_smoke",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["session_behavior", "transaction_state"]
+    },
+    {
+      "category": "session",
+      "token": "tx_commit",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["session_behavior", "transaction_state", "final_artifacts"]
+    },
+    {
+      "category": "session",
+      "token": "tx_rollback",
+      "evidence": [
+        "tests/canaries/psql_smoke.rs::psql_smoke",
+        "tests/protocol_extended_query.rs::failed_transaction_rejects_statements_until_rollback_then_recovers"
+      ],
+      "dimensions": ["session_behavior", "transaction_state"]
+    },
+    {
+      "category": "session",
+      "token": "simple_query",
+      "evidence": [
+        "tests/canaries/psql_smoke.rs::psql_smoke",
+        "tests/pgwire_listener.rs::listener_accepts_startup_and_simple_query_round_trip"
+      ],
+      "dimensions": ["session_behavior", "command_tags", "transaction_state"]
+    },
+    {
+      "category": "session",
+      "token": "extended_query_parse_bind_execute_sync",
+      "evidence": [
+        "tests/protocol_extended_query.rs::extended_query_flow_round_trips_parameterized_insert_returning_and_select",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["session_behavior", "command_tags", "row_counts", "transaction_state"]
+    },
+    {
+      "category": "write",
+      "token": "insert_values",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/write_corpus.rs::write_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "command_tags", "row_counts", "final_artifacts"]
+    },
+    {
+      "category": "write",
+      "token": "insert_returning",
+      "evidence": [
+        "tests/protocol_extended_query.rs::extended_query_flow_round_trips_parameterized_insert_returning_and_select",
+        "tests/kernel_insert.rs::insert_returning_reports_selected_columns"
+      ],
+      "dimensions": ["sql_shape_success", "command_tags", "row_counts"]
+    },
+    {
+      "category": "write",
+      "token": "upsert_pk",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/write_corpus.rs::write_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "command_tags", "row_counts", "final_artifacts"]
+    },
+    {
+      "category": "write",
+      "token": "upsert_unique",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/kernel_insert.rs::upsert_rewrites_conflicting_named_unique_row",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "command_tags", "row_counts", "final_artifacts"]
+    },
+    {
+      "category": "write",
+      "token": "update_by_predicate",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/protocol_extended_query.rs::live_update_delete_mutations_share_transaction_semantics",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "command_tags", "row_counts", "transaction_state", "final_artifacts"]
+    },
+    {
+      "category": "write",
+      "token": "delete_by_predicate",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/protocol_extended_query.rs::live_update_delete_mutations_share_transaction_semantics",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "command_tags", "row_counts", "transaction_state", "final_artifacts"]
+    },
+    {
+      "category": "read",
+      "token": "select_by_pk",
+      "evidence": [
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "row_counts"]
+    },
+    {
+      "category": "read",
+      "token": "select_filtered_scan",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "row_counts"]
+    },
+    {
+      "category": "read",
+      "token": "select_is_null",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "row_counts"]
+    },
+    {
+      "category": "read",
+      "token": "select_in_list",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "row_counts"]
+    },
+    {
+      "category": "read",
+      "token": "select_between",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "row_counts"]
+    },
+    {
+      "category": "read",
+      "token": "aggregate_basic_group_by",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "row_counts", "command_tags"]
+    },
+    {
+      "category": "read",
+      "token": "information_schema_public_base_tables",
+      "evidence": [
+        "tests/canaries/metadata_join_conformance.rs::metadata_join_conformance",
+        "tests/differential/parity_ledger.rs::run_once_parity_ledger_records_success_and_protocol_refusal_entries",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sql_shape_success", "row_counts"]
+    },
+    {
+      "category": "read",
+      "token": "select_inner_join_eq_refusal",
+      "evidence": [
+        "tests/canaries/metadata_join_conformance.rs::metadata_join_conformance",
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    },
+    {
+      "category": "sqlstate",
+      "token": "23502",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    },
+    {
+      "category": "sqlstate",
+      "token": "23503",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/write_corpus.rs::write_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    },
+    {
+      "category": "sqlstate",
+      "token": "23505",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/differential/write_corpus.rs::write_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    },
+    {
+      "category": "sqlstate",
+      "token": "23514",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    },
+    {
+      "category": "sqlstate",
+      "token": "22P02",
+      "evidence": [
+        "tests/canaries/extractor_canary.rs::extractor_canary",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    },
+    {
+      "category": "sqlstate",
+      "token": "0A000",
+      "evidence": [
+        "tests/canaries/metadata_join_conformance.rs::metadata_join_conformance",
+        "tests/differential/read_corpus.rs::read_corpus",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    },
+    {
+      "category": "unsupported_policy",
+      "token": "refusal",
+      "evidence": [
+        "tests/canaries/psql_smoke.rs::psql_smoke",
+        "tests/canaries/metadata_join_conformance.rs::metadata_join_conformance",
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once"
+      ],
+      "dimensions": ["sqlstate_refusal", "transaction_state"]
+    }
+  ],
+  "artifact_behaviors": [
+    {
+      "id": "run_once_final_report_snapshot",
+      "evidence": [
+        "tests/run_once_black_box.rs::manifest_backed_extended_canaries_run_black_box_through_run_once",
+        "tests/run_once_transaction_abort.rs::run_once_failed_transaction_commit_preserves_empty_committed_artifacts",
+        "tests/interactive_server.rs::interactive_serve_accepts_clients_until_signal_and_emits_final_artifacts"
+      ],
+      "dimensions": ["final_artifacts", "row_counts"]
+    },
+    {
+      "id": "query_trace_artifact",
+      "evidence": [
+        "tests/run_once_transaction_abort.rs::run_once_query_trace_records_redacted_live_events_without_snapshot_drift"
+      ],
+      "dimensions": ["final_artifacts", "sqlstate_refusal", "transaction_state"]
+    }
+  ],
+  "skips": []
+}

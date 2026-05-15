@@ -2,10 +2,14 @@ use crate::{
     backend::Backend,
     catalog::{Catalog, ColumnCatalog},
     ir::{
-        AggregateKind, MutationKind, Operation, ReadOp, RefusalOp, RefusalScope,
-        UNDEFINED_TABLE_CODE, UNDEFINED_TABLE_SQLSTATE, normalize_mutation_sql, normalize_read_sql,
+        AggregateKind, Operation, ReadOp, RefusalOp, RefusalScope, UNDEFINED_TABLE_CODE,
+        UNDEFINED_TABLE_SQLSTATE, normalize_mutation_sql, normalize_read_sql,
     },
-    kernel::{mutation::execute_insert, read::execute_read},
+    kernel::{mutation::execute_mutation, read::execute_read},
+    query_trace::{
+        BindTrace, operation_hash as trace_operation_hash, sql_hash,
+        statement_kind as trace_statement_kind,
+    },
     result::{AckResult, KernelResult, RefusalResult, ResultTag},
 };
 
@@ -13,7 +17,7 @@ use super::{
     catalog::MetadataQuery,
     extended_parse::{ExtendedParseState, PortalState, PreparedStatementState},
     frames::{ResultFrameMetadata, encode_kernel_result_frames},
-    session::{SessionCycle, SessionLoop},
+    session::{SessionCycle, SessionLoop, failed_transaction_result},
 };
 
 const BOOL_OID: u32 = 16;
@@ -52,6 +56,14 @@ struct PendingResult {
     returning_columns: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceIdentity {
+    pub statement_kind: String,
+    pub sql_hash: Option<String>,
+    pub operation_hash: Option<String>,
+    pub binds: Option<BindTrace>,
+}
+
 impl ExtendedExecuteState {
     pub fn new() -> Self {
         Self::default()
@@ -87,6 +99,75 @@ impl ExtendedExecuteState {
         let frames = encode_result_frames(&pending.result, &pending.returning_columns);
         self.pending_result = Some(pending);
         frames
+    }
+
+    pub fn process_failed_transaction_execute(&mut self) -> Vec<Vec<u8>> {
+        self.process_kernel_result(failed_transaction_result("extended_query"))
+    }
+
+    pub fn process_kernel_result(&mut self, result: KernelResult) -> Vec<Vec<u8>> {
+        let pending = PendingResult {
+            result,
+            returning_columns: Vec::new(),
+        };
+        let frames = encode_result_frames(&pending.result, &pending.returning_columns);
+        self.pending_result = Some(pending);
+        frames
+    }
+
+    pub fn pending_result_is_refusal(&self) -> bool {
+        self.pending_result
+            .as_ref()
+            .is_some_and(|pending| matches!(pending.result, KernelResult::Refusal(_)))
+    }
+
+    pub fn pending_result_is_successful_mutation(&self) -> bool {
+        self.pending_result
+            .as_ref()
+            .is_some_and(|pending| matches!(pending.result, KernelResult::Mutation(_)))
+    }
+
+    pub fn pending_result_for_trace(&self) -> Option<&KernelResult> {
+        self.pending_result.as_ref().map(|pending| &pending.result)
+    }
+
+    pub fn trace_identity(
+        &self,
+        catalog: &Catalog,
+        parse_state: &ExtendedParseState,
+        request: &ExecuteRequest,
+    ) -> TraceIdentity {
+        let Some(portal) = parse_state.portal(request.portal_name.as_str()) else {
+            return TraceIdentity {
+                statement_kind: String::from("unknown"),
+                sql_hash: None,
+                operation_hash: None,
+                binds: None,
+            };
+        };
+
+        let operation_hash = normalized_operation_from_portal(catalog, portal)
+            .ok()
+            .and_then(|operation| trace_operation_hash(&operation));
+        let binds = (!portal.params.is_empty())
+            .then(|| BindTrace::from_values(portal.params.iter().map(|param| param.value.clone())));
+
+        TraceIdentity {
+            statement_kind: trace_statement_kind(&portal.sql),
+            sql_hash: Some(sql_hash(&portal.sql)),
+            operation_hash,
+            binds,
+        }
+    }
+
+    pub fn request_is_mutation(
+        &self,
+        parse_state: &ExtendedParseState,
+        request: &ExecuteRequest,
+    ) -> bool {
+        parse_state
+            .portal(request.portal_name.as_str())
+            .is_some_and(|portal| matches!(statement_kind(&portal.sql), StatementKind::Mutation))
     }
 
     pub fn process_sync(&mut self, session: &mut SessionLoop) -> SessionCycle {
@@ -220,22 +301,7 @@ impl ExtendedExecuteState {
         match normalized_operation_from_portal(catalog, portal)? {
             Operation::Mutation(mutation) => {
                 let returning_columns = mutation.returning.clone();
-                let result = if matches!(mutation.kind, MutationKind::Insert | MutationKind::Upsert)
-                {
-                    execute_insert(catalog, backend, &mutation)
-                } else {
-                    KernelResult::Refusal(unsupported_execute_refusal(
-                        "mutation_kind",
-                        &[(
-                            "kind",
-                            serde_json::to_value(mutation.kind)
-                                .expect("serialize mutation kind")
-                                .as_str()
-                                .expect("mutation kind token")
-                                .to_owned(),
-                        )],
-                    ))
-                };
+                let result = execute_mutation(catalog, backend, &mutation);
 
                 Ok(PendingResult {
                     result,
@@ -585,7 +651,7 @@ fn statement_kind(statement_text: &str) -> StatementKind {
         .unwrap_or_default()
         .to_ascii_lowercase();
     match leading_keyword.as_str() {
-        "insert" => StatementKind::Mutation,
+        "delete" | "insert" | "update" => StatementKind::Mutation,
         "select" => StatementKind::Read,
         _ => StatementKind::Unsupported,
     }

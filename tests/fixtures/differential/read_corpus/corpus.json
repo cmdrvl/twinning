@@ -67,6 +67,124 @@
       }
     },
     {
+      "id": "select_in_list",
+      "description": "Declared IN-list scan matches any listed non-null value and preserves deterministic row order.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT deal_id FROM public.deals WHERE status IN ('open', 'closed')",
+      "expected": {
+        "outcome_class": "success",
+        "columns": ["deal_id"],
+        "rows": [
+          {
+            "deal_id": "deal-002"
+          },
+          {
+            "deal_id": "deal-003"
+          }
+        ]
+      }
+    },
+    {
+      "id": "unsupported_in_list_null_member",
+      "description": "IN-list predicates with NULL list members stay outside the declared subset and refuse instead of silently changing three-valued logic.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT deal_id FROM public.deals WHERE status IN ('open', NULL)",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
+      }
+    },
+    {
+      "id": "select_between",
+      "description": "Declared BETWEEN scan is inclusive over comparable numeric values.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT deal_id, amount FROM public.deals WHERE amount BETWEEN 100 AND 125",
+      "expected": {
+        "outcome_class": "success",
+        "columns": ["deal_id", "amount"],
+        "rows": [
+          {
+            "deal_id": "deal-001",
+            "amount": 100
+          },
+          {
+            "deal_id": "deal-002",
+            "amount": 125
+          }
+        ]
+      }
+    },
+    {
+      "id": "aggregate_basic_group_by",
+      "description": "Declared basic GROUP BY supports projected group columns plus COUNT(*) with a stable alias.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+      ],
+      "sql": "SELECT tenant_id, COUNT(*) AS row_count FROM public.deals GROUP BY tenant_id",
+      "expected": {
+        "outcome_class": "success",
+        "columns": ["tenant_id", "row_count"],
+        "rows": [
+          {
+            "tenant_id": "tenant-a",
+            "row_count": 2
+          },
+          {
+            "tenant_id": "tenant-b",
+            "row_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "unsupported_between_type_mismatch",
+      "description": "BETWEEN over a declared numeric column refuses nonnumeric scalar bounds instead of coercing silently.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)"
+      ],
+      "sql": "SELECT deal_id FROM public.deals WHERE amount BETWEEN 'low' AND 125",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
+      }
+    },
+    {
+      "id": "unsupported_empty_in_list",
+      "description": "Empty IN-list syntax stays outside the declared subset and is refused with a stable envelope.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)"
+      ],
+      "sql": "SELECT deal_id FROM public.deals WHERE status IN ()",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
+      }
+    },
+    {
       "id": "unsupported_select_for_update",
       "description": "Out-of-subset locking reads stay explicitly classified as protocol-visible refusals.",
       "seed_sql": [
@@ -81,18 +199,42 @@
       }
     },
     {
-      "id": "aggregate_count_skip",
-      "description": "Aggregate count is outside the current manifest-backed differential read subset, so parity stays SKIP-classified here for now.",
+      "id": "unsupported_having",
+      "description": "HAVING remains outside the declared aggregate subset.",
       "seed_sql": [
         "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
-        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')",
-        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)",
-        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-002', 'tenant-a', 'ext-002', 'Beta', 'open', 125)",
-        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-003', 'tenant-b', 'ext-003', 'Gamma', 'closed', 90)"
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)"
       ],
-      "sql": "SELECT COUNT(*) AS row_count FROM public.deals WHERE tenant_id = 'tenant-a'",
+      "sql": "SELECT tenant_id, COUNT(*) AS row_count FROM public.deals GROUP BY tenant_id HAVING COUNT(*) > 0",
       "expected": {
-        "outcome_class": "skip"
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
+      }
+    },
+    {
+      "id": "unsupported_window",
+      "description": "Window functions remain outside the declared aggregate subset.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)"
+      ],
+      "sql": "SELECT tenant_id, COUNT(*) OVER (PARTITION BY tenant_id) AS row_count FROM public.deals",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
+      }
+    },
+    {
+      "id": "unsupported_subquery",
+      "description": "Subqueries remain outside the declared read subset.",
+      "seed_sql": [
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')",
+        "INSERT INTO public.deals (deal_id, tenant_id, external_key, deal_name, status, amount) VALUES ('deal-001', 'tenant-a', 'ext-001', 'Alpha', NULL, 100)"
+      ],
+      "sql": "SELECT deal_id FROM public.deals WHERE tenant_id IN (SELECT tenant_id FROM public.tenants)",
+      "expected": {
+        "outcome_class": "refusal",
+        "sqlstate": "0A000"
       }
     }
   ]

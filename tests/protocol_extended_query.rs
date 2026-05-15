@@ -376,6 +376,326 @@ fn live_listener_allows_concurrent_readers_and_refuses_second_writer() {
 }
 
 #[test]
+fn failed_transaction_commit_rolls_back_overlay_and_keeps_committed_state() {
+    let (catalog, backend) = widgets_catalog_and_backend();
+    let state = SharedPgwireState::from_backend(catalog, backend);
+    let committed_state = state.clone();
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let handle = thread::spawn(move || listener.accept_with_state("tx-commit-failed", state));
+
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set timeout");
+    startup_client(&mut client);
+    prepare_widget_insert(&mut client);
+
+    write_query_message(&mut client, "BEGIN");
+    let begin = read_until_ready(&mut client).expect("begin frames");
+    assert_eq!(decode_command_complete(&begin[0]), "BEGIN");
+    assert_eq!(
+        decode_ready_status(begin.last().expect("begin ready")),
+        b'T'
+    );
+
+    let valid = execute_widget_insert(&mut client, "valid_widget", Some("7"), Some("Alpha"));
+    assert_eq!(valid[0], bind_complete_frame());
+    assert_eq!(decode_command_complete(&valid[1]), "INSERT 0 1");
+    assert_eq!(
+        decode_ready_status(valid.last().expect("valid ready")),
+        b'T'
+    );
+
+    let invalid = execute_widget_insert(&mut client, "invalid_widget", Some("8"), None);
+    assert_eq!(invalid[0], bind_complete_frame());
+    assert_eq!(
+        decode_error_sqlstate(&invalid[1]).expect("invalid SQLSTATE"),
+        "23502"
+    );
+    assert_eq!(
+        decode_ready_status(invalid.last().expect("invalid ready")),
+        b'E'
+    );
+
+    write_query_message(&mut client, "COMMIT");
+    let commit = read_until_ready(&mut client).expect("commit frames");
+    assert_eq!(decode_command_complete(&commit[0]), "ROLLBACK");
+    assert_eq!(
+        decode_ready_status(commit.last().expect("commit ready")),
+        b'I'
+    );
+
+    write_terminate_message(&mut client);
+    handle
+        .join()
+        .expect("listener thread")
+        .expect("serve failed commit connection");
+
+    let rows = committed_widget_rows(&committed_state);
+    assert_eq!(
+        rows,
+        vec![(1, String::from("Seed"))],
+        "failed COMMIT must not publish earlier overlay writes"
+    );
+}
+
+#[test]
+fn failed_transaction_rejects_statements_until_rollback_then_recovers() {
+    let (catalog, backend) = widgets_catalog_and_backend();
+    let state = SharedPgwireState::from_backend(catalog, backend);
+    let committed_state = state.clone();
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let handle = thread::spawn(move || listener.accept_with_state("tx-rollback-failed", state));
+
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set timeout");
+    startup_client(&mut client);
+    prepare_widget_insert(&mut client);
+
+    write_query_message(&mut client, "BEGIN");
+    let begin = read_until_ready(&mut client).expect("begin frames");
+    assert_eq!(
+        decode_ready_status(begin.last().expect("begin ready")),
+        b'T'
+    );
+
+    let invalid = execute_widget_insert(&mut client, "invalid_widget", Some("8"), None);
+    assert_eq!(
+        decode_error_sqlstate(&invalid[1]).expect("invalid SQLSTATE"),
+        "23502"
+    );
+    assert_eq!(
+        decode_ready_status(invalid.last().expect("invalid ready")),
+        b'E'
+    );
+
+    let ignored = execute_widget_insert(&mut client, "ignored_widget", Some("9"), Some("Ignored"));
+    assert_eq!(ignored[0], bind_complete_frame());
+    assert_eq!(
+        decode_error_sqlstate(&ignored[1]).expect("failed transaction SQLSTATE"),
+        "25P02"
+    );
+    assert_eq!(
+        decode_ready_status(ignored.last().expect("ignored ready")),
+        b'E'
+    );
+
+    write_query_message(&mut client, "ROLLBACK");
+    let rollback = read_until_ready(&mut client).expect("rollback frames");
+    assert_eq!(decode_command_complete(&rollback[0]), "ROLLBACK");
+    assert_eq!(
+        decode_ready_status(rollback.last().expect("rollback ready")),
+        b'I'
+    );
+
+    write_query_message(&mut client, "BEGIN");
+    let begin_again = read_until_ready(&mut client).expect("begin again frames");
+    assert_eq!(
+        decode_ready_status(begin_again.last().expect("begin again ready")),
+        b'T'
+    );
+    let recovered =
+        execute_widget_insert(&mut client, "recovered_widget", Some("10"), Some("Beta"));
+    assert_eq!(decode_command_complete(&recovered[1]), "INSERT 0 1");
+    assert_eq!(
+        decode_ready_status(recovered.last().expect("recovered ready")),
+        b'T'
+    );
+    write_query_message(&mut client, "COMMIT");
+    let commit = read_until_ready(&mut client).expect("commit frames");
+    assert_eq!(decode_command_complete(&commit[0]), "COMMIT");
+    assert_eq!(
+        decode_ready_status(commit.last().expect("commit ready")),
+        b'I'
+    );
+
+    write_terminate_message(&mut client);
+    handle
+        .join()
+        .expect("listener thread")
+        .expect("serve failed rollback connection");
+
+    let rows = committed_widget_rows(&committed_state);
+    assert_eq!(
+        rows,
+        vec![(1, String::from("Seed")), (10, String::from("Beta"))],
+        "only the recovered post-rollback transaction should commit"
+    );
+}
+
+#[test]
+fn autocommit_extended_mutation_commits_success_and_rolls_back_failure() {
+    let (catalog, backend) = widgets_catalog_and_backend();
+    let state = SharedPgwireState::from_backend(catalog, backend);
+    let committed_state = state.clone();
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let handle = thread::spawn(move || listener.accept_with_state("autocommit", state));
+
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set timeout");
+    startup_client(&mut client);
+    prepare_widget_insert(&mut client);
+
+    let valid = execute_widget_insert(&mut client, "autocommit_valid", Some("7"), Some("Alpha"));
+    assert_eq!(valid[0], bind_complete_frame());
+    assert_eq!(decode_command_complete(&valid[1]), "INSERT 0 1");
+    assert_eq!(
+        decode_ready_status(valid.last().expect("valid ready")),
+        b'I'
+    );
+
+    let invalid = execute_widget_insert(&mut client, "autocommit_invalid", Some("8"), None);
+    assert_eq!(invalid[0], bind_complete_frame());
+    assert_eq!(
+        decode_error_sqlstate(&invalid[1]).expect("invalid SQLSTATE"),
+        "23502"
+    );
+    assert_eq!(
+        decode_ready_status(invalid.last().expect("invalid ready")),
+        b'I'
+    );
+
+    write_terminate_message(&mut client);
+    handle
+        .join()
+        .expect("listener thread")
+        .expect("serve autocommit connection");
+
+    let rows = committed_widget_rows(&committed_state);
+    assert_eq!(
+        rows,
+        vec![(1, String::from("Seed")), (7, String::from("Alpha"))],
+        "only successful autocommit statements should reach committed state"
+    );
+}
+
+#[test]
+fn live_update_delete_mutations_share_transaction_semantics() {
+    let (catalog, backend) = widgets_catalog_and_backend();
+    let state = SharedPgwireState::from_backend(catalog, backend);
+    let committed_state = state.clone();
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let handle = thread::spawn(move || listener.accept_with_state("update-delete", state));
+
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .expect("set timeout");
+    startup_client(&mut client);
+    prepare_widget_update(&mut client);
+    prepare_widget_delete(&mut client);
+
+    let autocommit_update = execute_widget_update(
+        &mut client,
+        "autocommit_update",
+        Some("1"),
+        Some("Autocommit"),
+    );
+    assert_eq!(autocommit_update[0], bind_complete_frame());
+    assert_eq!(decode_command_complete(&autocommit_update[1]), "UPDATE 1");
+    assert_eq!(
+        decode_ready_status(autocommit_update.last().expect("autocommit update ready")),
+        b'I'
+    );
+
+    write_query_message(&mut client, "BEGIN");
+    let begin = read_until_ready(&mut client).expect("begin frames");
+    assert_eq!(decode_command_complete(&begin[0]), "BEGIN");
+    let rolled_back_update = execute_widget_update(
+        &mut client,
+        "rolled_back_update",
+        Some("1"),
+        Some("Rolled Back"),
+    );
+    assert_eq!(decode_command_complete(&rolled_back_update[1]), "UPDATE 1");
+    assert_eq!(
+        decode_ready_status(rolled_back_update.last().expect("rolled back update ready")),
+        b'T'
+    );
+    write_query_message(&mut client, "ROLLBACK");
+    let rollback = read_until_ready(&mut client).expect("rollback frames");
+    assert_eq!(decode_command_complete(&rollback[0]), "ROLLBACK");
+    assert_eq!(
+        decode_ready_status(rollback.last().expect("rollback ready")),
+        b'I'
+    );
+
+    write_parse_message(
+        &mut client,
+        "select_widget_after_rollback",
+        "SELECT name FROM public.widgets WHERE id = $1",
+        &[INT4_OID],
+    );
+    write_bind_message(
+        &mut client,
+        "select_after_rollback_portal",
+        "select_widget_after_rollback",
+        &[Some("1")],
+    );
+    write_execute_message(&mut client, "select_after_rollback_portal", 0);
+    write_sync_message(&mut client);
+    let select = read_until_ready(&mut client).expect("select after rollback");
+    assert_eq!(select[0], parse_complete_frame());
+    assert_eq!(select[1], bind_complete_frame());
+    assert_eq!(
+        decode_data_row(&select[3]),
+        vec![Some(String::from("Autocommit"))]
+    );
+
+    write_query_message(&mut client, "BEGIN");
+    let begin_invalid = read_until_ready(&mut client).expect("begin invalid frames");
+    assert_eq!(decode_command_complete(&begin_invalid[0]), "BEGIN");
+    let invalid_update = execute_widget_update(&mut client, "invalid_update", Some("1"), None);
+    assert_eq!(
+        decode_error_sqlstate(&invalid_update[1]).expect("invalid update SQLSTATE"),
+        "23502"
+    );
+    assert_eq!(
+        decode_ready_status(invalid_update.last().expect("invalid update ready")),
+        b'E'
+    );
+    write_query_message(&mut client, "ROLLBACK");
+    let rollback_invalid = read_until_ready(&mut client).expect("rollback invalid frames");
+    assert_eq!(decode_command_complete(&rollback_invalid[0]), "ROLLBACK");
+
+    let delete = execute_widget_delete(&mut client, "delete_widget", Some("1"));
+    assert_eq!(delete[0], bind_complete_frame());
+    assert_eq!(decode_command_complete(&delete[1]), "DELETE 1");
+    assert_eq!(
+        decode_ready_status(delete.last().expect("delete ready")),
+        b'I'
+    );
+
+    let delete_miss = execute_widget_delete(&mut client, "delete_missing_widget", Some("99"));
+    assert_eq!(delete_miss[0], bind_complete_frame());
+    assert_eq!(decode_command_complete(&delete_miss[1]), "DELETE 0");
+    assert_eq!(
+        decode_ready_status(delete_miss.last().expect("delete miss ready")),
+        b'I'
+    );
+
+    write_terminate_message(&mut client);
+    handle
+        .join()
+        .expect("listener thread")
+        .expect("serve update/delete connection");
+
+    let rows = committed_widget_rows(&committed_state);
+    assert!(
+        rows.is_empty(),
+        "autocommit DELETE should be the only final committed row change after rolled-back UPDATEs"
+    );
+}
+
+#[test]
 fn simple_query_relation_outside_declared_subset_returns_42p01_and_recovers() {
     let (catalog, backend) = widgets_catalog_and_backend();
     let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
@@ -524,6 +844,113 @@ fn widgets_catalog_and_backend() -> (Catalog, BaseSnapshotBackend) {
     (catalog, backend)
 }
 
+fn startup_client(client: &mut TcpStream) {
+    write_startup_packet(client, &[("user", "postgres"), ("database", "postgres")]);
+    let startup = read_until_ready(client).expect("startup frames");
+    assert_eq!(
+        decode_ready_status(startup.last().expect("startup ready")),
+        b'I'
+    );
+}
+
+fn prepare_widget_insert(client: &mut TcpStream) {
+    write_parse_message(
+        client,
+        "insert_widget",
+        "INSERT INTO public.widgets (id, name) VALUES ($1, $2)",
+        &[INT4_OID, TEXT_OID],
+    );
+    write_sync_message(client);
+    let parse = read_until_ready(client).expect("parse insert frames");
+    assert_eq!(parse[0], parse_complete_frame());
+    assert_eq!(
+        decode_ready_status(parse.last().expect("parse ready")),
+        b'I'
+    );
+}
+
+fn prepare_widget_update(client: &mut TcpStream) {
+    write_parse_message(
+        client,
+        "update_widget",
+        "UPDATE public.widgets SET name = $2 WHERE id = $1",
+        &[INT4_OID, TEXT_OID],
+    );
+    write_sync_message(client);
+    let parse = read_until_ready(client).expect("parse update frames");
+    assert_eq!(parse[0], parse_complete_frame());
+    assert_eq!(
+        decode_ready_status(parse.last().expect("parse update ready")),
+        b'I'
+    );
+}
+
+fn prepare_widget_delete(client: &mut TcpStream) {
+    write_parse_message(
+        client,
+        "delete_widget",
+        "DELETE FROM public.widgets WHERE id = $1",
+        &[INT4_OID],
+    );
+    write_sync_message(client);
+    let parse = read_until_ready(client).expect("parse delete frames");
+    assert_eq!(parse[0], parse_complete_frame());
+    assert_eq!(
+        decode_ready_status(parse.last().expect("parse delete ready")),
+        b'I'
+    );
+}
+
+fn execute_widget_insert(
+    client: &mut TcpStream,
+    portal_name: &str,
+    id: Option<&str>,
+    name: Option<&str>,
+) -> Vec<Vec<u8>> {
+    write_bind_message(client, portal_name, "insert_widget", &[id, name]);
+    write_execute_message(client, portal_name, 0);
+    write_sync_message(client);
+    read_until_ready(client).expect("execute insert frames")
+}
+
+fn execute_widget_update(
+    client: &mut TcpStream,
+    portal_name: &str,
+    id: Option<&str>,
+    name: Option<&str>,
+) -> Vec<Vec<u8>> {
+    write_bind_message(client, portal_name, "update_widget", &[id, name]);
+    write_execute_message(client, portal_name, 0);
+    write_sync_message(client);
+    read_until_ready(client).expect("execute update frames")
+}
+
+fn execute_widget_delete(
+    client: &mut TcpStream,
+    portal_name: &str,
+    id: Option<&str>,
+) -> Vec<Vec<u8>> {
+    write_bind_message(client, portal_name, "delete_widget", &[id]);
+    write_execute_message(client, portal_name, 0);
+    write_sync_message(client);
+    read_until_ready(client).expect("execute delete frames")
+}
+
+fn committed_widget_rows(state: &SharedPgwireState) -> Vec<(i32, String)> {
+    let tables = state.committed_tables().expect("committed tables");
+    let widgets = tables
+        .iter()
+        .find(|table| table.table_name() == "public.widgets")
+        .expect("widgets table");
+    widgets
+        .rows()
+        .map(|row| match row.values.as_slice() {
+            [KernelValue::Integer(id), KernelValue::Text(name)] => (*id, name.clone()),
+            other => panic!("unexpected widget row shape: {other:?}"),
+        })
+        .collect()
+}
+
 fn parse_complete_frame() -> Vec<u8> {
     vec![b'1', 0, 0, 0, 4]
 }
@@ -533,7 +960,20 @@ fn bind_complete_frame() -> Vec<u8> {
 }
 
 fn decode_command_complete(frame: &[u8]) -> String {
-    assert_eq!(frame[0], b'C');
+    let error_summary = if frame.first() == Some(&b'E') {
+        Some((
+            decode_error_sqlstate(frame).ok(),
+            decode_error_code(frame).ok(),
+            decode_error_detail(frame).ok(),
+        ))
+    } else {
+        None
+    };
+    assert_eq!(
+        frame[0], b'C',
+        "expected CommandComplete, got tag {:?}, error={:?}",
+        frame[0] as char, error_summary
+    );
     String::from_utf8(frame[5..frame.len() - 1].to_vec()).expect("command tag")
 }
 

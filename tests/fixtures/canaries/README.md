@@ -9,6 +9,8 @@ canary. Current fixture types include:
   near-miss coverage
 - `fixture.json` / companion assets for canaries that already have a frozen
   corpus, such as `extractor_canary`
+- `manifest_coverage_matrix.json` for the manifest-complete coverage gate that
+  maps claimed shape tokens to executable evidence
 
 `metadata_join_conformance` is a synthetic conformance probe rather than a
 client library fixture: it pins the exact supported `information_schema.tables`
