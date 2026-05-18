@@ -68,17 +68,28 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import os
+          import textwrap
           import tomllib
           from pathlib import Path
 
           # verify is checked out directly to .release-vendor/verify — no copy needed.
 
-          # Patch twinning's Cargo.toml to point at the vendored verify crates.
-          cargo = Path("Cargo.toml")
-          text = cargo.read_text()
-          text = text.replace("../verify/crates/verify-core", ".release-vendor/verify/crates/verify-core")
-          text = text.replace("../verify/crates/verify-engine", ".release-vendor/verify/crates/verify-engine")
-          cargo.write_text(text)
+          # Patch every Cargo.toml in the twinning workspace (root + workspace members)
+          # that references verify as a path dependency. Use per-file relative path
+          # computation so the replacement is correct regardless of nesting depth.
+          for cargo_file in sorted(Path(".").rglob("Cargo.toml")):
+              if ".release-vendor" in cargo_file.parts:
+                  continue
+              text = cargo_file.read_text()
+              if "verify/crates/verify-" not in text:
+                  continue
+              file_dir = str(cargo_file.parent)
+              old_rel = Path(os.path.relpath("../verify", file_dir)).as_posix()
+              new_rel = Path(os.path.relpath(".release-vendor/verify", file_dir)).as_posix()
+              for crate in ("verify-core", "verify-engine"):
+                  text = text.replace(f"{old_rel}/crates/{crate}", f"{new_rel}/crates/{crate}")
+              cargo_file.write_text(text)
 
           # verify-core and verify-engine use `*.workspace = true` inheritance.
           # When twinning is itself a workspace (resolver 3), Cargo resolves those
@@ -140,7 +151,6 @@ jobs:
           verify-core = {{ path = "../verify-core" }}
           """
 
-          import textwrap
           Path(".release-vendor/verify/crates/verify-core/Cargo.toml").write_text(
               textwrap.dedent(core_toml)
           )
@@ -262,16 +272,25 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import os
+          import textwrap
           import tomllib
           from pathlib import Path
 
           # verify is checked out directly to .release-vendor/verify — no copy needed.
 
-          cargo = Path("Cargo.toml")
-          text = cargo.read_text()
-          text = text.replace("../verify/crates/verify-core", ".release-vendor/verify/crates/verify-core")
-          text = text.replace("../verify/crates/verify-engine", ".release-vendor/verify/crates/verify-engine")
-          cargo.write_text(text)
+          for cargo_file in sorted(Path(".").rglob("Cargo.toml")):
+              if ".release-vendor" in cargo_file.parts:
+                  continue
+              text = cargo_file.read_text()
+              if "verify/crates/verify-" not in text:
+                  continue
+              file_dir = str(cargo_file.parent)
+              old_rel = Path(os.path.relpath("../verify", file_dir)).as_posix()
+              new_rel = Path(os.path.relpath(".release-vendor/verify", file_dir)).as_posix()
+              for crate in ("verify-core", "verify-engine"):
+                  text = text.replace(f"{old_rel}/crates/{crate}", f"{new_rel}/crates/{crate}")
+              cargo_file.write_text(text)
 
           verify_ws = tomllib.loads(Path(".release-vendor/verify/Cargo.toml").read_text())
           ws_pkg = verify_ws["workspace"]["package"]
@@ -328,7 +347,6 @@ jobs:
           verify-core = {{ path = "../verify-core" }}
           """
 
-          import textwrap
           Path(".release-vendor/verify/crates/verify-core/Cargo.toml").write_text(
               textwrap.dedent(core_toml)
           )
