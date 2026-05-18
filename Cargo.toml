@@ -1,6 +1,6 @@
 [package]
 name = "twinning"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 authors = ["CMD+RVL <engineering@cmdrvl.com>"]
 description = "In-memory database twin bootstrap: validate schema assets, emit deterministic reports, and prepare the Postgres-first twin runtime"
