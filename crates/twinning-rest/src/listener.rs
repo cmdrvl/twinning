@@ -23,6 +23,7 @@ use axum::{
     response::Response,
 };
 use serde_json::json;
+#[cfg(unix)]
 use signal_hook::{
     consts::signal::{SIGINT, SIGTERM},
     iterator::Signals,
@@ -899,10 +900,17 @@ fn json_response_with_retry_after(
         .expect("static REST response")
 }
 
+#[cfg(unix)]
 fn wait_for_shutdown_signal() -> RefusalResult<()> {
     let mut signals = Signals::new([SIGINT, SIGTERM])
         .map_err(|error| Box::new(refusal::runtime_io("rest_signal", error.to_string())))?;
     let _ = signals.forever().next();
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn wait_for_shutdown_signal() -> RefusalResult<()> {
+    std::thread::park();
     Ok(())
 }
 
