@@ -252,10 +252,20 @@ fn serve_on_current_thread(
         .map_err(|error| error.to_string())?;
 
     runtime.block_on(async move {
-        let listener = TcpListener::bind((host.as_str(), port))
-            .await
-            .map_err(|error| error.to_string())?;
-        let addr = listener.local_addr().map_err(|error| error.to_string())?;
+        let listener = match TcpListener::bind((host.as_str(), port)).await {
+            Ok(l) => l,
+            Err(error) => {
+                let _ = addr_tx.send(Err(error.to_string()));
+                return Ok(());
+            }
+        };
+        let addr = match listener.local_addr() {
+            Ok(a) => a,
+            Err(error) => {
+                let _ = addr_tx.send(Err(error.to_string()));
+                return Ok(());
+            }
+        };
         addr_tx.send(Ok(addr)).map_err(|error| error.to_string())?;
 
         let app = Router::new()
