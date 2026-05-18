@@ -63,6 +63,19 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  protocol-import-boundaries:
+    name: Protocol Import Boundaries
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: twinning
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: twinning
+      - name: Check protocol import boundaries
+        run: scripts/check_protocol_import_boundaries.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -84,6 +97,77 @@ jobs:
             twinning -> target
       - name: Run tests
         run: cargo test
+
+  feature-matrix:
+    name: Feature Matrix (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: rest
+            cargo_flags: --no-default-features --features rest
+            target_dir: target/feature-rest
+          - name: postgres
+            cargo_flags: --no-default-features --features postgres
+            target_dir: target/feature-postgres
+          - name: mcp
+            cargo_flags: --no-default-features --features mcp
+            target_dir: target/feature-mcp
+          - name: snowflake
+            cargo_flags: --no-default-features --features snowflake
+            target_dir: target/feature-snowflake
+          - name: rest+postgres
+            cargo_flags: --no-default-features --features rest,postgres
+            target_dir: target/feature-rest-postgres
+          - name: all
+            cargo_flags: --features all
+            target_dir: target/feature-all
+    defaults:
+      run:
+        working-directory: twinning
+    env:
+      CARGO_TARGET_DIR: ${{ matrix.target_dir }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: twinning
+      - uses: actions/checkout@v4
+        with:
+          repository: cmdrvl/verify
+          path: verify
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            twinning -> ${{ matrix.target_dir }}
+      - name: Build feature set
+        run: cargo build ${{ matrix.cargo_flags }}
+      - name: Test feature set
+        run: cargo test ${{ matrix.cargo_flags }}
+      - name: Build release for size guardrail
+        run: cargo build --release ${{ matrix.cargo_flags }}
+      - name: Report binary size
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="${CARGO_TARGET_DIR}/release/twinning"
+          size_bytes="$(stat -c%s "$binary")"
+          {
+            echo "### twinning ${{ matrix.name }}"
+            echo
+            echo "| Feature set | Binary | Size bytes |"
+            echo "| --- | --- | ---: |"
+            echo "| ${{ matrix.name }} | \`$binary\` | $size_bytes |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s,%s\n' "${{ matrix.name }}" "$size_bytes" > "feature-size-${{ matrix.name }}.csv"
+      - name: Upload feature size artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-size-${{ matrix.name }}
+          path: twinning/feature-size-${{ matrix.name }}.csv
+          if-no-files-found: error
+          retention-days: 14
 
   live-postgres-parity:
     name: Live Postgres Parity
@@ -207,7 +291,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, test, live-postgres-parity, ubs, build]
+    needs: [fmt, clippy, protocol-import-boundaries, test, feature-matrix, live-postgres-parity, ubs, build]
     if: always()
     steps:
       - name: Check all jobs succeeded
@@ -220,8 +304,16 @@ jobs:
             echo "Clippy job failed"
             exit 1
           fi
+          if [[ "${{ needs.protocol-import-boundaries.result }}" != "success" ]]; then
+            echo "Protocol import boundary job failed"
+            exit 1
+          fi
           if [[ "${{ needs.test.result }}" != "success" ]]; then
             echo "Test job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.feature-matrix.result }}" != "success" ]]; then
+            echo "Feature matrix job failed"
             exit 1
           fi
           if [[ "${{ needs.live-postgres-parity.result }}" != "success" ]]; then

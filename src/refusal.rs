@@ -1,296 +1,123 @@
-use std::path::Path;
+pub use twinning_kernel::refusal::*;
 
-use serde::Serialize;
-use serde_json::{Value, json};
+#[cfg(any(feature = "rest", feature = "mcp", feature = "snowflake"))]
+use serde_json::json;
 
-use crate::{cli::Engine, config::TwinConfig, report::LiveVerifyArtifact};
+#[cfg(feature = "rest")]
+use crate::config::RestConfig;
 
-pub const VERSION: &str = "twinning.v0";
-pub type RefusalResult<T> = Result<T, Box<RefusalEnvelope>>;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct RefusalEnvelope {
-    version: String,
-    outcome: &'static str,
-    refusal: Refusal,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Refusal {
-    code: String,
-    message: String,
-    detail: Value,
-    next_command: Option<String>,
-}
-
-impl RefusalEnvelope {
-    pub fn new(
-        code: impl Into<String>,
-        message: impl Into<String>,
-        detail: Value,
-        next_command: Option<String>,
-    ) -> Self {
-        Self {
-            version: VERSION.to_owned(),
-            outcome: "REFUSAL",
-            refusal: Refusal {
-                code: code.into(),
-                message: message.into(),
-                detail,
-                next_command,
-            },
-        }
-    }
-
-    pub fn render(&self, json_mode: bool) -> Result<String, serde_json::Error> {
-        if json_mode {
-            let mut rendered = serde_json::to_string_pretty(self)?;
-            rendered.push('\n');
-            return Ok(rendered);
-        }
-
-        let mut rendered = format!(
-            "REFUSAL [{}]\n{}\n",
-            self.refusal.code, self.refusal.message
-        );
-        if !self.refusal.detail.is_null() && self.refusal.detail != json!({}) {
-            rendered.push_str(&format!("detail: {}\n", self.refusal.detail));
-        }
-        if let Some(next_command) = &self.refusal.next_command {
-            rendered.push_str(&format!("next: {next_command}\n"));
-        }
-        Ok(rendered)
-    }
-}
-
-pub fn missing_bootstrap_source(engine: Engine) -> RefusalEnvelope {
+#[cfg(feature = "rest")]
+pub fn missing_rest_spec() -> RefusalEnvelope {
     RefusalEnvelope::new(
-        "E_BOOTSTRAP_SOURCE_REQUIRED",
-        "Provide either --schema <FILE> or --restore <FILE>.",
-        json!({ "engine": engine.as_str() }),
-        Some(format!(
-            "twinning {} --schema schema.sql --json",
-            engine.as_str()
-        )),
+        "E_REST_SPEC_REQUIRED",
+        "Provide --spec <FILE> for the OpenAPI document.",
+        json!({ "protocol": "rest" }),
+        Some("twinning rest --spec api.yaml --json".to_owned()),
     )
 }
 
-pub fn missing_command() -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_COMMAND_REQUIRED",
-        "Choose `postgres`, `mysql`, `oracle`, or `doctor`.",
-        json!({}),
-        Some("twinning doctor health --json".to_owned()),
-    )
-}
-
-pub fn ambiguous_bootstrap_source() -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_AMBIGUOUS_BOOTSTRAP_SOURCE",
-        "Use exactly one bootstrap source: --schema or --restore, not both.",
-        json!({}),
-        Some("twinning postgres --schema schema.sql --json".to_owned()),
-    )
-}
-
-pub fn materialization_requires_schema() -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_MATERIALIZATION_BOOTSTRAP_SOURCE",
-        "Live source materialization requires --schema and cannot be combined with --restore.",
-        json!({
-            "required_bootstrap_source": "schema",
-            "disallowed_with": "restore"
-        }),
-        Some(
-            "twinning postgres --schema schema.sql --materialize-source-url postgres://... --snapshot out.twin --json"
-                .to_owned(),
-        ),
-    )
-}
-
-pub fn ambiguous_live_mode(engine: Engine) -> RefusalEnvelope {
+#[cfg(feature = "rest")]
+pub fn ambiguous_rest_live_mode() -> RefusalEnvelope {
     RefusalEnvelope::new(
         "E_AMBIGUOUS_LIVE_MODE",
         "Use either --run for one child command or --serve for standalone interactive mode, not both.",
-        json!({ "engine": engine.as_str(), "disallowed_combination": ["run", "serve"] }),
+        json!({ "protocol": "rest", "disallowed_combination": ["run", "serve"] }),
+        Some("twinning rest --spec api.yaml --serve --json".to_owned()),
+    )
+}
+
+#[cfg(feature = "mcp")]
+pub fn missing_mcp_catalog_source() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_MCP_SOURCE_REQUIRED",
+        "Provide exactly one MCP catalog source: --server <COMMAND> or --manifest <FILE>.",
+        json!({ "protocol": "mcp" }),
+        Some("twinning mcp --manifest mcp.json --json".to_owned()),
+    )
+}
+
+#[cfg(feature = "mcp")]
+pub fn ambiguous_mcp_catalog_source() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_MCP_SOURCE_AMBIGUOUS",
+        "Use either --server for live MCP introspection or --manifest for a static catalog, not both.",
+        json!({ "protocol": "mcp", "disallowed_combination": ["server", "manifest"] }),
+        Some("twinning mcp --manifest mcp.json --json".to_owned()),
+    )
+}
+
+#[cfg(feature = "mcp")]
+pub fn mcp_stdio_run_unsupported() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_MCP_STDIO_RUN_UNSUPPORTED",
+        "Use --stdio for line-delimited stdin/stdout mode or --run for HTTP run-once mode, not both.",
+        json!({ "protocol": "mcp", "disallowed_combination": ["stdio", "run"] }),
+        Some("twinning mcp --stdio --manifest mcp.json --json".to_owned()),
+    )
+}
+
+#[cfg(feature = "snowflake")]
+pub fn missing_snowflake_schema() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_SNOWFLAKE_SCHEMA_REQUIRED",
+        "Provide --schema <FILE> for the Snowflake DDL catalog seed.",
+        json!({ "protocol": "snowflake" }),
+        Some("twinning snowflake --schema schema.sql --json".to_owned()),
+    )
+}
+
+#[cfg(feature = "snowflake")]
+pub fn ambiguous_snowflake_live_mode() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_AMBIGUOUS_LIVE_MODE",
+        "Use either --run for one child command or --serve for standalone interactive mode, not both.",
+        json!({ "protocol": "snowflake", "disallowed_combination": ["run", "serve"] }),
+        Some("twinning snowflake --schema schema.sql --serve --json".to_owned()),
+    )
+}
+
+#[cfg(feature = "rest")]
+pub fn rest_listener_unimplemented(config: &RestConfig) -> RefusalEnvelope {
+    let startup_notice = if config.serve_defaulted {
         Some(format!(
-            "twinning {} --schema schema.sql --serve --json",
-            engine.as_str()
-        )),
-    )
-}
+            "No --run or --serve specified \u{2014} defaulting to interactive serve mode on http://{}:{}",
+            config.host, config.port
+        ))
+    } else {
+        None
+    };
+    let bind_warning = if config.host == "0.0.0.0" {
+        Some(
+            "WARNING: REST twin binding to 0.0.0.0 \u{2014} accessible on all interfaces. Use only in trusted network environments.",
+        )
+    } else {
+        None
+    };
+    let strict_warning = if config.strict {
+        Some("--strict response validation is not yet implemented")
+    } else {
+        None
+    };
 
-pub fn engine_unimplemented(engine: Engine) -> RefusalEnvelope {
     RefusalEnvelope::new(
-        "E_ENGINE_UNIMPLEMENTED",
-        format!(
-            "`{}` is declared in the CLI, but this build only implements the Postgres bootstrap path.",
-            engine.as_str()
-        ),
+        "E_REST_LISTENER_UNIMPLEMENTED",
+        "REST CLI/config dispatch is wired, but the HTTP listener is not implemented in this build.",
         json!({
-            "requested_engine": engine.as_str(),
-            "implemented_engine": "postgres"
-        }),
-        Some("twinning postgres --schema schema.sql --json".to_owned()),
-    )
-}
-
-pub fn run_mode_unimplemented(config: &TwinConfig) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_RUN_MODE_UNIMPLEMENTED",
-        "Live command execution depends on the wire-protocol server, which is not implemented in this build.",
-        json!({
-            "engine": config.engine.as_str(),
+            "protocol": "rest",
+            "spec": config.spec_path.display().to_string(),
             "host": config.host,
             "port": config.port,
-            "run": config.run_command
+            "mode": if config.run_command.is_some() { "run_once" } else { "serve" },
+            "serve": config.serve,
+            "serve_defaulted": config.serve_defaulted,
+            "run": config.run_command,
+            "report": config.report_path.as_ref().map(|path| path.display().to_string()),
+            "canary": config.canary_path.as_ref().map(|path| path.display().to_string()),
+            "strict": config.strict,
+            "startup_notice": startup_notice,
+            "bind_warning": bind_warning,
+            "strict_warning": strict_warning,
         }),
-        Some(format!(
-            "twinning {} --schema schema.sql --report bootstrap.json --json",
-            config.engine.as_str()
-        )),
+        Some("twinning doctor capabilities --json".to_owned()),
     )
-}
-
-pub fn runtime_io(stage: &str, error: impl Into<String>) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_RUNTIME_IO",
-        format!("Live runtime failed during `{stage}`."),
-        json!({
-            "stage": stage,
-            "error": error.into(),
-        }),
-        None,
-    )
-}
-
-pub fn io_read(path: &Path, error: &std::io::Error) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_IO_READ",
-        format!("Failed to read `{}`.", path.display()),
-        json!({ "path": path.display().to_string(), "error": error.to_string() }),
-        None,
-    )
-}
-
-pub fn io_write(path: &Path, error: &std::io::Error) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_IO_WRITE",
-        format!("Failed to write `{}`.", path.display()),
-        json!({ "path": path.display().to_string(), "error": error.to_string() }),
-        None,
-    )
-}
-
-pub fn schema_parse(path: &Path, message: impl Into<String>) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_SCHEMA_PARSE",
-        format!("Schema bootstrap failed for `{}`.", path.display()),
-        json!({ "path": path.display().to_string(), "error": message.into() }),
-        Some(format!(
-            "twinning postgres --schema {} --json",
-            path.display()
-        )),
-    )
-}
-
-pub fn verify_artifact_parse(path: &Path, message: impl Into<String>) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_VERIFY_ARTIFACT_PARSE",
-        format!(
-            "Compiled verify artifact bootstrap failed for `{}`.",
-            path.display()
-        ),
-        json!({ "path": path.display().to_string(), "error": message.into() }),
-        None,
-    )
-}
-
-pub fn verify_batch_only_rule(artifact: &LiveVerifyArtifact) -> RefusalEnvelope {
-    let batch_only_rule = artifact
-        .batch_only_rule
-        .as_ref()
-        .expect("batch-only refusal requires a detected rule");
-
-    RefusalEnvelope::new(
-        "E_BATCH_ONLY_RULE",
-        "Embedded twin execution cannot evaluate batch-only verify rules.",
-        json!({
-            "execution_mode": "embedded",
-            "verify_artifact": {
-                "source": artifact.report.source,
-                "hash": artifact.report.hash,
-                "loaded": artifact.report.loaded,
-                "constraint_set_id": artifact.constraint_set_id,
-            },
-            "rule_id": batch_only_rule.rule_id,
-            "op": batch_only_rule.op,
-        }),
-        None,
-    )
-}
-
-pub fn snapshot_verify(path: &Path, message: impl Into<String>) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_SNAPSHOT_VERIFY",
-        format!("Snapshot verification failed for `{}`.", path.display()),
-        json!({ "path": path.display().to_string(), "error": message.into() }),
-        Some(format!(
-            "twinning postgres --schema schema.sql --snapshot {} --json",
-            path.display()
-        )),
-    )
-}
-
-pub fn serialization(message: impl Into<String>) -> RefusalEnvelope {
-    RefusalEnvelope::new(
-        "E_SERIALIZATION",
-        "Failed to serialize twinning output.",
-        json!({ "error": message.into() }),
-        None,
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::Value;
-    use verify_core::constraint::ConstraintSet;
-
-    use crate::report::{BatchOnlyRule, LiveVerifyArtifact, VerifyArtifactReport};
-
-    use super::verify_batch_only_rule;
-
-    #[test]
-    fn batch_only_verify_refusal_preserves_artifact_identity() {
-        let artifact = LiveVerifyArtifact {
-            report: VerifyArtifactReport {
-                source: "constraints.verify.json".to_owned(),
-                hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                    .to_owned(),
-                loaded: 4,
-            },
-            constraint_set_id: "portfolio.loan_tape.v1".to_owned(),
-            batch_only_rule: Some(BatchOnlyRule {
-                rule_id: "ORPHAN_PROPERTY_TENANT".to_owned(),
-                op: "query_zero_rows".to_owned(),
-            }),
-            constraint_set: ConstraintSet::new("portfolio.loan_tape.v1"),
-        };
-
-        let rendered = verify_batch_only_rule(&artifact)
-            .render(true)
-            .expect("render refusal");
-        let json: Value = serde_json::from_str(&rendered).expect("parse refusal json");
-
-        assert_eq!(json["refusal"]["code"], "E_BATCH_ONLY_RULE");
-        assert_eq!(
-            json["refusal"]["detail"]["verify_artifact"]["constraint_set_id"],
-            "portfolio.loan_tape.v1"
-        );
-        assert_eq!(
-            json["refusal"]["detail"]["rule_id"],
-            "ORPHAN_PROPERTY_TENANT"
-        );
-        assert_eq!(json["refusal"]["detail"]["op"], "query_zero_rows");
-    }
 }

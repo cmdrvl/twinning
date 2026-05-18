@@ -1,0 +1,54 @@
+{
+  "serverInfo": {
+    "name": "fixture-mcp",
+    "version": "1.0.0"
+  },
+  "tools": [
+    {
+      "name": "lookup",
+      "description": "Read-only lookup",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "write_note",
+      "description": "Stateful write",
+      "inputSchema": {
+        "type": "object"
+      }
+    }
+  ],
+  "resources": [
+    {
+      "uri": "file:///tmp/demo",
+      "name": "demo",
+      "mimeType": "text/plain"
+    }
+  ],
+  "prompts": [
+    {
+      "name": "summarize",
+      "description": "Summarize a topic",
+      "arguments": [
+        {
+          "name": "topic",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

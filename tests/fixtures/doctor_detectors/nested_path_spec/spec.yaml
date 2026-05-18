@@ -1,0 +1,26 @@
+openapi: 3.0.0
+info:
+  title: Nested path detector
+  version: v1
+components:
+  schemas:
+    File:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+    Chunk:
+      type: object
+      required: [id, file_id]
+      properties:
+        id:
+          type: integer
+        file_id:
+          type: integer
+paths:
+  /files/{file_id}/chunks/{chunk_id}:
+    get:
+      operationId: getNestedChunk

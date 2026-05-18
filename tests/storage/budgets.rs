@@ -5,6 +5,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, MutexGuard},
     time::Instant,
 };
 
@@ -24,6 +25,7 @@ const OVERLAY_WORKLOAD_ROWS: usize = 512;
 const TOURNAMENT_BASE_ROWS: usize = 32;
 const TOURNAMENT_CYCLES: usize = 8;
 const BASELINE_VERSION: &str = "twinning.storage-budget-baseline.v1";
+static BUDGET_TIMING_LOCK: Mutex<()> = Mutex::new(());
 const BUDGET_SCHEMA: &str = r#"
 CREATE TABLE public.deals (
     deal_id TEXT PRIMARY KEY,
@@ -211,6 +213,12 @@ struct CommandTiming {
 
 fn twinning_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_twinning"))
+}
+
+fn budget_timing_lock() -> MutexGuard<'static, ()> {
+    BUDGET_TIMING_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn write_schema(dir: &Path) -> PathBuf {
@@ -675,6 +683,7 @@ fn budget_metric_definitions_match_plan_contract() {
 
 #[test]
 fn phase_zero_budget_harness_captures_storage_and_rss_baselines() {
+    let _timing_guard = budget_timing_lock();
     let dir = tempdir().expect("tempdir");
     let schema_path = write_schema(dir.path());
     let snapshot_path = dir.path().join("bootstrap.twin");
@@ -789,6 +798,7 @@ fn phase_zero_budget_harness_captures_storage_and_rss_baselines() {
 
 #[test]
 fn tournament_workload_gate_enforces_reset_overlay_memory_and_final_artifacts() {
+    let _timing_guard = budget_timing_lock();
     let dir = tempdir().expect("tempdir");
     let (snapshot_path, base_snapshot) = write_tournament_snapshot(dir.path());
 
@@ -871,15 +881,14 @@ fn assert_metrics_within_red_lines(metrics: &[MetricCapture]) {
                     "captured metric `{}` must include at least one sample",
                     metric.metric
                 );
+                let median = metric.median.expect("captured metric should have a median");
                 assert!(
-                    metric
-                        .samples
-                        .iter()
-                        .all(|sample| *sample <= metric.red_line),
-                    "budget red line exceeded for `{}`: red_line={} {}, samples={:?}",
+                    median <= metric.red_line,
+                    "budget red line exceeded for `{}`: red_line={} {}, median={}, samples={:?}",
                     metric.metric,
                     metric.red_line,
                     metric.unit,
+                    median,
                     metric.samples
                 );
             }

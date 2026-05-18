@@ -1,18 +1,17 @@
-use std::{path::Path, time::Duration};
+use std::path::Path;
+
+#[cfg(feature = "postgres")]
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
 use crate::{
-    backend::BaseSnapshotBackend,
     catalog::{self, Catalog},
     cli::Engine,
     config::TwinConfig,
     declaration::{CatalogDeclarationIdentity, load_catalog_declaration},
     kernel::storage::TableStorage,
-    materialize,
-    protocol::postgres::listener::{PgwireListener, SharedPgwireState, ShutdownHook},
-    query_trace::{SharedQueryTrace, write_query_trace},
-    refusal,
+    materialize, refusal,
     refusal::RefusalResult,
     report::{
         LiveVerifyArtifact, RatioMap, RunReport, SourceMaterializationReport, VerifyArtifactReport,
@@ -21,11 +20,23 @@ use crate::{
     snapshot::SnapshotRelations,
 };
 
+#[cfg(feature = "postgres")]
+use crate::{
+    backend::BaseSnapshotBackend,
+    query_trace::{SharedQueryTrace, write_query_trace},
+};
+
+#[cfg(feature = "postgres")]
+use crate::protocol::postgres::listener::{PgwireListener, SharedPgwireState, ShutdownHook};
+
 mod final_artifacts;
-pub mod run_child;
+pub mod run_child {
+    pub use twinning_kernel::runtime::run_child::*;
+}
 
 use final_artifacts::FinalArtifactEmitter;
 
+#[cfg(feature = "postgres")]
 const RUN_CHILD_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +135,7 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
     })
 }
 
+#[cfg(feature = "postgres")]
 fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResult<Execution> {
     let shutdown = ShutdownHook::install().map_err(|error| {
         Box::new(refusal::runtime_io(
@@ -216,6 +228,12 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
     })
 }
 
+#[cfg(not(feature = "postgres"))]
+fn execute_run_mode(config: &TwinConfig, _state: &BootstrapState) -> RefusalResult<Execution> {
+    Err(Box::new(refusal::run_mode_unimplemented(config)))
+}
+
+#[cfg(feature = "postgres")]
 fn execute_serve_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResult<Execution> {
     let shutdown = ShutdownHook::install().map_err(|error| {
         Box::new(refusal::runtime_io(
@@ -281,6 +299,12 @@ fn execute_serve_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalRes
     })
 }
 
+#[cfg(not(feature = "postgres"))]
+fn execute_serve_mode(config: &TwinConfig, _state: &BootstrapState) -> RefusalResult<Execution> {
+    Err(Box::new(refusal::run_mode_unimplemented(config)))
+}
+
+#[cfg(feature = "postgres")]
 fn live_pgwire_state(
     config: &TwinConfig,
     state: &BootstrapState,
@@ -300,6 +324,7 @@ fn live_pgwire_state(
     Ok((live_state, query_trace))
 }
 
+#[cfg(feature = "postgres")]
 fn write_live_query_trace(
     config: &TwinConfig,
     query_trace: Option<&SharedQueryTrace>,
@@ -534,6 +559,7 @@ fn path_display(path: &Path) -> String {
     path.display().to_string()
 }
 
+#[cfg(feature = "postgres")]
 fn committed_tables_for_live_run(
     config: &TwinConfig,
     state: &BootstrapState,
@@ -584,6 +610,7 @@ fn materialized_committed_tables(
     snapshot::restore::restore_committed_tables(&snapshot).map(Some)
 }
 
+#[cfg(feature = "postgres")]
 fn verify_failed(verify: Option<&serde_json::Value>) -> bool {
     verify
         .and_then(|verify| verify.get("outcome"))
@@ -601,17 +628,24 @@ fn execution_exit_domain(_run: Option<&RunReport>, verify_failed: bool) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, net::TcpListener};
+    #[cfg(feature = "postgres")]
+    use std::collections::BTreeMap;
+    use std::fs;
 
+    #[cfg(feature = "postgres")]
+    use std::net::TcpListener;
+
+    #[cfg(feature = "postgres")]
     use serde_json::json;
     use tempfile::tempdir;
 
+    #[cfg(feature = "postgres")]
     use crate::{
         catalog,
-        cli::Engine,
-        config::TwinConfig,
         snapshot::{self, TwinSnapshot},
     };
+
+    use crate::{cli::Engine, config::TwinConfig};
 
     use crate::report::RunReport;
 
@@ -702,6 +736,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "postgres")]
     fn run_mode_executes_child_against_live_listener_and_emits_run_metadata() {
         let tempdir = tempdir().expect("tempdir");
         let schema_path = tempdir.path().join("schema.sql");
@@ -1144,6 +1179,7 @@ sock.close()
     }
 
     #[test]
+    #[cfg(feature = "postgres")]
     fn run_mode_verify_failures_raise_process_exit_one() {
         let tempdir = tempdir().expect("tempdir");
         let schema_path = tempdir.path().join("schema.sql");
@@ -1229,6 +1265,7 @@ sock.close()
         assert_eq!(json["verify"]["outcome"], "FAIL");
     }
 
+    #[cfg(feature = "postgres")]
     fn reserve_local_port() -> u16 {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local port");
         let port = listener.local_addr().expect("listener addr").port();

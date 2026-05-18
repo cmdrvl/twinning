@@ -221,7 +221,7 @@ fn health_report() -> HealthReport {
             },
         ],
         recommendations: detector_recommendations(),
-        next_step: "Use `twinning doctor --robot-triage` for machine-readable follow-up work before any fix mode is added.",
+        next_step: "Use `twinning doctor --robot-triage` for machine-readable follow-up work, or start with `twinning postgres --schema schema.sql --json` / `twinning rest --spec openapi.yaml --json` for protocol-specific checks.",
     }
 }
 
@@ -270,6 +270,12 @@ fn capabilities_report() -> CapabilitiesReport {
                 read_only: true,
                 description: "Validates a Postgres bootstrap schema and emits the existing status report.",
             },
+            CommandCapability {
+                command: "twinning rest --spec <FILE> --json",
+                output: "twinning.rest-report.v0 JSON",
+                read_only: false,
+                description: "Starts an OpenAPI 3.x REST twin. Required input is JSON or YAML; key flags are --run, --serve, --report, --canary, and --port (default 8080). V1 REST twin with adaptive routing (flat-crud, schema-first, prefix-scoped topology), response wrapper detection, remote $ref resolution, and auth shape compliance. Nested paths handled via ResourceTopology. Bypasses auth credential validation in bypass mode (shape mode enforces credential presence).",
+            },
         ],
         output_contracts: vec![
             OutputContract {
@@ -286,6 +292,11 @@ fn capabilities_report() -> CapabilitiesReport {
                 name: "bootstrap snapshot",
                 version: "twinning.snapshot.v0",
                 description: "Snapshot output remains exclusive to bootstrap/run paths, not doctor paths.",
+            },
+            OutputContract {
+                name: "REST session report",
+                version: "twinning.rest-report.v0",
+                description: "REST sessions report spec identity, exercised endpoints, refusals, constraint violations, and optional canary assertions.",
             },
         ],
         detectors: detector_specs(),
@@ -417,6 +428,45 @@ fn detector_specs() -> Vec<DetectorSpec> {
             fix_available: false,
             required_before_fix: fix_requirements(),
         },
+        DetectorSpec {
+            id: "malformed_openapi_spec",
+            failure_mode: "Syntactically invalid OpenAPI YAML must stay a process-level REST bootstrap refusal.",
+            fixture: "tests/fixtures/doctor_detectors/malformed_openapi_spec/spec.yaml",
+            signal: DetectorSignal {
+                kind: "process_refusal",
+                code: "E_OPENAPI_PARSE",
+                sqlstate: None,
+                json_path: Some("$.refusal.code"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "circular_ref_spec",
+            failure_mode: "Circular or nested OpenAPI $ref chains must stay process-level REST bootstrap refusals.",
+            fixture: "tests/fixtures/doctor_detectors/circular_ref_spec/spec.yaml",
+            signal: DetectorSignal {
+                kind: "process_refusal",
+                code: "E_OPENAPI_REF",
+                sqlstate: None,
+                json_path: Some("$.refusal.code"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
+        DetectorSpec {
+            id: "nested_path_spec",
+            failure_mode: "Nested REST resource paths must be classified as unsupported route refusals with startup warnings.",
+            fixture: "tests/fixtures/doctor_detectors/nested_path_spec/spec.yaml",
+            signal: DetectorSignal {
+                kind: "route_refusal",
+                code: "unsupported_shape",
+                sqlstate: Some("0A000"),
+                json_path: Some("$.routes[*].kind=refusal"),
+            },
+            fix_available: false,
+            required_before_fix: fix_requirements(),
+        },
     ]
 }
 
@@ -448,6 +498,12 @@ fn detector_recommendations() -> Vec<Recommendation> {
             priority: "p3",
             action: "Add detectors for pgwire bind failures, unsupported canary shapes, and run_once child failure metadata.",
             reason: "Future fix mode must not touch live runtime state without exact failure classification.",
+        },
+        Recommendation {
+            id: "rest_protocol_detector_fixtures",
+            priority: "p3",
+            action: "Keep REST detector fixtures aligned with malformed OpenAPI specs, circular refs, and nested-path refusals.",
+            reason: "REST support must be explicit about unsupported spec and route shapes before the HTTP listener broadens.",
         },
     ]
 }
@@ -481,6 +537,7 @@ fn render_health_human(report: &HealthReport) -> String {
         format!("{} doctor {}", report.tool, report.status),
         format!("version: {}", report.package_version),
         String::from("read_only: true"),
+        String::from("REST protocol: twinning rest --spec <openapi.yaml> [OPTIONS]"),
     ];
     for check in &report.checks {
         lines.push(format!(
@@ -521,6 +578,7 @@ fn robot_docs() -> String {
         "  twinning doctor robot-docs",
         "  twinning doctor --robot-triage",
         "  twinning --describe",
+        "  twinning rest --spec <openapi.yaml> --json",
         "notes:",
         "  doctor mode does not read schema, snapshot, or verify files",
         "  doctor mode does not bind sockets, run child commands, or write artifacts",

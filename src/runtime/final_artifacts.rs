@@ -63,6 +63,7 @@ impl FinalArtifactEmitter {
         }
     }
 
+    #[cfg(feature = "postgres")]
     pub fn with_mode(mut self, mode: impl Into<String>) -> Self {
         self.mode = Some(mode.into());
         self

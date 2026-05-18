@@ -1,0 +1,21 @@
+[package]
+name = "twinning-kernel"
+version = "0.2.1"
+edition = "2024"
+authors = ["CMD+RVL <engineering@cmdrvl.com>"]
+description = "Protocol-neutral storage, catalog, snapshot, and verification kernel for twinning"
+license = "MIT"
+repository = "https://github.com/cmdrvl/twinning"
+
+[dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlparser = "0.53"
+thiserror = "2"
+verify-core = { path = "../../../verify/crates/verify-core" }
+verify-engine = { path = "../../../verify/crates/verify-engine" }
+
+[dev-dependencies]
+tempfile = "3"

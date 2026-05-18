@@ -1,0 +1,10 @@
+openapi: 3.0.0
+info:
+  title: Malformed OpenAPI detector
+  version: v1
+components:
+  schemas:
+    File:
+      type: object
+      properties:
+        id: { type: integer

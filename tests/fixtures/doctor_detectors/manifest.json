@@ -70,6 +70,34 @@
         "code": "run_once_child_failed",
         "json_path": "$.run.exit_code"
       }
+    },
+    {
+      "id": "malformed_openapi_spec",
+      "fixture": "tests/fixtures/doctor_detectors/malformed_openapi_spec/spec.yaml",
+      "expected": {
+        "kind": "process_refusal",
+        "code": "E_OPENAPI_PARSE",
+        "json_path": "$.refusal.code"
+      }
+    },
+    {
+      "id": "circular_ref_spec",
+      "fixture": "tests/fixtures/doctor_detectors/circular_ref_spec/spec.yaml",
+      "expected": {
+        "kind": "process_refusal",
+        "code": "E_OPENAPI_REF",
+        "json_path": "$.refusal.code"
+      }
+    },
+    {
+      "id": "nested_path_spec",
+      "fixture": "tests/fixtures/doctor_detectors/nested_path_spec/spec.yaml",
+      "expected": {
+        "kind": "route_refusal",
+        "code": "unsupported_shape",
+        "sqlstate": "0A000",
+        "json_path": "$.routes[*].kind=refusal"
+      }
     }
   ]
 }

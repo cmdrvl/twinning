@@ -2,7 +2,7 @@
 
 pub use twinning::{catalog, kernel};
 
-#[path = "../src/kernel/constraints.rs"]
+#[path = "../crates/twinning-kernel/src/kernel/constraints.rs"]
 mod constraints;
 
 use twinning::{

@@ -2,25 +2,22 @@
 
 use clap::Parser;
 
-pub mod backend;
-pub mod catalog;
 pub mod cli;
 pub mod config;
-pub mod declaration;
 pub mod doctor;
-pub mod ir;
-pub mod kernel;
-pub mod materialize;
 pub mod migration_proof;
 pub mod orchestration_manifest;
+#[cfg(feature = "rest")]
+pub mod port;
 pub mod protocol;
-pub mod query_trace;
 pub mod refusal;
 pub mod report;
-pub mod result;
 pub mod runtime;
-pub mod snapshot;
-pub mod verify_bridge;
+
+pub use twinning_kernel::{
+    backend, catalog, declaration, ir, kernel, materialize, query_trace, result, snapshot,
+    verify_bridge,
+};
 
 const OPERATOR_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/operator.json"));
 
@@ -54,7 +51,63 @@ pub fn run() -> Result<u8, Box<dyn std::error::Error>> {
         return Ok(execution.exit_code);
     }
 
-    let config = match config::TwinConfig::from_cli(&cli) {
+    #[cfg(feature = "rest")]
+    if let Some(cli::Command::Port(args)) = &cli.command {
+        let execution = port::execute(args, cli.json)?;
+        print!("{}", execution.stdout);
+        return Ok(execution.exit_code);
+    }
+
+    #[cfg(feature = "rest")]
+    if let Some(cli::Command::Rest(_args)) = &cli.command {
+        let config = match config::rest_config_from_cli(&cli) {
+            Ok(config) => config,
+            Err(refusal) => {
+                print!("{}", refusal.render(cli.json)?);
+                return Ok(2);
+            }
+        };
+
+        let execution = protocol::rest::listener::run(config)?;
+        print!("{}", execution.stdout);
+        return Ok(execution.exit_code);
+    }
+
+    #[cfg(feature = "mcp")]
+    if let Some(cli::Command::Mcp(_args)) = &cli.command {
+        let config = match config::mcp_config_from_cli(&cli) {
+            Ok(config) => config,
+            Err(refusal) => {
+                print!("{}", refusal.render(cli.json)?);
+                return Ok(2);
+            }
+        };
+
+        let execution = if config.stdio {
+            protocol::rest::mcp::stdio::run_stdio(config)?
+        } else {
+            protocol::rest::mcp::listener::run(config)?
+        };
+        print!("{}", execution.stdout);
+        return Ok(execution.exit_code);
+    }
+
+    #[cfg(feature = "snowflake")]
+    if let Some(cli::Command::Snowflake(_args)) = &cli.command {
+        let config = match config::snowflake_config_from_cli(&cli) {
+            Ok(config) => config,
+            Err(refusal) => {
+                print!("{}", refusal.render(cli.json)?);
+                return Ok(2);
+            }
+        };
+
+        let execution = twinning_snowflake::listener::run(config)?;
+        print!("{}", execution.stdout);
+        return Ok(execution.exit_code);
+    }
+
+    let config = match config::twin_config_from_cli(&cli) {
         Ok(config) => config,
         Err(refusal) => {
             print!("{}", refusal.render(cli.json)?);

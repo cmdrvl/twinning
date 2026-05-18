@@ -1,0 +1,128 @@
+# Static regression fixture derived from the public Google Books OpenAPI 3 surface.
+openapi: 3.0.3
+info:
+  title: Google Books routing fixture
+  version: "1.0"
+externalDocs:
+  url: https://api.apis.guru/v2/specs/googleapis.com/books/v1/openapi.json
+components:
+  schemas:
+    Volume:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        etag:
+          type: string
+    Bookshelf:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+    ReadingPosition:
+      type: object
+      required: [volumeId, position]
+      properties:
+        volumeId:
+          type: string
+        position:
+          type: string
+paths:
+  /books/v1/volumes:
+    get:
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: volumes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Volume"
+  /books/v1/volumes/{volumeId}:
+    parameters:
+      - name: volumeId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      responses:
+        "200":
+          description: volume
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Volume"
+  /books/v1/mylibrary/bookshelves:
+    get:
+      responses:
+        "200":
+          description: bookshelves
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bookshelf"
+  /books/v1/mylibrary/bookshelves/{shelf}/volumes:
+    parameters:
+      - name: shelf
+        in: path
+        required: true
+        schema:
+          type: integer
+    get:
+      responses:
+        "200":
+          description: bookshelf volumes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Volume"
+  /books/v1/users/{userId}/bookshelves:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      responses:
+        "200":
+          description: user bookshelves
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bookshelf"
+  /books/v1/mylibrary/readingpositions/{volumeId}:
+    parameters:
+      - name: volumeId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      responses:
+        "200":
+          description: reading position
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadingPosition"

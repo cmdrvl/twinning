@@ -1,0 +1,111 @@
+# Static regression fixture derived from the WireMock Admin OpenAPI 3 surface.
+openapi: 3.0.3
+info:
+  title: WireMock Admin routing fixture
+  version: "1.0"
+externalDocs:
+  url: https://wiremock.org/docs/standalone/admin-api-reference/
+x-twinning:
+  routing: prefix-scoped
+  base-prefix: /__admin
+components:
+  schemas:
+    Mapping:
+      type: object
+      required: [id, request, response]
+      properties:
+        id:
+          type: string
+        request:
+          type: object
+        response:
+          type: object
+    Request:
+      type: object
+      required: [id, method, url]
+      properties:
+        id:
+          type: string
+        method:
+          type: string
+        url:
+          type: string
+paths:
+  /__admin/mappings:
+    get:
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: mappings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Mapping"
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Mapping"
+      responses:
+        "201":
+          description: created mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mapping"
+  /__admin/mappings/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      responses:
+        "200":
+          description: mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mapping"
+    put:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Mapping"
+      responses:
+        "200":
+          description: updated mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mapping"
+    delete:
+      responses:
+        "204":
+          description: deleted mapping
+  /__admin/requests:
+    get:
+      responses:
+        "200":
+          description: requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Request"

@@ -1,0 +1,104 @@
+openapi: 3.0.3
+info:
+  title: Twinning REST minimal API
+  version: 1.0.0
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    File:
+      type: object
+      required:
+        - id
+        - name
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        size:
+          type: integer
+          format: int64
+      example:
+        id: 100
+        name: seeded.txt
+        size: 4096
+    Upload:
+      allOf:
+        - $ref: "#/components/schemas/File"
+        - type: object
+          required:
+            - upload_id
+          additionalProperties: false
+          properties:
+            upload_id:
+              type: string
+            source_file:
+              $ref: "#/components/schemas/File"
+paths:
+  /files:
+    get:
+      responses:
+        "200":
+          description: List files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/File"
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/File"
+      responses:
+        "201":
+          description: Created file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+  /files/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    get:
+      responses:
+        "200":
+          description: Read file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "404":
+          description: Missing file
+    patch:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/File"
+      responses:
+        "200":
+          description: Updated file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+    delete:
+      responses:
+        "204":
+          description: Deleted file

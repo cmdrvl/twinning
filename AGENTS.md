@@ -182,6 +182,14 @@ Critical structural rules:
 - future pgwire code belongs under a dedicated protocol module, not inside `runtime.rs`
 - future semantic kernel and backend work should follow the plan's separation of concerns rather than accreting into one file
 
+Protocol boundary rule:
+
+- no protocol module may import from another protocol module
+- `src/protocol/postgres/**` must not import or reference `protocol::rest`
+- `src/protocol/rest/**` must not import or reference `protocol::postgres`
+- move shared behavior into the shared kernel/backend/catalog/runtime layers instead
+- CI enforces this with `scripts/check_protocol_import_boundaries.sh`
+
 ---
 
 ## Output Contract (Critical)
@@ -321,7 +329,28 @@ Match the gate to the scope of your change:
 | runtime-sensitive (report/snapshot/refusal paths) | routine + verify snapshot determinism (same schema bytes produce same snapshot hash) |
 | stop-ship | all of the above + `./scripts/ubs_gate.sh` + manual review of artifact contract changes |
 
-The CI workflow at `.github/workflows/ci.yml` runs fmt, clippy, test, and UBS on every push and PR.
+The CI workflow at `.github/workflows/ci.yml` runs fmt, clippy, test, feature
+matrix validation, and UBS on every push and PR.
+
+### Feature Matrix Size Guardrail
+
+CI validates six binary feature sets: `rest`, `postgres`, `mcp`, `snowflake`,
+`rest+postgres`, and `all`. Each row builds, runs `cargo test`, then builds a
+release binary and reports the byte size in the GitHub Actions step summary and
+uploaded `feature-size-*` artifact.
+
+Local reference sizes from 2026-05-18 on macOS with the repository release
+profile. The `all` row reflects the current checked-in `all` feature set:
+`rest`, `postgres`, `mcp`, and `snowflake`.
+
+| Feature set | Cargo flags | Release bytes |
+|-------------|-------------|---------------|
+| `rest` | `--no-default-features --features rest` | 4,254,740 |
+| `postgres` | `--no-default-features --features postgres` | 2,316,688 |
+| `mcp` | `--no-default-features --features mcp` | 2,655,352 |
+| `snowflake` | `--no-default-features --features snowflake` | 3,104,208 |
+| `rest+postgres` | `--no-default-features --features rest,postgres` | 4,423,284 |
+| `all` | `--features all` | 5,271,084 |
 
 ---
 

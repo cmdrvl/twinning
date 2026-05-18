@@ -1,0 +1,57 @@
+{
+  "serverInfo": {
+    "name": "mcp-smoke",
+    "version": "1.0.0"
+  },
+  "tools": [
+    {
+      "name": "lookup",
+      "description": "Lookup a stable value",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    {
+      "name": "read_freeform",
+      "description": "A tool without declared output shape",
+      "inputSchema": {
+        "type": "object"
+      }
+    }
+  ],
+  "resources": [
+    {
+      "uri": "file:///fixture/readme.txt",
+      "name": "fixture-readme",
+      "mimeType": "text/plain"
+    }
+  ],
+  "prompts": [
+    {
+      "name": "summarize",
+      "description": "Summarize a topic",
+      "arguments": [
+        {
+          "name": "topic",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

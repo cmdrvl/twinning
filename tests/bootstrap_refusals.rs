@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "postgres")]
 
 use std::{
     fs,
@@ -117,7 +118,9 @@ fn run_mode_keeps_child_failures_in_report_but_process_exit_stays_zero() {
     let schema_path = write_schema(dir.path());
     let schema = schema_path.to_str().expect("schema path");
 
-    let run_mode = run_twinning(&["postgres", "--schema", schema, "--run", "exit 7", "--json"]);
+    let run_mode = run_twinning(&[
+        "postgres", "--schema", schema, "--port", "0", "--run", "exit 7", "--json",
+    ]);
 
     assert_eq!(
         run_mode.exit_code, 0,

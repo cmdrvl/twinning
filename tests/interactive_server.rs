@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "postgres")]
 
 #[cfg(unix)]
 mod unix {

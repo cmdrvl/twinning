@@ -1,0 +1,137 @@
+[
+  {
+    "name": "initialize negotiates unsupported protocol",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2099-01-01",
+        "capabilities": {},
+        "clientInfo": {
+          "name": "mcp-smoke",
+          "version": "1.0.0"
+        }
+      }
+    },
+    "expect": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "protocolVersion": "2025-03-26",
+        "serverInfo": {
+          "name": "mcp-smoke"
+        }
+      }
+    }
+  },
+  {
+    "name": "tools list exposes catalog tools",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/list"
+    },
+    "expect": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "result": {
+        "tools": [
+          {
+            "name": "lookup"
+          },
+          {
+            "name": "read_freeform"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "stubbable tool call returns typed content",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {
+        "name": "lookup",
+        "arguments": {
+          "key": "demo"
+        }
+      }
+    },
+    "expect": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+        "isError": false,
+        "content": [
+          {
+            "type": "text"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "unsupported tool shape returns MCP error",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {
+        "name": "read_freeform"
+      }
+    },
+    "expect": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "error": {
+        "code": -32000,
+        "message": "unsupported_shape",
+        "data": {
+          "kind": "unsupported_shape"
+        }
+      }
+    }
+  },
+  {
+    "name": "resources list exposes catalog resources",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "resources/list"
+    },
+    "expect": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "result": {
+        "resources": [
+          {
+            "uri": "file:///fixture/readme.txt",
+            "name": "fixture-readme"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "prompts list exposes catalog prompts",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "method": "prompts/list"
+    },
+    "expect": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "result": {
+        "prompts": [
+          {
+            "name": "summarize"
+          }
+        ]
+      }
+    }
+  }
+]

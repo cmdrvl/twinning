@@ -10,6 +10,8 @@
     "binary": "twinning",
     "usage": [
       "twinning postgres [OPTIONS]",
+      "twinning rest --spec <FILE> [--host HOST] [--port PORT] [--run COMMAND | --serve] [--report FILE] [--canary FILE] [--routing POLICY] [--base-prefix PREFIX] [--auth-mode MODE] [--strict] [--json]",
+      "twinning rest --spec <FILE> --json",
       "twinning proof twin-pair --left LEFT.twin --right RIGHT.twin --queries cases.json --json",
       "twinning proof twin-pair orchestrate --manifest proof-run.json --json",
       "twinning doctor health --json",
@@ -90,6 +92,74 @@
       "flag": "--query-trace",
       "type": "file_path",
       "description": "Write a redacted live query trace artifact for --run or --serve"
+    },
+    {
+      "name": "spec",
+      "flag": "--spec",
+      "type": "file_path",
+      "description": "OpenAPI 3.x YAML or JSON spec file. Supports local refs; remote $ref URLs fetched at startup."
+    },
+    {
+      "name": "host",
+      "flag": "--host",
+      "type": "string",
+      "default": "127.0.0.1",
+      "description": "REST listen host"
+    },
+    {
+      "name": "port",
+      "flag": "--port",
+      "type": "integer",
+      "default": 8080,
+      "description": "REST listen port"
+    },
+    {
+      "name": "run",
+      "flag": "--run",
+      "type": "string",
+      "description": "Run one child command against the live REST server, then exit"
+    },
+    {
+      "name": "serve",
+      "flag": "--serve",
+      "type": "flag",
+      "description": "Run interactive REST server until SIGINT/SIGTERM"
+    },
+    {
+      "name": "report",
+      "flag": "--report",
+      "type": "file_path",
+      "description": "Write REST session report as JSON (twinning.rest-report.v0)"
+    },
+    {
+      "name": "canary",
+      "flag": "--canary",
+      "type": "file_path",
+      "description": "Assert REST session report against canary expectations"
+    },
+    {
+      "name": "routing",
+      "flag": "--routing",
+      "type": "string",
+      "description": "Routing policy override: flat-crud | schema-first | prefix-scoped | auto (default)"
+    },
+    {
+      "name": "base_prefix",
+      "flag": "--base-prefix",
+      "type": "string",
+      "description": "Explicit path prefix to strip before resource classification (e.g. /api, /__admin)"
+    },
+    {
+      "name": "auth_mode",
+      "flag": "--auth-mode",
+      "type": "string",
+      "description": "REST auth shape mode override: shape (default) | bypass"
+    },
+    {
+      "name": "strict",
+      "flag": "--strict",
+      "type": "flag",
+      "description": "Fail startup if any route cannot be classified"
     },
     {
       "name": "restore",
@@ -179,13 +249,23 @@
       "restore-backed twin-pair orchestration runner, manifest parser, and schema",
       "replay/proof backend policy for snapshot-backed, disk-backed, and delegated storage boundaries",
       "storage-boundary reporting for tournament vs replay modes",
+      "REST twin: OpenAPI 3.x YAML/JSON to live HTTP server with Postgres-backed storage",
+      "v1 adaptive routing policy engine: flat-crud, schema-first, prefix-scoped evidence sources combined into ResourceTopology at startup",
+      "ResourceTopology with confidence scoring (Pinned/High/Medium/Low) and per-route conflict reporting",
+      "x-twinning OpenAPI extension for per-spec routing policy, base prefix, and auth mode overrides",
+      "Startup routing report: route coverage, confidence coverage, per-route classification table",
+      "Remote $ref URL resolution with 5s timeout and in-process cache",
+      "Response wrapper detection for data/items/results/entries payload fields and hint-matched semantic names",
+      "Auth shape compliance: enforce credential presence per declared security schemes, 401/403 with WWW-Authenticate (upcoming bd-bni1)",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
     "deferred_surface": [
       "snapshot-backed, disk-backed, and delegated replay/proof backend implementations behind policy gates",
       "schema-load materialization inside production twin-pair orchestration",
       "broad general-purpose database server compatibility",
-      "non-Postgres protocol families"
+      "Auth credential validation (any non-empty credential in declared format is accepted in shape mode)",
+      "Pagination response envelope materialization",
+      "PUT/PATCH/DELETE route coverage beyond POST/GET"
     ]
   },
   "artifacts": [
@@ -213,6 +293,11 @@
       "name": "twinning.twin-pair-orchestration-manifest.v0",
       "kind": "manifest",
       "description": "Manifest-first production twin-pair proof orchestration contract"
+    },
+    {
+      "name": "twinning.rest-report.v0",
+      "kind": "session_report",
+      "description": "REST session report: spec identity, routing table with confidence scores, exercised endpoints, refusals, constraint violations, and optional canary assertions"
     }
   ]
 }

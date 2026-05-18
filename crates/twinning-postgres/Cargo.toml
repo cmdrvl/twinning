@@ -1,0 +1,17 @@
+[package]
+name = "twinning-postgres"
+version = "0.2.1"
+edition = "2024"
+authors = ["CMD+RVL <engineering@cmdrvl.com>"]
+description = "Postgres pgwire protocol adapter for twinning"
+license = "MIT"
+repository = "https://github.com/cmdrvl/twinning"
+
+[dependencies]
+serde_json = "1"
+signal-hook = "0.3"
+thiserror = "2"
+twinning-kernel = { path = "../twinning-kernel" }
+
+[dev-dependencies]
+tempfile = "3"

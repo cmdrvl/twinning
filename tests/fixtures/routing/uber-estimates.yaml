@@ -1,0 +1,109 @@
+# Static regression fixture derived from Uber estimate and product API docs.
+openapi: 3.0.3
+info:
+  title: Uber estimates routing fixture
+  version: "1.0"
+externalDocs:
+  url: https://developer.uber.com/docs/v1-estimates-price
+components:
+  schemas:
+    PriceEstimate:
+      type: object
+      required: [product_id, estimate]
+      properties:
+        product_id:
+          type: string
+        estimate:
+          type: string
+        currency_code:
+          type: string
+        low_estimate:
+          type: integer
+        high_estimate:
+          type: integer
+    TimeEstimate:
+      type: object
+      required: [product_id, estimate]
+      properties:
+        product_id:
+          type: string
+        estimate:
+          type: integer
+        display_name:
+          type: string
+    Product:
+      type: object
+      required: [product_id, display_name]
+      properties:
+        product_id:
+          type: string
+        display_name:
+          type: string
+        capacity:
+          type: integer
+paths:
+  /v1/estimates/price:
+    get:
+      parameters:
+        - name: start_latitude
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: start_longitude
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: end_latitude
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: end_longitude
+          in: query
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: price estimates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceEstimate"
+  /v1/estimates/time:
+    get:
+      parameters:
+        - name: start_latitude
+          in: query
+          required: true
+          schema:
+            type: number
+        - name: start_longitude
+          in: query
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: time estimates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimeEstimate"
+  /v1/products:
+    get:
+      responses:
+        "200":
+          description: products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"

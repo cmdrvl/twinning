@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.rest-report.v0.schema.json",
+  "title": "twinning.rest-report.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "outcome", "spec", "session", "next_step"],
+  "properties": {
+    "version": {
+      "const": "twinning.rest-report.v0"
+    },
+    "outcome": {
+      "enum": ["PASS", "FAIL"]
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "hash",
+        "resource_count",
+        "route_count",
+        "security_schemes_bypassed"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "resource_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "route_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "security_schemes_bypassed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_count",
+        "endpoints_exercised",
+        "endpoints_not_exercised",
+        "constraint_violations",
+        "refusals"
+      ],
+      "properties": {
+        "request_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endpoints_exercised": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "endpoints_not_exercised": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraint_violations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "refusals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["assertion", "expected", "detail"],
+            "properties": {
+              "assertion": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "next_step": {
+      "type": "string"
+    }
+  }
+}

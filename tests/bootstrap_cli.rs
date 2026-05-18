@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "postgres")]
 
 use std::{
     fs,

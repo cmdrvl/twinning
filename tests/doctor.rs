@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "rest")]
 
 use std::{
     path::{Path, PathBuf},
@@ -69,6 +70,18 @@ fn doctor_health_is_read_only_twinning_v0_json() {
 }
 
 #[test]
+fn doctor_health_human_output_lists_rest_protocol() {
+    let dir = tempdir().expect("tempdir");
+
+    let output = run_twinning(&["doctor", "health"], dir.path());
+    assert_success(&output);
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    assert!(stdout.contains("REST protocol: twinning rest --spec <openapi.yaml> [OPTIONS]\n"));
+    assert!(stdout.contains("twinning rest --spec openapi.yaml --json"));
+}
+
+#[test]
 fn doctor_capabilities_reflect_agent_commands_and_no_fix_mode() {
     let dir = tempdir().expect("tempdir");
 
@@ -92,6 +105,24 @@ fn doctor_capabilities_reflect_agent_commands_and_no_fix_mode() {
             .iter()
             .any(|command| command["command"] == "twinning --describe")
     );
+    assert!(commands.iter().any(|command| {
+        command["command"] == "twinning rest --spec <FILE> --json"
+            && command["output"] == "twinning.rest-report.v0 JSON"
+            && command["description"].as_str().is_some_and(|description| {
+                description.contains("--port (default 8080)")
+                    && description.contains("adaptive routing")
+                    && description.contains("remote $ref resolution")
+                    && description.contains("auth shape compliance")
+            })
+    }));
+
+    let output_contracts = json["output_contracts"]
+        .as_array()
+        .expect("output contracts array");
+    assert!(output_contracts.iter().any(|contract| {
+        contract["name"] == "REST session report"
+            && contract["version"] == "twinning.rest-report.v0"
+    }));
 }
 
 #[test]
@@ -125,6 +156,7 @@ fn doctor_robot_docs_is_plain_agent_guidance() {
     let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
     assert!(stdout.starts_with("twinning doctor robot-docs\n"));
     assert!(stdout.contains("twinning doctor health --json\n"));
+    assert!(stdout.contains("twinning rest --spec <openapi.yaml> --json\n"));
     assert!(stdout.contains("doctor --fix is intentionally unavailable"));
 }
 
@@ -157,4 +189,37 @@ fn describe_works_without_engine_subcommand() {
     assert_eq!(json["name"], "twinning");
     assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(json["doctor"]["read_only"], true);
+
+    let usage = json["invocation"]["usage"]
+        .as_array()
+        .expect("usage array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(usage.contains("twinning rest --spec <FILE>"));
+
+    let options = json["options"].as_array().expect("options array");
+    assert!(options.iter().any(|option| {
+        option["name"] == "spec"
+            && option["flag"] == "--spec"
+            && option["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("OpenAPI 3.x YAML or JSON"))
+    }));
+
+    let implemented_surface = json["current_runtime_behavior"]["implemented_surface"]
+        .as_array()
+        .expect("implemented surface")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(implemented_surface.contains("REST twin: OpenAPI 3.x YAML/JSON"));
+    assert!(implemented_surface.contains("ResourceTopology with confidence scoring"));
+
+    let artifacts = json["artifacts"].as_array().expect("artifacts array");
+    assert!(artifacts.iter().any(|artifact| {
+        artifact["name"] == "twinning.rest-report.v0" && artifact["kind"] == "session_report"
+    }));
 }

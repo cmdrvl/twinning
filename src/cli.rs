@@ -1,39 +1,12 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use serde::{Deserialize, Serialize};
+use clap::{Args, Parser, Subcommand};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-#[serde(rename_all = "snake_case")]
-pub enum Engine {
-    Postgres,
-    Mysql,
-    Oracle,
-}
-
-impl Engine {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Postgres => "postgres",
-            Self::Mysql => "mysql",
-            Self::Oracle => "oracle",
-        }
-    }
-
-    pub fn default_port(self) -> u16 {
-        match self {
-            Self::Postgres => 5432,
-            Self::Mysql => 3306,
-            Self::Oracle => 1521,
-        }
-    }
-}
-
-impl std::fmt::Display for Engine {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+pub use twinning_kernel::Engine;
+#[cfg(any(feature = "rest", feature = "mcp"))]
+use twinning_rest::auth::RestAuthMode;
+#[cfg(feature = "rest")]
+use twinning_rest::{config::ChaosConfig, policy::RoutingPolicy};
 
 #[derive(Debug, Parser, Clone)]
 #[command(
@@ -61,6 +34,18 @@ pub enum Command {
     Mysql(TwinArgs),
     #[command(about = "Declared but refused until the Postgres v0 center is real")]
     Oracle(TwinArgs),
+    #[cfg(feature = "rest")]
+    #[command(about = "Prepare an OpenAPI-spec-driven REST interface twin")]
+    Rest(RestArgs),
+    #[cfg(feature = "rest")]
+    #[command(about = "Run dual REST twins for client migration proof")]
+    Port(PortArgs),
+    #[cfg(feature = "mcp")]
+    #[command(about = "Prepare a Model Context Protocol JSON-RPC interface twin")]
+    Mcp(McpArgs),
+    #[cfg(feature = "snowflake")]
+    #[command(about = "Prepare a Snowflake HTTP wire protocol interface twin")]
+    Snowflake(SnowflakeArgs),
     #[command(about = "Inspect the CLI's read-only health and agent-facing capabilities")]
     Doctor(DoctorArgs),
     #[command(about = "Run proof-oriented twin comparison workflows")]
@@ -73,6 +58,12 @@ impl Command {
             Self::Postgres(_) => Some(Engine::Postgres),
             Self::Mysql(_) => Some(Engine::Mysql),
             Self::Oracle(_) => Some(Engine::Oracle),
+            #[cfg(feature = "rest")]
+            Self::Rest(_) | Self::Port(_) => None,
+            #[cfg(feature = "mcp")]
+            Self::Mcp(_) => None,
+            #[cfg(feature = "snowflake")]
+            Self::Snowflake(_) => None,
             Self::Doctor(_) | Self::Proof(_) => None,
         }
     }
@@ -80,7 +71,62 @@ impl Command {
     pub fn twin_args(&self) -> Option<&TwinArgs> {
         match self {
             Self::Postgres(args) | Self::Mysql(args) | Self::Oracle(args) => Some(args),
+            #[cfg(feature = "rest")]
+            Self::Rest(_) | Self::Port(_) => None,
+            #[cfg(feature = "mcp")]
+            Self::Mcp(_) => None,
+            #[cfg(feature = "snowflake")]
+            Self::Snowflake(_) => None,
             Self::Doctor(_) | Self::Proof(_) => None,
+        }
+    }
+
+    #[cfg(feature = "rest")]
+    pub fn rest_args(&self) -> Option<&RestArgs> {
+        match self {
+            Self::Rest(args) => Some(args),
+            Self::Postgres(_)
+            | Self::Mysql(_)
+            | Self::Oracle(_)
+            | Self::Port(_)
+            | Self::Doctor(_)
+            | Self::Proof(_) => None,
+            #[cfg(feature = "mcp")]
+            Self::Mcp(_) => None,
+            #[cfg(feature = "snowflake")]
+            Self::Snowflake(_) => None,
+        }
+    }
+
+    #[cfg(feature = "mcp")]
+    pub fn mcp_args(&self) -> Option<&McpArgs> {
+        match self {
+            Self::Mcp(args) => Some(args),
+            Self::Postgres(_)
+            | Self::Mysql(_)
+            | Self::Oracle(_)
+            | Self::Doctor(_)
+            | Self::Proof(_) => None,
+            #[cfg(feature = "rest")]
+            Self::Rest(_) | Self::Port(_) => None,
+            #[cfg(feature = "snowflake")]
+            Self::Snowflake(_) => None,
+        }
+    }
+
+    #[cfg(feature = "snowflake")]
+    pub fn snowflake_args(&self) -> Option<&SnowflakeArgs> {
+        match self {
+            Self::Snowflake(args) => Some(args),
+            Self::Postgres(_)
+            | Self::Mysql(_)
+            | Self::Oracle(_)
+            | Self::Doctor(_)
+            | Self::Proof(_) => None,
+            #[cfg(feature = "rest")]
+            Self::Rest(_) | Self::Port(_) => None,
+            #[cfg(feature = "mcp")]
+            Self::Mcp(_) => None,
         }
     }
 }
@@ -122,6 +168,133 @@ pub struct TwinArgs {
 
     #[arg(long, value_name = "URL")]
     pub materialize_source_url: Option<String>,
+}
+
+#[cfg(feature = "rest")]
+#[derive(Debug, Args, Clone)]
+pub struct RestArgs {
+    #[arg(long, value_name = "FILE")]
+    pub spec: Option<PathBuf>,
+
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+
+    #[arg(long, default_value_t = 8080)]
+    pub port: u16,
+
+    #[arg(long, value_name = "COMMAND")]
+    pub run: Option<String>,
+
+    #[arg(long)]
+    pub serve: bool,
+
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
+
+    #[arg(long, value_name = "FILE")]
+    pub canary: Option<PathBuf>,
+
+    #[arg(long)]
+    pub strict: bool,
+
+    #[arg(long, value_enum)]
+    pub routing: Option<RoutingPolicy>,
+
+    #[arg(long, value_name = "PREFIX")]
+    pub base_prefix: Option<String>,
+
+    #[arg(long, value_enum)]
+    pub auth_mode: Option<RestAuthMode>,
+
+    #[arg(long, value_name = "SPEC")]
+    pub chaos: Option<ChaosConfig>,
+}
+
+#[cfg(feature = "rest")]
+#[derive(Debug, Args, Clone)]
+pub struct PortArgs {
+    #[arg(long, value_name = "FILE")]
+    pub from_spec: PathBuf,
+
+    #[arg(long, value_name = "FILE")]
+    pub to_spec: PathBuf,
+
+    #[arg(long, value_name = "COMMAND")]
+    pub client_cmd: String,
+
+    #[arg(long)]
+    pub from_port: Option<u16>,
+
+    #[arg(long)]
+    pub to_port: Option<u16>,
+
+    #[arg(long, value_name = "FILE")]
+    pub shared_snapshot: Option<PathBuf>,
+
+    #[arg(long, value_name = "FILE")]
+    pub from_snapshot: Option<PathBuf>,
+
+    #[arg(long, value_name = "FILE")]
+    pub to_snapshot: Option<PathBuf>,
+
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
+}
+
+#[cfg(feature = "mcp")]
+#[derive(Debug, Args, Clone)]
+pub struct McpArgs {
+    #[arg(long, value_name = "COMMAND")]
+    pub server: Option<String>,
+
+    #[arg(long, value_name = "FILE")]
+    pub manifest: Option<PathBuf>,
+
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+
+    #[arg(long, default_value_t = 9878)]
+    pub port: u16,
+
+    #[arg(long, value_enum, default_value_t = RestAuthMode::Shape)]
+    pub auth_mode: RestAuthMode,
+
+    #[arg(long)]
+    pub stdio: bool,
+
+    #[arg(long, value_name = "COMMAND")]
+    pub run: Option<String>,
+
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
+}
+
+#[cfg(feature = "snowflake")]
+#[derive(Debug, Args, Clone)]
+pub struct SnowflakeArgs {
+    #[arg(long, value_name = "FILE")]
+    pub schema: Option<PathBuf>,
+
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+
+    #[arg(long, default_value_t = 9876)]
+    pub port: u16,
+
+    #[arg(long, value_name = "COMMAND")]
+    pub run: Option<String>,
+
+    #[arg(long)]
+    pub serve: bool,
+
+    #[arg(long, value_name = "FILE")]
+    pub report: Option<PathBuf>,
+
+    #[arg(long, value_name = "URL")]
+    pub materialize_source_url: Option<String>,
+
+    #[arg(long, default_value_t = 100_000)]
+    pub max_rows_per_table: usize,
 }
 
 #[derive(Debug, Args, Clone)]

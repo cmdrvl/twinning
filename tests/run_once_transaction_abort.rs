@@ -1,10 +1,12 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "postgres")]
 
 use std::{
     fs,
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, MutexGuard, OnceLock},
 };
 
 use serde_json::Value;
@@ -242,6 +244,7 @@ fn run_case_inner(
     child_path: &Path,
     query_trace: bool,
 ) -> RunCase {
+    let _guard = run_once_command_lock();
     let diagnostics_path = dir.join(format!("{label}.client.err"));
     let report_path = dir.join(format!("{label}.report.json"));
     let snapshot_path = dir.join(format!("{label}.snapshot.twin"));
@@ -355,6 +358,15 @@ fn write_child(dir: &Path, label: &str, script: &str) -> PathBuf {
     let child_path = dir.join(format!("{label}.py"));
     fs::write(&child_path, script).expect("write child");
     child_path
+}
+
+static RUN_ONCE_COMMAND_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn run_once_command_lock() -> MutexGuard<'static, ()> {
+    RUN_ONCE_COMMAND_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("run_once transaction test command lock should not be poisoned")
 }
 
 fn reserve_local_port() -> u16 {

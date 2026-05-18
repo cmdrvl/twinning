@@ -10,6 +10,15 @@ readme = "README.md"
 keywords = ["database", "postgres", "schema", "twin", "cli"]
 categories = ["command-line-utilities"]
 
+[workspace]
+members = [
+  "crates/twinning-kernel",
+  "crates/twinning-postgres",
+  "crates/twinning-rest",
+  "crates/twinning-snowflake",
+]
+resolver = "3"
+
 [[bin]]
 name = "twinning"
 path = "src/main.rs"
@@ -23,11 +32,27 @@ sha2 = "0.10"
 signal-hook = "0.3"
 sqlparser = "0.53"
 thiserror = "2"
+twinning-kernel = { path = "crates/twinning-kernel" }
+twinning-postgres = { path = "crates/twinning-postgres", optional = true }
+twinning-rest = { path = "crates/twinning-rest", optional = true }
+twinning-snowflake = { path = "crates/twinning-snowflake", optional = true }
 verify-core = { path = "../verify/crates/verify-core" }
 verify-engine = { path = "../verify/crates/verify-engine" }
 
+[features]
+default = ["rest", "postgres"]
+rest = ["dep:twinning-rest"]
+postgres = ["dep:twinning-postgres"]
+mcp = ["dep:twinning-rest", "twinning-rest/mcp"]
+snowflake = ["dep:twinning-snowflake"]
+all = ["rest", "postgres", "mcp", "snowflake"]
+
 [dev-dependencies]
+arrow-array = "58.3.0"
+arrow-ipc = "58.3.0"
+base64 = "0.22"
 tempfile = "3"
+ureq = { version = "2", features = ["json"] }
 
 [profile.release]
 opt-level = "z"

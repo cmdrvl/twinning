@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "postgres")]
 
 #[path = "storage/budgets.rs"]
 mod budgets;

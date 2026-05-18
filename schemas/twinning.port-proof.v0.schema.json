@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cmdrvl.com/schemas/twinning.port-proof.v0.schema.json",
+  "title": "twinning.port-proof.v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "state_mode",
+    "source_spec",
+    "target_spec",
+    "shared_snapshot",
+    "verdict",
+    "missing_operations",
+    "missing_response_handling",
+    "missing_error_paths",
+    "source_session",
+    "target_session"
+  ],
+  "properties": {
+    "version": {
+      "const": "twinning.port-proof.v0"
+    },
+    "state_mode": {
+      "enum": ["independent", "shared_snapshot", "seeded_independent"]
+    },
+    "source_spec": {
+      "type": "string"
+    },
+    "target_spec": {
+      "type": "string"
+    },
+    "shared_snapshot": {
+      "type": ["string", "null"]
+    },
+    "verdict": {
+      "enum": ["EQUIVALENT", "PARTIAL", "INCOMPLETE"]
+    },
+    "missing_operations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing_response_handling": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing_error_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source_session": {
+      "$ref": "#/$defs/rest_session_summary"
+    },
+    "target_session": {
+      "$ref": "#/$defs/rest_session_summary"
+    }
+  },
+  "$defs": {
+    "rest_session_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_count",
+        "endpoints_exercised",
+        "endpoints_not_exercised",
+        "constraint_violations",
+        "refusals"
+      ],
+      "properties": {
+        "request_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endpoints_exercised": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "endpoints_not_exercised": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraint_violations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "refusals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}
