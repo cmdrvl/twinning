@@ -1,7 +1,7 @@
 {
   "schema_version": "operator.v0",
   "name": "twinning",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Interface twin bootstrap: parse DDL, prepare deterministic twin artifacts, and stage bounded-memory tournament twins plus heavier replay backends",
   "repository": "https://github.com/cmdrvl/twinning",
   "license": "MIT",
@@ -12,6 +12,9 @@
       "twinning postgres [OPTIONS]",
       "twinning rest --spec <FILE> [--host HOST] [--port PORT] [--run COMMAND | --serve] [--report FILE] [--canary FILE] [--routing POLICY] [--base-prefix PREFIX] [--auth-mode MODE] [--strict] [--json]",
       "twinning rest --spec <FILE> --json",
+      "twinning mcp --server <COMMAND> [--json]",
+      "twinning mcp --manifest <FILE> [--json]",
+      "twinning snowflake --schema <FILE> [--json]",
       "twinning proof twin-pair --left LEFT.twin --right RIGHT.twin --queries cases.json --json",
       "twinning proof twin-pair orchestrate --manifest proof-run.json --json",
       "twinning doctor health --json",
@@ -257,6 +260,8 @@
       "Remote $ref URL resolution with 5s timeout and in-process cache",
       "Response wrapper detection for data/items/results/entries payload fields and hint-matched semantic names",
       "Auth shape compliance: enforce credential presence per declared security schemes, 401/403 with WWW-Authenticate (upcoming bd-bni1)",
+      "MCP JSON-RPC 2.0 wire twin: live server introspection or static manifest, tools/resources/prompts catalog, auth enforcement, stdio and HTTP transports",
+      "Snowflake HTTP wire protocol twin: Arrow IPC rowsetBase64 encoding, SHOW/DESCRIBE meta-queries, DDL catalog introspection, session lifecycle",
       "read-only doctor health/capabilities/robot-docs/robot-triage"
     ],
     "deferred_surface": [
@@ -298,6 +303,16 @@
       "name": "twinning.rest-report.v0",
       "kind": "session_report",
       "description": "REST session report: spec identity, routing table with confidence scores, exercised endpoints, refusals, constraint violations, and optional canary assertions"
+    },
+    {
+      "name": "twinning.mcp-report.v0",
+      "kind": "session_report",
+      "description": "MCP session report: server identity, catalog hash, tool/resource/prompt counts, session request counts, and tool call outcomes"
+    },
+    {
+      "name": "twinning.snowflake-report.v0",
+      "kind": "session_report",
+      "description": "Snowflake wire session report: catalog identity, session lifecycle, query dispatch counts, and canary validation results"
     }
   ]
 }

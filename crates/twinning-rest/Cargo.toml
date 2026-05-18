@@ -1,6 +1,6 @@
 [package]
 name = "twinning-rest"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 authors = ["CMD+RVL <engineering@cmdrvl.com>"]
 description = "OpenAPI REST protocol adapter for twinning"
