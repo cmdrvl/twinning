@@ -19,6 +19,7 @@ use axum::{
     routing::post,
 };
 use serde_json::{Value as JsonValue, json};
+#[cfg(unix)]
 use signal_hook::{
     consts::signal::{SIGINT, SIGTERM},
     iterator::Signals,
@@ -494,10 +495,17 @@ fn write_json_report(path: &Path, report: &McpReport) -> RefusalResult<()> {
     fs::write(path, rendered).map_err(|error| Box::new(refusal::io_write(path, &error)))
 }
 
+#[cfg(unix)]
 fn wait_for_shutdown_signal() -> RefusalResult<()> {
     let mut signals = Signals::new([SIGINT, SIGTERM])
         .map_err(|error| Box::new(refusal::runtime_io("mcp_signal", error.to_string())))?;
     let _ = signals.forever().next();
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn wait_for_shutdown_signal() -> RefusalResult<()> {
+    std::thread::park();
     Ok(())
 }
 

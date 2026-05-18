@@ -22,6 +22,7 @@ use axum::{
 use flate2::read::GzDecoder;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
+#[cfg(unix)]
 use signal_hook::{
     consts::signal::{SIGINT, SIGTERM},
     iterator::Signals,
@@ -766,10 +767,17 @@ fn write_report_if_requested_path(
         .map_err(|error| Box::new(refusal::io_write(path, &error)))
 }
 
+#[cfg(unix)]
 fn wait_for_shutdown_signal() -> RefusalResult<()> {
     let mut signals = Signals::new([SIGINT, SIGTERM])
         .map_err(|error| Box::new(refusal::runtime_io("snowflake_signal", error.to_string())))?;
     signals.forever().next();
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn wait_for_shutdown_signal() -> RefusalResult<()> {
+    std::thread::park();
     Ok(())
 }
 
