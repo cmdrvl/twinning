@@ -62,25 +62,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cmdrvl/verify
-          path: verify
+          path: twinning/.release-vendor/verify
 
       - name: Mirror verify workspace into release tree
         shell: bash
         run: |
           python3 - <<'PY'
-          import shutil
           import tomllib
           from pathlib import Path
 
-          src = Path("../verify")
-          dst = Path(".release-vendor/verify")
-          if dst.exists():
-              shutil.rmtree(dst)
-          shutil.copytree(
-              src,
-              dst,
-              ignore=shutil.ignore_patterns(".git", "target"),
-          )
+          # verify is checked out directly to .release-vendor/verify — no copy needed.
 
           # Patch twinning's Cargo.toml to point at the vendored verify crates.
           cargo = Path("Cargo.toml")
@@ -265,25 +256,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cmdrvl/verify
-          path: verify
+          path: twinning/.release-vendor/verify
 
       - name: Mirror verify workspace into release tree
         shell: bash
         run: |
           python3 - <<'PY'
-          import shutil
           import tomllib
           from pathlib import Path
 
-          src = Path("../verify")
-          dst = Path(".release-vendor/verify")
-          if dst.exists():
-              shutil.rmtree(dst)
-          shutil.copytree(
-              src,
-              dst,
-              ignore=shutil.ignore_patterns(".git", "target"),
-          )
+          # verify is checked out directly to .release-vendor/verify — no copy needed.
 
           cargo = Path("Cargo.toml")
           text = cargo.read_text()
