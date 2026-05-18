@@ -276,6 +276,18 @@ fn capabilities_report() -> CapabilitiesReport {
                 read_only: false,
                 description: "Starts an OpenAPI 3.x REST twin. Required input is JSON or YAML; key flags are --run, --serve, --report, --canary, and --port (default 8080). V1 REST twin with adaptive routing (flat-crud, schema-first, prefix-scoped topology), response wrapper detection, remote $ref resolution, and auth shape compliance. Nested paths handled via ResourceTopology. Bypasses auth credential validation in bypass mode (shape mode enforces credential presence).",
             },
+            CommandCapability {
+                command: "twinning mcp --server <COMMAND> --json",
+                output: "twinning.mcp-report.v0 JSON",
+                read_only: false,
+                description: "Starts a Model Context Protocol JSON-RPC 2.0 twin from a live MCP server or static manifest. Key flags: --server (live introspection command), --manifest (static JSON manifest), --stdio (stdio transport), --run, --serve, --report, --auth-mode, --port (default 9878). Supports tools, resources, and prompts catalog; auth enforcement; request logging.",
+            },
+            CommandCapability {
+                command: "twinning snowflake --schema <FILE> --json",
+                output: "twinning.snowflake-report.v0 JSON",
+                read_only: false,
+                description: "Starts a Snowflake HTTP wire protocol twin with Arrow IPC rowsetBase64 result encoding. Key flags: --schema, --run, --serve, --report, --materialize-source-url, --port (default 9876). Supports SHOW/DESCRIBE meta-queries, DDL catalog introspection, and Snowflake session lifecycle.",
+            },
         ],
         output_contracts: vec![
             OutputContract {
@@ -297,6 +309,16 @@ fn capabilities_report() -> CapabilitiesReport {
                 name: "REST session report",
                 version: "twinning.rest-report.v0",
                 description: "REST sessions report spec identity, exercised endpoints, refusals, constraint violations, and optional canary assertions.",
+            },
+            OutputContract {
+                name: "MCP session report",
+                version: "twinning.mcp-report.v0",
+                description: "MCP twins report server identity, catalog hash, tool/resource/prompt counts, session request counts, and tool call outcomes.",
+            },
+            OutputContract {
+                name: "Snowflake session report",
+                version: "twinning.snowflake-report.v0",
+                description: "Snowflake wire twins report catalog identity, session lifecycle, query dispatch counts, and canary validation results.",
             },
         ],
         detectors: detector_specs(),
@@ -579,6 +601,8 @@ fn robot_docs() -> String {
         "  twinning doctor --robot-triage",
         "  twinning --describe",
         "  twinning rest --spec <openapi.yaml> --json",
+        "  twinning mcp --server <COMMAND> --json",
+        "  twinning snowflake --schema <FILE> --json",
         "notes:",
         "  doctor mode does not read schema, snapshot, or verify files",
         "  doctor mode does not bind sockets, run child commands, or write artifacts",
