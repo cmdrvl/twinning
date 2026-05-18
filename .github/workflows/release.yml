@@ -69,6 +69,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import shutil
+          import tomllib
           from pathlib import Path
 
           src = Path("../verify")
@@ -81,11 +82,80 @@ jobs:
               ignore=shutil.ignore_patterns(".git", "target"),
           )
 
+          # Patch twinning's Cargo.toml to point at the vendored verify crates.
           cargo = Path("Cargo.toml")
           text = cargo.read_text()
           text = text.replace("../verify/crates/verify-core", ".release-vendor/verify/crates/verify-core")
           text = text.replace("../verify/crates/verify-engine", ".release-vendor/verify/crates/verify-engine")
           cargo.write_text(text)
+
+          # verify-core and verify-engine use `*.workspace = true` inheritance.
+          # When twinning is itself a workspace (resolver 3), Cargo resolves those
+          # fields against twinning's workspace root, which has no [workspace.package].
+          # Fix: rewrite the vendored crate manifests with concrete values taken from
+          # verify's workspace root so no runtime workspace inheritance is needed.
+          verify_ws = tomllib.loads(Path(".release-vendor/verify/Cargo.toml").read_text())
+          ws_pkg = verify_ws["workspace"]["package"]
+          ws_deps = verify_ws["workspace"]["dependencies"]
+
+          def dep_toml(spec):
+              if isinstance(spec, str):
+                  return f'"{spec}"'
+              parts = []
+              if "version" in spec:
+                  parts.append(f'version = "{spec["version"]}"')
+              if "features" in spec:
+                  feats = ", ".join(f'"{f}"' for f in spec["features"])
+                  parts.append(f"features = [{feats}]")
+              return "{ " + ", ".join(parts) + " }"
+
+          authors_toml = "[" + ", ".join(f'"{a}"' for a in ws_pkg["authors"]) + "]"
+
+          core_toml = f"""\
+          [package]
+          name = "verify-core"
+          version = "{ws_pkg['version']}"
+          edition = "{ws_pkg['edition']}"
+          authors = {authors_toml}
+          license = "{ws_pkg['license']}"
+          repository = "{ws_pkg['repository']}"
+          description = "Core protocol types for verify"
+
+          [[test]]
+          name = "schema_contract"
+          path = "../../tests/schema_contract.rs"
+
+          [dependencies]
+          serde = {dep_toml(ws_deps['serde'])}
+          serde_json = {dep_toml(ws_deps['serde_json'])}
+          """
+
+          engine_toml = f"""\
+          [package]
+          name = "verify-engine"
+          version = "{ws_pkg['version']}"
+          edition = "{ws_pkg['edition']}"
+          authors = {authors_toml}
+          license = "{ws_pkg['license']}"
+          repository = "{ws_pkg['repository']}"
+          description = "Portable and embedded execution surface for verify"
+
+          [[test]]
+          name = "embedding_equivalence"
+          path = "../../tests/embedding_equivalence.rs"
+
+          [dependencies]
+          serde_json = {dep_toml(ws_deps['serde_json'])}
+          verify-core = {{ path = "../verify-core" }}
+          """
+
+          import textwrap
+          Path(".release-vendor/verify/crates/verify-core/Cargo.toml").write_text(
+              textwrap.dedent(core_toml)
+          )
+          Path(".release-vendor/verify/crates/verify-engine/Cargo.toml").write_text(
+              textwrap.dedent(engine_toml)
+          )
           PY
 
       - name: Install Rust toolchain
@@ -202,6 +272,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import shutil
+          import tomllib
           from pathlib import Path
 
           src = Path("../verify")
@@ -219,6 +290,69 @@ jobs:
           text = text.replace("../verify/crates/verify-core", ".release-vendor/verify/crates/verify-core")
           text = text.replace("../verify/crates/verify-engine", ".release-vendor/verify/crates/verify-engine")
           cargo.write_text(text)
+
+          verify_ws = tomllib.loads(Path(".release-vendor/verify/Cargo.toml").read_text())
+          ws_pkg = verify_ws["workspace"]["package"]
+          ws_deps = verify_ws["workspace"]["dependencies"]
+
+          def dep_toml(spec):
+              if isinstance(spec, str):
+                  return f'"{spec}"'
+              parts = []
+              if "version" in spec:
+                  parts.append(f'version = "{spec["version"]}"')
+              if "features" in spec:
+                  feats = ", ".join(f'"{f}"' for f in spec["features"])
+                  parts.append(f"features = [{feats}]")
+              return "{ " + ", ".join(parts) + " }"
+
+          authors_toml = "[" + ", ".join(f'"{a}"' for a in ws_pkg["authors"]) + "]"
+
+          core_toml = f"""\
+          [package]
+          name = "verify-core"
+          version = "{ws_pkg['version']}"
+          edition = "{ws_pkg['edition']}"
+          authors = {authors_toml}
+          license = "{ws_pkg['license']}"
+          repository = "{ws_pkg['repository']}"
+          description = "Core protocol types for verify"
+
+          [[test]]
+          name = "schema_contract"
+          path = "../../tests/schema_contract.rs"
+
+          [dependencies]
+          serde = {dep_toml(ws_deps['serde'])}
+          serde_json = {dep_toml(ws_deps['serde_json'])}
+          """
+
+          engine_toml = f"""\
+          [package]
+          name = "verify-engine"
+          version = "{ws_pkg['version']}"
+          edition = "{ws_pkg['edition']}"
+          authors = {authors_toml}
+          license = "{ws_pkg['license']}"
+          repository = "{ws_pkg['repository']}"
+          description = "Portable and embedded execution surface for verify"
+
+          [[test]]
+          name = "embedding_equivalence"
+          path = "../../tests/embedding_equivalence.rs"
+
+          [dependencies]
+          serde_json = {dep_toml(ws_deps['serde_json'])}
+          verify-core = {{ path = "../verify-core" }}
+          """
+
+          import textwrap
+          Path(".release-vendor/verify/crates/verify-core/Cargo.toml").write_text(
+              textwrap.dedent(core_toml)
+          )
+          Path(".release-vendor/verify/crates/verify-engine/Cargo.toml").write_text(
+              textwrap.dedent(engine_toml)
+          )
           PY
 
       - name: Fetch tags
