@@ -12,22 +12,31 @@ It answers one narrow question:
 
 Current status:
 
-- repository status: Phase 0 bootstrap + live `run_once` and `--serve` shells for the proven Postgres subset, plus source materialization
+- repository status: Phase 0 bootstrap + live `run_once` and `--serve` shells for the proven Postgres subset, plus REST, MCP, and Snowflake wire protocol twins
 - source of truth: [docs/PLAN_TWINNING.md](./docs/PLAN_TWINNING.md)
-- current repo contents: plan + execution graph + Rust bootstrap crate + report/snapshot schemas
+- workspace: `crates/twinning-kernel`, `crates/twinning-postgres`, `crates/twinning-rest`, `crates/twinning-snowflake`
 - first deferred direction after the v0 center: twin-pair migration proof
 
-The repo is still intentionally narrow and honest. Bootstrap mode remains the
-default artifact-validation lane. Live mode is explicit: `--run` binds pgwire,
-runs one child command, then freezes committed-state artifacts; `--serve` binds
-pgwire until SIGINT/SIGTERM and then emits the same final artifacts. Both modes
-cover only the proven Postgres subset, not a general-purpose database server.
+Protocol twins available:
+
+| Subcommand | Feature flag | Protocol |
+|-----------|-------------|---------|
+| `twinning postgres` | (default) | pgwire — canary-defined SQL subset |
+| `twinning rest` | `rest` | OpenAPI-spec-driven HTTP REST |
+| `twinning mcp` | `mcp` | Model Context Protocol (JSON-RPC 2.0 over HTTP + stdio) |
+| `twinning snowflake` | `snowflake` | Snowflake HTTP wire protocol (Arrow IPC results) |
+| `twinning port` | `rest` | Dual REST twins for client migration proof |
+
+Build with all twins: `cargo build --features all`
 
 ---
 
 ## Current Quickstart
 
 ```bash
+# Build with all protocol twins enabled
+cargo build --features all
+
 # Validate a schema and inspect the bootstrap state
 cargo run -- postgres --schema schema.sql --json
 
@@ -63,6 +72,16 @@ cargo run -- --json proof twin-pair orchestrate \
 # Run one child command against the live run_once shell
 # The child must connect to the configured --host/--port.
 cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
+
+# REST twin — serve OpenAPI-spec-driven HTTP endpoints
+cargo run --features rest -- rest --spec openapi.yaml --serve --report out/rest.json
+
+# MCP twin — serve Model Context Protocol over HTTP (or stdio)
+cargo run --features mcp -- mcp --server 'npx @scope/mcp-server' --report out/mcp.json
+cargo run --features mcp -- mcp --manifest manifest.json --serve
+
+# Snowflake wire twin — serve Snowflake HTTP protocol with Arrow IPC results
+cargo run --features snowflake -- snowflake --schema schema.sql --serve --report out/sf.json
 
 # Run a standalone interactive twin until SIGINT/SIGTERM
 cargo run -- postgres --schema schema.sql \
@@ -247,31 +266,39 @@ You provide:
 
 Implemented now:
 
-- Postgres DDL parsing with `sqlparser-rs`
-- deterministic normalized catalog construction
-- verify-artifact loading and hashing
-- bootstrap report generation
-- bootstrap snapshot hashing and restore verification
+**Postgres twin** (default):
+- DDL parsing with `sqlparser-rs`, deterministic normalized catalog construction
+- verify-artifact loading, bootstrap report and snapshot generation
 - pgwire listener + startup/session shell for the declared live subset
-- normalized read/mutation IR plus row-store execution for the canary-defined SQL shapes, including point lookups, filtered scans, `IN`, `BETWEEN`, and basic `COUNT ... GROUP BY`
-- exact `information_schema.tables` public base-table introspection for the declared catalog
-- constraint enforcement and single-writer overlay behavior for committed-state snapshots
-- live `--run` child orchestration, run metadata capture, and final artifact emission
-- live `--serve` interactive listener with SIGINT/SIGTERM finalization
-- embedded verify execution over committed twin state
-- storage-boundary reporting for tournament mode vs replay/proof mode
-- explicit [replay/proof backend policy](./docs/REPLAY_PROOF_BACKEND_POLICY.md)
-- refusal envelopes for process-level failures and protocol-visible live subset boundaries
-- restore-backed and schema-plus-load twin-pair orchestration runner, manifest parser, and schema
-- restore-backed twin-pair replay summaries with PASS / FAIL / SKIP cases and deterministic diff hashes
+- normalized read/mutation IR, row-store execution for canary-defined SQL shapes
+- live `--run` and `--serve` modes with SIGINT/SIGTERM finalization
+- embedded verify execution, twin-pair migration proof orchestration
+
+**REST twin** (`--features rest`):
+- OpenAPI-spec-driven HTTP endpoint generation
+- auth shape enforcement (bearer/apiKey), chaos injection, routing modes
+- canary manifest validation, startup report, `port` dual-twin migration proof
+
+**MCP twin** (`--features mcp`):
+- JSON-RPC 2.0 dispatcher over HTTP and stdio transports
+- Catalog from live MCP server introspection or static manifest
+- All 7 MCP methods: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`
+- Typed stub responses for tools with output schemas; `unsupported_shape` for stateful/schema-less tools
+- Auth enforcement, session log, startup report
+
+**Snowflake wire twin** (`--features snowflake`):
+- Snowflake HTTP REST protocol (5 core endpoints)
+- Arrow IPC `rowsetBase64` result encoding with full Snowflake type fidelity
+- `SHOW` and `DESCRIBE` responses for JDBC/DBeaver/dbt compatibility
+- DDL catalog ingestion, query dispatch with `SqlRoute` classification
+- Session lifecycle, startup report, materialize path
 
 Not implemented yet:
 
-- SQL/session shapes outside the checked-in canary manifest
-- joined reads; the current manifest pins these as explicit protocol-visible refusals
-- concurrent writers or multi-writer semantics
-- non-Postgres runtime engines
-- heavier replay/proof backends beyond the in-memory snapshot-backed proof path
+- SQL/session shapes outside the checked-in canary manifests
+- Joined reads (explicit protocol-visible refusal in current manifest)
+- Concurrent writers or multi-writer semantics
+- Heavier replay/proof backends beyond the in-memory snapshot-backed proof path
 
 This means the repo can validate bootstrap assets, run one child command, or
 serve interactive clients for the proven subset, but it still refuses broader
@@ -284,7 +311,13 @@ live traffic instead of pretending to be a complete database.
 Command surface:
 
 ```text
-twinning postgres [OPTIONS]
+twinning postgres [OPTIONS]           # pgwire twin (default)
+twinning rest [OPTIONS]               # REST twin (--features rest)
+twinning mcp [OPTIONS]                # MCP twin (--features mcp)
+twinning snowflake [OPTIONS]          # Snowflake wire twin (--features snowflake)
+twinning port [OPTIONS]               # dual REST twins (--features rest)
+twinning proof twin-pair [OPTIONS]    # twin-pair migration proof
+twinning doctor [SUBCOMMAND]          # read-only health/capabilities
 ```
 
 Current options:
