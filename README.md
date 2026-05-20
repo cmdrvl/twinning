@@ -53,6 +53,15 @@ cargo run -- postgres --schema schema.sql \
   --snapshot out/materialized.twin \
   --json
 
+# Export a seed contract for an external agent to fill, then import seed rows
+cargo run -- postgres --schema schema.sql \
+  --export-seed-contract out/seed-contract.jsonl \
+  --json
+cargo run -- postgres --schema schema.sql \
+  --seed out/seed-data.jsonl \
+  --snapshot out/seeded.twin \
+  --json
+
 # Restore a prior snapshot and re-emit bootstrap status
 cargo run -- postgres --restore out/bootstrap.twin --json
 
@@ -110,6 +119,14 @@ tables declared by the schema. Use it against a source account/database that is
 safe for deterministic reads; `TWINNING_PSQL_BIN` can point at a specific
 `psql` binary in test harnesses. The `--run` and `--serve` examples use the
 current live pgwire shell and final artifact path.
+
+Seed JSONL is a contract/data pair, not a generator. `--export-seed-contract`
+writes a deterministic schema-shaped template for another agent to fill.
+`--seed` imports filled rows through the Postgres kernel and constraint executor
+before bootstrap finalization or live startup, so seeded rows become committed
+state in reports, snapshots, and the first `run_once` client session. V1 is
+schema-backed only: seed import/export cannot be combined with `--restore`, and
+`--seed` cannot be combined with `--materialize-source-url`.
 
 ### Example Output
 
@@ -333,6 +350,8 @@ Current options:
 - `--snapshot <FILE>`: write `twinning.snapshot.v0`
 - `--query-trace <FILE>`: write a redacted live query trace artifact in `--run` or `--serve`
 - `--restore <FILE>`: restore a prior `twinning.snapshot.v0`
+- `--export-seed-contract <FILE>`: write `twinning.seed-contract.v0` JSONL for the schema-loaded Postgres catalog
+- `--seed <FILE>`: import filled `twinning.seed-data.v0` JSONL as committed Postgres state
 - `--materialize-source-url <URL>`: capture declared source rows into the final report/snapshot
 - `--json`: emit machine-readable status
 - `--describe`: print `operator.json`
@@ -475,6 +494,9 @@ Refusals are structured errors with exit code `2`. Each includes a code, message
 | `E_DECLARATION_PARSE` | Catalog declaration malformed or mismatched | Regenerate the declaration for the selected schema |
 | `E_VERIFY_ARTIFACT_PARSE` | Verify artifact malformed | Regenerate with `verify` |
 | `E_SNAPSHOT_VERIFY` | Snapshot hash mismatch or version error | Re-emit from schema source |
+| `E_SEED_BOOTSTRAP_SOURCE` | Seed import/export requested with `--restore` | Use `--schema` |
+| `E_SEED_SOURCE_COMPOSITION` | `--seed` combined with `--materialize-source-url` | Pick one source for v1 |
+| `E_SEED_JSONL` | Seed JSONL is malformed or violates catalog/constraint rules | Regenerate or fix seed rows |
 | `E_TWIN_PAIR_PROOF` | Twin-pair proof inputs or query fixture are incompatible | Use snapshots with the same schema/catalog/declaration and a supported query fixture |
 | `E_SERIALIZATION` | Internal JSON rendering failure | Report bug |
 

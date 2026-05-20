@@ -15,7 +15,7 @@ pub mod report;
 pub mod runtime;
 
 pub use twinning_kernel::{
-    backend, catalog, declaration, ir, kernel, materialize, query_trace, result, snapshot,
+    backend, catalog, declaration, ir, kernel, materialize, query_trace, result, seed, snapshot,
     verify_bridge,
 };
 

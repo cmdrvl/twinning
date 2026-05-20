@@ -108,6 +108,48 @@ pub fn materialization_requires_schema() -> RefusalEnvelope {
     )
 }
 
+pub fn seed_requires_schema(flag: &str) -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_SEED_BOOTSTRAP_SOURCE",
+        format!("{flag} requires --schema and cannot be combined with --restore."),
+        json!({
+            "flag": flag,
+            "required_bootstrap_source": "schema",
+            "disallowed_with": "restore"
+        }),
+        Some(format!(
+            "twinning postgres --schema schema.sql {flag} seed.jsonl --json"
+        )),
+    )
+}
+
+pub fn seed_materialization_composition() -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_SEED_SOURCE_COMPOSITION",
+        "--seed cannot be combined with --materialize-source-url in v1.",
+        json!({
+            "disallowed_combination": ["seed", "materialize_source_url"],
+            "backlog": "compose seed overlays with source materialization after the first seed wedge"
+        }),
+        Some(
+            "twinning postgres --schema schema.sql --seed seed.jsonl --snapshot out.twin --json"
+                .to_owned(),
+        ),
+    )
+}
+
+pub fn seed_jsonl(path: &Path, message: impl Into<String>) -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_SEED_JSONL",
+        format!("Seed JSONL failed for `{}`.", path.display()),
+        json!({ "path": path.display().to_string(), "error": message.into() }),
+        Some(format!(
+            "twinning postgres --schema schema.sql --export-seed-contract {} --json",
+            path.display()
+        )),
+    )
+}
+
 pub fn ambiguous_live_mode(engine: Engine) -> RefusalEnvelope {
     RefusalEnvelope::new(
         "E_AMBIGUOUS_LIVE_MODE",

@@ -18,6 +18,8 @@ pub struct TwinConfig {
     pub snapshot_path: Option<PathBuf>,
     pub query_trace_path: Option<PathBuf>,
     pub restore_path: Option<PathBuf>,
+    pub export_seed_contract_path: Option<PathBuf>,
+    pub seed_path: Option<PathBuf>,
     pub materialize_source_url: Option<String>,
     pub json: bool,
 }

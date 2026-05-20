@@ -654,6 +654,8 @@ mod tests {
                 catalog_declaration: None,
                 source_materialization: None,
                 materialized_relations: None,
+                #[cfg(feature = "postgres")]
+                seeded_tables: None,
                 catalog,
                 restored_from: None,
                 restored_snapshot_hash: None,

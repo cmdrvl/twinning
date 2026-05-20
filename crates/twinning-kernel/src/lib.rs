@@ -13,6 +13,7 @@ pub mod refusal;
 pub mod report;
 pub mod result;
 pub mod runtime;
+pub mod seed;
 pub mod snapshot;
 pub mod verify_bridge;
 

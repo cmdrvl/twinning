@@ -43,6 +43,20 @@ pub fn twin_config_from_engine_args(
         return Err(Box::new(refusal::materialization_requires_schema()));
     }
 
+    if args.restore.is_some() && args.export_seed_contract.is_some() {
+        return Err(Box::new(refusal::seed_requires_schema(
+            "--export-seed-contract",
+        )));
+    }
+
+    if args.restore.is_some() && args.seed.is_some() {
+        return Err(Box::new(refusal::seed_requires_schema("--seed")));
+    }
+
+    if args.seed.is_some() && args.materialize_source_url.is_some() {
+        return Err(Box::new(refusal::seed_materialization_composition()));
+    }
+
     if args.serve && args.run.is_some() {
         return Err(Box::new(refusal::ambiguous_live_mode(engine)));
     }
@@ -60,6 +74,8 @@ pub fn twin_config_from_engine_args(
         snapshot_path: args.snapshot.clone(),
         query_trace_path: args.query_trace.clone(),
         restore_path: args.restore.clone(),
+        export_seed_contract_path: args.export_seed_contract.clone(),
+        seed_path: args.seed.clone(),
         materialize_source_url: args.materialize_source_url.clone(),
         json,
     })
@@ -219,12 +235,68 @@ mod tests {
             snapshot: None,
             query_trace: None,
             restore: None,
+            export_seed_contract: None,
+            seed: None,
             materialize_source_url: None,
         };
 
         let config =
             twin_config_from_engine_args(Engine::Mysql, &args, false).expect("config should build");
         assert_eq!(config.port, 3306);
+    }
+
+    #[test]
+    fn twin_config_refuses_seed_restore_and_materialization_composition() {
+        let base = TwinArgs {
+            schema: Some("schema.sql".into()),
+            verify: None,
+            declaration: None,
+            host: "127.0.0.1".to_owned(),
+            port: None,
+            run: None,
+            serve: false,
+            report: None,
+            snapshot: None,
+            query_trace: None,
+            restore: None,
+            export_seed_contract: None,
+            seed: None,
+            materialize_source_url: None,
+        };
+
+        let restore_export = TwinArgs {
+            schema: None,
+            restore: Some("restore.twin".into()),
+            export_seed_contract: Some("contract.jsonl".into()),
+            ..base.clone()
+        };
+        let refusal = twin_config_from_engine_args(Engine::Postgres, &restore_export, true)
+            .expect_err("restore/export seed contract should be refused");
+        let rendered = refusal.render(true).expect("render refusal");
+        assert!(rendered.contains("\"code\": \"E_SEED_BOOTSTRAP_SOURCE\""));
+        assert!(rendered.contains("--export-seed-contract"));
+
+        let restore_seed = TwinArgs {
+            schema: None,
+            restore: Some("restore.twin".into()),
+            seed: Some("seed.jsonl".into()),
+            ..base.clone()
+        };
+        let refusal = twin_config_from_engine_args(Engine::Postgres, &restore_seed, true)
+            .expect_err("restore/seed should be refused");
+        let rendered = refusal.render(true).expect("render refusal");
+        assert!(rendered.contains("\"code\": \"E_SEED_BOOTSTRAP_SOURCE\""));
+        assert!(rendered.contains("--seed"));
+
+        let seed_materialization = TwinArgs {
+            seed: Some("seed.jsonl".into()),
+            materialize_source_url: Some("postgres://example".to_owned()),
+            ..base
+        };
+        let refusal = twin_config_from_engine_args(Engine::Postgres, &seed_materialization, true)
+            .expect_err("seed/materialization should be refused");
+        let rendered = refusal.render(true).expect("render refusal");
+        assert!(rendered.contains("\"code\": \"E_SEED_SOURCE_COMPOSITION\""));
     }
 
     #[test]

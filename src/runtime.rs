@@ -30,6 +30,8 @@ use crate::{
 use crate::protocol::postgres::listener::{PgwireListener, SharedPgwireState, ShutdownHook};
 
 mod final_artifacts;
+#[cfg(feature = "postgres")]
+mod seed;
 pub mod run_child {
     pub use twinning_kernel::runtime::run_child::*;
 }
@@ -55,6 +57,8 @@ struct BootstrapState {
     catalog_declaration: Option<CatalogDeclarationIdentity>,
     source_materialization: Option<SourceMaterializationReport>,
     materialized_relations: Option<SnapshotRelations>,
+    #[cfg(feature = "postgres")]
+    seeded_tables: Option<Vec<TableStorage>>,
     catalog: Catalog,
     restored_from: Option<String>,
     restored_snapshot_hash: Option<String>,
@@ -102,6 +106,16 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
 
     preflight_output_targets(config)?;
 
+    #[cfg(feature = "postgres")]
+    if let Some(seed_contract_path) = &config.export_seed_contract_path {
+        seed::write_postgres_seed_contract(seed_contract_path, &state.catalog)?;
+    }
+
+    #[cfg(feature = "postgres")]
+    if let Some(seed_path) = &config.seed_path {
+        state.seeded_tables = Some(seed::load_postgres_seed_tables(&state.catalog, seed_path)?);
+    }
+
     if let Some(source_url) = &config.materialize_source_url {
         let capture = materialize::capture_source_relations(&state.catalog, source_url)?;
         state.source_materialization = Some(capture.report);
@@ -117,7 +131,7 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
     }
 
     let mut emitter = FinalArtifactEmitter::from_config(config);
-    let committed_tables = materialized_committed_tables(&state)?;
+    let committed_tables = state_committed_tables(&state)?;
     let finalized = emitter.emit_once(&state, committed_tables, None)?;
 
     let stdout = if config.json {
@@ -374,6 +388,8 @@ fn load_state_from_schema(
         catalog_declaration,
         source_materialization: None,
         materialized_relations: None,
+        #[cfg(feature = "postgres")]
+        seeded_tables: None,
         catalog,
         restored_from: None,
         restored_snapshot_hash: None,
@@ -419,6 +435,8 @@ fn restore_state(
         catalog_declaration,
         source_materialization: None,
         materialized_relations: None,
+        #[cfg(feature = "postgres")]
+        seeded_tables: None,
         catalog: snapshot.catalog,
         restored_from: Some(path_display(restore_path)),
         restored_snapshot_hash: Some(restored_snapshot_hash),
@@ -478,6 +496,9 @@ fn preflight_output_targets(config: &TwinConfig) -> RefusalResult<()> {
     }
     if let Some(query_trace_path) = &config.query_trace_path {
         preflight_output_target(query_trace_path)?;
+    }
+    if let Some(seed_contract_path) = &config.export_seed_contract_path {
+        preflight_output_target(seed_contract_path)?;
     }
     Ok(())
 }
@@ -564,7 +585,7 @@ fn committed_tables_for_live_run(
     config: &TwinConfig,
     state: &BootstrapState,
 ) -> RefusalResult<Vec<TableStorage>> {
-    if let Some(committed_tables) = materialized_committed_tables(state)? {
+    if let Some(committed_tables) = state_committed_tables(state)? {
         return Ok(committed_tables);
     }
 
@@ -589,9 +610,12 @@ fn committed_tables_for_live_run(
     Ok(committed_tables)
 }
 
-fn materialized_committed_tables(
-    state: &BootstrapState,
-) -> RefusalResult<Option<Vec<TableStorage>>> {
+fn state_committed_tables(state: &BootstrapState) -> RefusalResult<Option<Vec<TableStorage>>> {
+    #[cfg(feature = "postgres")]
+    if let Some(committed_tables) = &state.seeded_tables {
+        return Ok(Some(committed_tables.clone()));
+    }
+
     let Some(relations) = &state.materialized_relations else {
         return Ok(None);
     };
@@ -719,6 +743,8 @@ mod tests {
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -733,6 +759,125 @@ mod tests {
         assert_eq!(json["schema"]["table_count"], 1);
         assert_eq!(json["verify_artifact"]["loaded"], 1);
         assert!(json.get("verify").is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "postgres")]
+    fn bootstrap_exports_postgres_seed_contract() {
+        let tempdir = tempdir().expect("tempdir");
+        let schema_path = tempdir.path().join("schema.sql");
+        let contract_path = tempdir.path().join("out").join("seed-contract.jsonl");
+
+        fs::write(
+            &schema_path,
+            r#"
+            CREATE TABLE public.accounts (
+                account_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            "#,
+        )
+        .expect("write schema");
+
+        let config = TwinConfig {
+            engine: Engine::Postgres,
+            host: "127.0.0.1".to_owned(),
+            port: 5432,
+            schema_path: Some(schema_path),
+            verify_path: None,
+            declaration_path: None,
+            run_command: None,
+            serve: false,
+            report_path: None,
+            snapshot_path: None,
+            query_trace_path: None,
+            restore_path: None,
+            export_seed_contract_path: Some(contract_path.clone()),
+            seed_path: None,
+            materialize_source_url: None,
+            json: true,
+        };
+
+        let execution = execute(config).expect("execution");
+        assert_eq!(execution.exit_code, 0);
+        let contract = fs::read_to_string(contract_path).expect("read contract");
+        assert!(contract.contains("\"version\":\"twinning.seed-contract.v0\""));
+        assert!(contract.contains("\"target\":\"public.accounts\""));
+        assert!(contract.contains("\"name\":\"account_id\""));
+    }
+
+    #[test]
+    #[cfg(feature = "postgres")]
+    fn bootstrap_seed_rows_are_committed_into_deterministic_snapshots() {
+        let tempdir = tempdir().expect("tempdir");
+        let schema_path = tempdir.path().join("schema.sql");
+        let seed_path = tempdir.path().join("seed.jsonl");
+        let first_snapshot_path = tempdir.path().join("out").join("first.twin");
+        let second_snapshot_path = tempdir.path().join("out").join("second.twin");
+
+        fs::write(
+            &schema_path,
+            r#"
+            CREATE TABLE public.accounts (
+                account_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            "#,
+        )
+        .expect("write schema");
+        fs::write(
+            &seed_path,
+            concat!(
+                "{\"version\":\"twinning.seed-data.v0\",\"kind\":\"row\",\"twin\":\"postgres\",\"target_kind\":\"relation\",\"target\":\"public.accounts\",\"row\":{\"account_id\":1,\"name\":\"Ada\"}}\n",
+                "{\"version\":\"twinning.seed-data.v0\",\"kind\":\"row\",\"twin\":\"postgres\",\"target_kind\":\"relation\",\"target\":\"public.accounts\",\"row\":{\"account_id\":2,\"name\":\"Grace\"}}\n",
+            ),
+        )
+        .expect("write seed");
+
+        let first_config = TwinConfig {
+            engine: Engine::Postgres,
+            host: "127.0.0.1".to_owned(),
+            port: 5432,
+            schema_path: Some(schema_path.clone()),
+            verify_path: None,
+            declaration_path: None,
+            run_command: None,
+            serve: false,
+            report_path: None,
+            snapshot_path: Some(first_snapshot_path.clone()),
+            query_trace_path: None,
+            restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: Some(seed_path.clone()),
+            materialize_source_url: None,
+            json: true,
+        };
+        let second_config = TwinConfig {
+            snapshot_path: Some(second_snapshot_path.clone()),
+            ..first_config.clone()
+        };
+
+        let first = execute(first_config).expect("first execution");
+        let second = execute(second_config).expect("second execution");
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+
+        let first_json: serde_json::Value = serde_json::from_str(&first.stdout).expect("json");
+        let second_json: serde_json::Value = serde_json::from_str(&second.stdout).expect("json");
+        assert_eq!(first_json["tables"]["public.accounts"]["rows"], 2);
+        assert_eq!(
+            first_json["snapshot"]["snapshot_hash"],
+            second_json["snapshot"]["snapshot_hash"]
+        );
+
+        let snapshot_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&first_snapshot_path).expect("snapshot"))
+                .expect("snapshot json");
+        assert_eq!(snapshot_json["table_rows"]["public.accounts"], 2);
+        assert_eq!(
+            snapshot_json["relations"]["public.accounts"][0]["name"]["value"],
+            "Ada"
+        );
     }
 
     #[test]
@@ -859,6 +1004,8 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -892,6 +1039,134 @@ sock.close()
     }
 
     #[test]
+    #[cfg(feature = "postgres")]
+    fn run_mode_starts_from_seeded_committed_state() {
+        let tempdir = tempdir().expect("tempdir");
+        let schema_path = tempdir.path().join("schema.sql");
+        let seed_path = tempdir.path().join("seed.jsonl");
+        let child_path = tempdir.path().join("client.py");
+        let port = reserve_local_port();
+
+        fs::write(
+            &schema_path,
+            r#"
+            CREATE TABLE public.accounts (
+                account_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            "#,
+        )
+        .expect("write schema");
+        fs::write(
+            &seed_path,
+            "{\"version\":\"twinning.seed-data.v0\",\"kind\":\"row\",\"twin\":\"postgres\",\"target_kind\":\"relation\",\"target\":\"public.accounts\",\"row\":{\"account_id\":1,\"name\":\"Ada\"}}\n",
+        )
+        .expect("write seed");
+        fs::write(
+            &child_path,
+            r#"import socket
+import struct
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+sock = socket.create_connection((host, port), timeout=2)
+
+body = struct.pack("!I", 196608)
+for name, value in ((b"user", b"postgres"), (b"database", b"postgres")):
+    body += name + b"\x00" + value + b"\x00"
+body += b"\x00"
+sock.sendall(struct.pack("!I", len(body) + 4) + body)
+
+def read_frame():
+    header = sock.recv(5)
+    if len(header) != 5:
+        raise SystemExit("truncated backend frame header")
+    tag = header[:1]
+    length = struct.unpack("!I", header[1:])[0]
+    body = b""
+    while len(body) < length - 4:
+        chunk = sock.recv(length - 4 - len(body))
+        if not chunk:
+            raise SystemExit("truncated backend frame body")
+        body += chunk
+    return tag, body
+
+def read_until_ready():
+    frames = []
+    while True:
+        tag, body = read_frame()
+        frames.append((tag, body))
+        if tag == b"Z":
+            return frames
+
+read_until_ready()
+query = b"SELECT name FROM public.accounts WHERE account_id = 1\x00"
+sock.sendall(b"Q" + struct.pack("!I", len(query) + 4) + query)
+frames = read_until_ready()
+
+rows = []
+command = None
+for tag, body in frames:
+    if tag == b"E":
+        raise SystemExit("query failed")
+    if tag == b"D":
+        field_count = struct.unpack("!h", body[:2])[0]
+        offset = 2
+        values = []
+        for _ in range(field_count):
+            size = struct.unpack("!i", body[offset:offset + 4])[0]
+            offset += 4
+            if size == -1:
+                values.append(None)
+            else:
+                values.append(body[offset:offset + size].decode("utf-8"))
+                offset += size
+        rows.append(values)
+    if tag == b"C":
+        command = body.rstrip(b"\x00").decode("utf-8")
+
+if rows != [["Ada"]]:
+    raise SystemExit(f"unexpected rows: {rows!r}")
+if command != "SELECT 1":
+    raise SystemExit(f"unexpected command: {command!r}")
+
+sock.sendall(b"X" + struct.pack("!I", 4))
+sock.close()
+"#,
+        )
+        .expect("write child");
+
+        let config = TwinConfig {
+            engine: Engine::Postgres,
+            host: "127.0.0.1".to_owned(),
+            port,
+            schema_path: Some(schema_path),
+            verify_path: None,
+            declaration_path: None,
+            run_command: Some(format!(
+                "python3 \"{}\" 127.0.0.1 {port}",
+                child_path.display()
+            )),
+            serve: false,
+            report_path: None,
+            snapshot_path: None,
+            query_trace_path: None,
+            restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: Some(seed_path),
+            materialize_source_url: None,
+            json: true,
+        };
+
+        let execution = execute(config).expect("execution");
+        assert_eq!(execution.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&execution.stdout).expect("json");
+        assert_eq!(json["mode"], "run_once");
+        assert_eq!(json["tables"]["public.accounts"]["rows"], 1);
+    }
+
+    #[test]
     fn run_mode_batch_only_verify_refusal_happens_before_run_mode_unimplemented() {
         let tempdir = tempdir().expect("tempdir");
         let schema_path = tempdir.path().join("schema.sql");
@@ -915,6 +1190,8 @@ sock.close()
             snapshot_path: None,
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -963,6 +1240,8 @@ sock.close()
             snapshot_path: None,
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -995,6 +1274,8 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -1038,6 +1319,8 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -1062,6 +1345,8 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             restore_path: Some(malformed_snapshot_path),
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -1102,6 +1387,8 @@ sock.close()
             snapshot_path: Some(blocked_snapshot_path.clone()),
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -1133,6 +1420,8 @@ sock.close()
             snapshot_path: Some(invalid_snapshot_path),
             query_trace_path: None,
             restore_path: None,
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
@@ -1251,6 +1540,8 @@ sock.close()
             snapshot_path: None,
             query_trace_path: None,
             restore_path: Some(snapshot_path),
+            export_seed_contract_path: None,
+            seed_path: None,
             materialize_source_url: None,
             json: true,
         };
