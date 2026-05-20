@@ -464,8 +464,10 @@ mod tests {
         ])
         .expect("rest args should parse");
 
-        let Some(Command::Rest(args)) = cli.command else {
-            panic!("expected rest command");
+        let command = cli.command.expect("command should parse");
+        assert!(matches!(command, Command::Rest(_)), "expected rest command");
+        let Command::Rest(args) = command else {
+            return;
         };
 
         assert_eq!(args.routing, Some(RoutingPolicy::SchemaFirst));
@@ -537,8 +539,10 @@ mod tests {
         ])
         .expect("mcp args should parse");
 
-        let Some(Command::Mcp(args)) = cli.command else {
-            panic!("expected mcp command");
+        let command = cli.command.expect("command should parse");
+        assert!(matches!(command, Command::Mcp(_)), "expected mcp command");
+        let Command::Mcp(args) = command else {
+            return;
         };
         let refusal = mcp_config_from_args(&args, true).expect_err("stdio and run should conflict");
         assert!(
@@ -563,8 +567,10 @@ mod tests {
         ])
         .expect("mcp args should parse");
 
-        let Some(Command::Mcp(args)) = cli.command else {
-            panic!("expected mcp command");
+        let command = cli.command.expect("command should parse");
+        assert!(matches!(command, Command::Mcp(_)), "expected mcp command");
+        let Command::Mcp(args) = command else {
+            return;
         };
         let config = mcp_config_from_args(&args, true).expect("mcp config should build");
 
@@ -674,8 +680,13 @@ mod snowflake_tests {
         ])
         .expect("snowflake args should parse");
 
-        let Some(Command::Snowflake(args)) = cli.command else {
-            panic!("expected snowflake command");
+        let command = cli.command.expect("command should parse");
+        assert!(
+            matches!(command, Command::Snowflake(_)),
+            "expected snowflake command"
+        );
+        let Command::Snowflake(args) = command else {
+            return;
         };
         let config =
             snowflake_config_from_args(&args, true).expect("snowflake config should build");
@@ -705,8 +716,13 @@ mod snowflake_tests {
         ])
         .expect("snowflake args should parse");
 
-        let Some(Command::Snowflake(args)) = cli.command else {
-            panic!("expected snowflake command");
+        let command = cli.command.expect("command should parse");
+        assert!(
+            matches!(command, Command::Snowflake(_)),
+            "expected snowflake command"
+        );
+        let Command::Snowflake(args) = command else {
+            return;
         };
         let config =
             snowflake_config_from_args(&args, true).expect("snowflake config should build");

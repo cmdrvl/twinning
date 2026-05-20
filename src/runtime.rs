@@ -1120,11 +1120,11 @@ for tag, body in frames:
             if size == -1:
                 values.append(None)
             else:
-                values.append(body[offset:offset + size].decode("utf-8"))
+                values.append(str(body[offset:offset + size], "utf-8"))
                 offset += size
         rows.append(values)
     if tag == b"C":
-        command = body.rstrip(b"\x00").decode("utf-8")
+        command = str(body.rstrip(b"\x00"), "utf-8")
 
 if rows != [["Ada"]]:
     raise SystemExit(f"unexpected rows: {rows!r}")

@@ -26,8 +26,8 @@ check_forbidden_imports() {
   fi
 }
 
-check_forbidden_imports "src/protocol/postgres" "rest" "Postgres protocol"
-check_forbidden_imports "src/protocol/rest" "postgres" "REST protocol"
+check_forbidden_imports "crates/twinning-postgres/src" "rest" "Postgres protocol"
+check_forbidden_imports "crates/twinning-rest/src" "postgres" "REST protocol"
 
 if [ "$failures" -ne 0 ]; then
   cat >&2 <<'MSG'

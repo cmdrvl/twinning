@@ -507,10 +507,8 @@ mod tests {
 
         for (name, input, expected) in cases {
             fs::write(&seed_path, input).expect("write seed");
-            let refusal = match load_postgres_seed_tables(&catalog, &seed_path) {
-                Ok(_) => panic!("{name} should be refused"),
-                Err(refusal) => refusal,
-            };
+            let refusal = load_postgres_seed_tables(&catalog, &seed_path)
+                .expect_err(&format!("{name} should be refused"));
             let rendered = refusal.render(true).expect("render refusal");
             assert!(
                 rendered.contains(expected),

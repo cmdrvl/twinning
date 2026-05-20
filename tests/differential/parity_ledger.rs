@@ -292,6 +292,18 @@ fn live_reference_csv_parser_preserves_headers_and_quoted_values() {
     );
 }
 
+#[test]
+fn live_reference_sqlstate_parser_prefers_actual_sqlstate_over_error_prefix() {
+    let stderr = "\
+ERROR:  42P01: relation \"public.audit_log\" does not exist
+LINE 1: SELECT id FROM public.audit_log WHERE id = 'audit-001'
+                       ^
+LOCATION:  parserOpenTable, parse_relation.c:1428
+";
+
+    assert_eq!(extract_sqlstate(stderr).as_deref(), Ok("42P01"));
+}
+
 #[derive(Debug, Deserialize)]
 struct ParityFixture {
     version: String,
@@ -698,14 +710,21 @@ fn parse_csv_records(input: &str) -> Result<Vec<Vec<String>>, String> {
 }
 
 fn extract_sqlstate(stderr: &str) -> Result<String, String> {
+    let mut fallback = None;
     for token in stderr.split(|ch: char| !ch.is_ascii_alphanumeric()) {
         if token.len() == 5
             && token
                 .chars()
                 .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
         {
-            return Ok(token.to_owned());
+            if token.chars().any(|ch| ch.is_ascii_digit()) {
+                return Ok(token.to_owned());
+            }
+            fallback = Some(token.to_owned());
         }
+    }
+    if let Some(sqlstate) = fallback {
+        return Ok(sqlstate);
     }
     Err(format!(
         "could not extract SQLSTATE from psql stderr: {stderr}"
