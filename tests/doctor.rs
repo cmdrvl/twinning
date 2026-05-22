@@ -58,6 +58,16 @@ fn doctor_health_is_read_only_twinning_v0_json() {
     assert_eq!(json["tool"], "twinning");
     assert_eq!(json["package_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(json["read_only"], true);
+    assert_eq!(json["config_footprint"]["canonical_root"], "~/.cmdrvl");
+    assert_eq!(
+        json["config_footprint"]["config_path"],
+        "~/.cmdrvl/config/twinning/config.toml"
+    );
+    assert_eq!(
+        json["config_footprint"]["legacy_paths"],
+        serde_json::json!([])
+    );
+    assert_eq!(json["config_footprint"]["legacy_migration_required"], false);
     assert_eq!(json["side_effects"]["reads_schema_files"], false);
     assert_eq!(json["side_effects"]["reads_snapshot_files"], false);
     assert_eq!(json["side_effects"]["reads_verify_artifacts"], false);
@@ -77,6 +87,7 @@ fn doctor_health_human_output_lists_rest_protocol() {
     assert_success(&output);
 
     let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    assert!(stdout.contains("config_root: ~/.cmdrvl\n"));
     assert!(stdout.contains("REST protocol: twinning rest --spec <openapi.yaml> [OPTIONS]\n"));
     assert!(stdout.contains("twinning rest --spec openapi.yaml --json"));
 }
@@ -93,6 +104,14 @@ fn doctor_capabilities_reflect_agent_commands_and_no_fix_mode() {
     assert_eq!(json["mode"], "doctor_capabilities");
     assert_eq!(json["read_only"], true);
     assert_eq!(json["fix_mode"]["available"], false);
+    assert_eq!(
+        json["config_footprint"]["state_dir"],
+        "~/.cmdrvl/state/twinning/"
+    );
+    assert_eq!(
+        json["config_footprint"]["deprecation_notices"],
+        "~/.cmdrvl/notices/deprecated-paths.jsonl"
+    );
 
     let commands = json["commands"].as_array().expect("commands array");
     assert!(
@@ -137,6 +156,10 @@ fn doctor_robot_triage_is_json_without_global_json_flag() {
     assert_eq!(json["mode"], "doctor_triage");
     assert_eq!(json["summary"]["doctor_surface"], "read_only_available");
     assert_eq!(json["summary"]["fix_mode"], "absent_by_design");
+    assert_eq!(
+        json["config_footprint"]["cache_dir"],
+        "~/.cmdrvl/cache/twinning/"
+    );
     assert!(
         json["recommended_next_work"]
             .as_array()
@@ -189,6 +212,11 @@ fn describe_works_without_engine_subcommand() {
     assert_eq!(json["name"], "twinning");
     assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(json["doctor"]["read_only"], true);
+    assert_eq!(
+        json["config_paths"]["config_path"],
+        "~/.cmdrvl/config/twinning/config.toml"
+    );
+    assert_eq!(json["config_paths"]["legacy_paths"], serde_json::json!([]));
 
     let usage = json["invocation"]["usage"]
         .as_array()

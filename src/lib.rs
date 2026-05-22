@@ -7,6 +7,7 @@ pub mod config;
 pub mod doctor;
 pub mod migration_proof;
 pub mod orchestration_manifest;
+pub(crate) mod paths;
 #[cfg(feature = "rest")]
 pub mod port;
 pub mod protocol;

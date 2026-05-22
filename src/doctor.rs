@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::{
     cli::{DoctorArgs, DoctorCommand},
+    paths::{ConfigFootprint, config_footprint},
     report::REPORT_VERSION,
     runtime::Execution,
 };
@@ -62,6 +63,7 @@ struct HealthReport {
     package_version: &'static str,
     status: &'static str,
     read_only: bool,
+    config_footprint: ConfigFootprint,
     side_effects: SideEffects,
     checks: Vec<DoctorCheck>,
     recommendations: Vec<Recommendation>,
@@ -76,6 +78,7 @@ struct CapabilitiesReport {
     tool: &'static str,
     package_version: &'static str,
     read_only: bool,
+    config_footprint: ConfigFootprint,
     commands: Vec<CommandCapability>,
     output_contracts: Vec<OutputContract>,
     detectors: Vec<DetectorSpec>,
@@ -92,6 +95,7 @@ struct TriageReport {
     tool: &'static str,
     package_version: &'static str,
     summary: TriageSummary,
+    config_footprint: ConfigFootprint,
     findings: Vec<DoctorCheck>,
     detectors: Vec<DetectorSpec>,
     recommended_next_work: Vec<Recommendation>,
@@ -189,6 +193,7 @@ fn health_report() -> HealthReport {
         package_version: env!("CARGO_PKG_VERSION"),
         status: "healthy",
         read_only: true,
+        config_footprint: config_footprint(),
         side_effects: SideEffects::read_only(),
         checks: vec![
             DoctorCheck {
@@ -233,6 +238,7 @@ fn capabilities_report() -> CapabilitiesReport {
         tool: TOOL_NAME,
         package_version: env!("CARGO_PKG_VERSION"),
         read_only: true,
+        config_footprint: config_footprint(),
         commands: vec![
             CommandCapability {
                 command: "twinning doctor health --json",
@@ -350,6 +356,7 @@ fn triage_report() -> TriageReport {
             release_gate: "run cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test, and UBS before release",
             fix_mode: "absent_by_design",
         },
+        config_footprint: config_footprint(),
         findings: health_report().checks,
         detectors: detector_specs(),
         recommended_next_work: detector_recommendations(),
@@ -559,6 +566,7 @@ fn render_health_human(report: &HealthReport) -> String {
         format!("{} doctor {}", report.tool, report.status),
         format!("version: {}", report.package_version),
         String::from("read_only: true"),
+        format!("config_root: {}", report.config_footprint.canonical_root),
         String::from("REST protocol: twinning rest --spec <openapi.yaml> [OPTIONS]"),
     ];
     for check in &report.checks {
@@ -577,6 +585,7 @@ fn render_capabilities_human(report: &CapabilitiesReport) -> String {
         format!("{} doctor capabilities", report.tool),
         format!("version: {}", report.package_version),
         String::from("read_only: true"),
+        format!("config_root: {}", report.config_footprint.canonical_root),
     ];
     for command in &report.commands {
         lines.push(format!(

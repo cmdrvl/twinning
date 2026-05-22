@@ -6,6 +6,17 @@
   "repository": "https://github.com/cmdrvl/twinning",
   "license": "MIT",
   "agent_guide": "https://github.com/cmdrvl/.github/blob/main/profile/AGENT_PROMPT.md",
+  "config_paths": {
+    "canonical_root": "~/.cmdrvl",
+    "config_path": "~/.cmdrvl/config/twinning/config.toml",
+    "state_dir": "~/.cmdrvl/state/twinning/",
+    "cache_dir": "~/.cmdrvl/cache/twinning/",
+    "migration_log": "~/.cmdrvl/migrations/applied.jsonl",
+    "deprecation_notices": "~/.cmdrvl/notices/deprecated-paths.jsonl",
+    "legacy_paths": [],
+    "legacy_migration_required": false,
+    "explicit_output_policy": "Reports, snapshots, query traces, seed contracts, proof bundles, and session reports are written only to explicit operator-supplied paths."
+  },
   "invocation": {
     "binary": "twinning",
     "usage": [

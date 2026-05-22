@@ -356,6 +356,18 @@ Current options:
 - `--json`: emit machine-readable status
 - `--describe`: print `operator.json`
 
+Managed paths:
+
+- Canonical config location: `~/.cmdrvl/config/twinning/config.toml`
+- Canonical tool-managed state directory: `~/.cmdrvl/state/twinning/`
+- Canonical rebuildable cache directory: `~/.cmdrvl/cache/twinning/`
+- Migration ledger and deprecation notices: `~/.cmdrvl/migrations/applied.jsonl`
+  and `~/.cmdrvl/notices/deprecated-paths.jsonl`
+- Current inventory has no legacy twinning-managed home or repo config path to
+  copy. Reports, snapshots, query traces, seed contracts, proof bundles, and
+  protocol session reports are written only when the operator supplies an
+  explicit output path.
+
 Read-only doctor surface:
 
 - `doctor health --json`: emit `twinning.v0` health diagnostics without reading

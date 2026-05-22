@@ -151,6 +151,23 @@ the working directory. Its detector catalog is static and fixture-backed. No
 `doctor --fix` surface exists until detector fixtures, verbatim backups,
 inverses, and undo tests are implemented.
 
+### Config footprint
+
+`twinning` keeps its managed footprint under the CMD+RVL root:
+
+| Class | Path |
+| --- | --- |
+| Config | `~/.cmdrvl/config/twinning/config.toml` |
+| Tool-managed state | `~/.cmdrvl/state/twinning/` |
+| Rebuildable cache | `~/.cmdrvl/cache/twinning/` |
+| Migration ledger | `~/.cmdrvl/migrations/applied.jsonl` |
+| Deprecation notices | `~/.cmdrvl/notices/deprecated-paths.jsonl` |
+
+The current code inventory has no legacy twinning-managed home or repo config
+path to migrate. Report, snapshot, query-trace, seed-contract,
+twin-pair-proof, and protocol session-report artifacts are explicit
+operator-supplied outputs, so they are not silently redirected or copied.
+
 ### Exit codes
 
 `0` clean (all verify checks pass, or no verify artifact is provided) | `1` violations (verify artifact provided, some checks failed) | `2` refusal
