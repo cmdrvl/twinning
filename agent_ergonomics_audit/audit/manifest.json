@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.1.0",
+  "tool_name": "twinning",
+  "tool_repo": "/Users/zac/Source/cmdrvl/twinning",
+  "audit_workspace": "/Users/zac/Source/cmdrvl/twinning/agent_ergonomics_audit",
+  "rubric_version": "<git SHA of references/rubric/SCORING-RUBRIC.md when scoring ran>",
+  "passes": [
+    {
+      "pass": 1,
+      "started_at": "2026-06-09T18:55:17Z",
+      "completed_at": "2026-06-09T19:40:00Z",
+      "mode": "full",
+      "target_sha": "800808a8904328dfe62c4452394d6ff695308f64",
+      "target_branch": "main",
+      "feature_branch": null,
+      "summary": {
+        "surfaces_inventoried": 11,
+        "surfaces_scored": 11,
+        "recommendations_total": 10,
+        "recommendations_applied": 10,
+        "substantive_commits": 1,
+        "dimensions_touched": 4,
+        "ambition_bar_met": true,
+        "ambition_bar_self_prompt_run": false,
+        "median_uplift_pts": 380,
+        "regressions_count": 0,
+        "fresh_eyes_rounds": 1
+      },
+      "artifacts": {
+        "surface_inventory": "audit/surface_inventory.jsonl",
+        "agent_surfaces": "audit/agent_surfaces.jsonl",
+        "intent_corpus": "audit/intent_inference_corpus.jsonl",
+        "recommendations": "audit/recommendations.jsonl",
+        "playbook": "audit/playbook.md",
+        "applied_changes": "audit/applied_changes.jsonl",
+        "ambition_bar_check": "audit/ambition_bar_check.md",
+        "scorecard": "audit/scorecard_pass_N.md",
+        "heatmap": "audit/heatmap.svg",
+        "uplift_diff": "audit/uplift_diff.md",
+        "regression_alerts": "audit/regression_alerts.md",
+        "handoff": "audit/HANDOFF.md",
+        "simulations_pre": "audit/agent_simulations/pre_pass_N/",
+        "simulations_post": "audit/agent_simulations/post_pass_N/"
+      }
+    }
+  ],
+  "current_pass": 1,
+  "pass_N+1_ready": false,
+  "next_pass_focus": null
+}
