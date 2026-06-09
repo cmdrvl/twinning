@@ -68,6 +68,16 @@ if [ "$ubs_exit" -ne 0 ]; then
 fi
 
 if [ ! -s "$report_tmp" ]; then
+  # UBS exits 0 and emits no report when the scoped inputs contain no recognizable
+  # languages (e.g. a CI/docs-only changeset with no Rust sources). For a
+  # critical-only gate that is a clean pass — there is simply nothing to scan —
+  # not a missing-report error.
+  if grep -qi "no recognizable languages" "$log_file" 2>/dev/null; then
+    printf '{"totals":{"critical":0,"warning":0,"info":0,"files":0}}\n' >"$report_file"
+    echo "UBS summary: files=0 critical=0 warning=0 info=0"
+    echo "UBS gate passed (no scannable sources in scope)."
+    exit 0
+  fi
   echo "UBS gate failed: scanner did not produce a summary report." >&2
   if [ -s "$log_file" ]; then
     tail -n 40 "$log_file" >&2
