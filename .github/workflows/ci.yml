@@ -212,14 +212,22 @@ jobs:
   ubs:
     name: UBS (critical-only)
     runs-on: ubuntu-latest
+    env:
+      # Hermetic CI: never let the launcher self-update / probe main at runtime.
+      UBS_NO_AUTO_UPDATE: "1"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Install UBS (pinned)
         run: |
-          UBS_URL="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/4320d660b376758d764467e1d29b18dec03db31e/ubs"
-          UBS_SHA256="88c126334769c0422ee71781c8ebf340af99aa3d307ab3c03a207118aff5547e"
+          # Pin to the v5.2.76 launcher. From v5.2.76 onward the launcher fetches
+          # its language modules from the immutable version tag (/v5.2.76/modules/*)
+          # rather than a floating "release"/"main" channel, so module checksums no
+          # longer drift out from under the pin. Bumping this pin is the supported way
+          # to adopt a newer scanner; the sha256 check below fails closed if the tag moves.
+          UBS_URL="https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/v5.2.76/ubs"
+          UBS_SHA256="c53f88c9265410feaa418684370d87f680c98e6b0096a97aa6cf9da2810b7b97"
           curl -fsSL "$UBS_URL" -o /tmp/ubs
           echo "$UBS_SHA256  /tmp/ubs" | sha256sum -c -
           install -m 0755 /tmp/ubs /usr/local/bin/ubs
