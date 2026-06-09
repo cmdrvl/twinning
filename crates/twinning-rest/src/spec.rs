@@ -27,6 +27,7 @@ pub struct RestCatalog {
     pub resources: HashMap<String, ResourceSchema>,
     pub catalog: Catalog,
     pub spec_hash: String,
+    pub servers: Vec<ServerObject>,
     pub x_twinning: Option<XTwinningExt>,
     pub security_schemes: Vec<SecurityScheme>,
     pub security_requirements: Vec<SecurityRequirement>,
@@ -57,6 +58,8 @@ pub struct ResourceSchema {
 pub struct ResourceMeta {
     pub item_resource: Option<String>,
     pub object_map_value_resource: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_lookup_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +97,8 @@ pub struct OpenApiDoc {
     pub openapi: Option<String>,
     pub info: Option<InfoObject>,
     #[serde(default)]
+    pub servers: Vec<ServerObject>,
+    #[serde(default)]
     pub security: Vec<SecurityRequirement>,
     #[serde(default)]
     pub components: ComponentsObject,
@@ -107,6 +112,22 @@ pub struct OpenApiDoc {
 pub struct InfoObject {
     pub title: Option<String>,
     pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ServerObject {
+    pub url: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub variables: HashMap<String, ServerVariableObject>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ServerVariableObject {
+    #[serde(rename = "enum", default)]
+    pub enum_values: Vec<String>,
+    pub default: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -484,9 +505,14 @@ pub fn build_rest_catalog(
         let resource_schema =
             build_resource_schema(schema_name, schema, &document.components.schemas)?;
         warnings.extend(resource_schema.warnings.clone());
-        let table = table_from_resource(&resource_schema);
-        tables_by_name.insert(table.name.clone(), table);
         resources.insert(resource_schema.resource_name.clone(), resource_schema);
+    }
+
+    add_path_lookup_selector_columns(&mut resources, &document);
+
+    for resource in resources.values() {
+        let table = table_from_resource(resource);
+        tables_by_name.insert(table.name.clone(), table);
     }
 
     let tables = tables_by_name.into_values().collect::<Vec<_>>();
@@ -508,6 +534,7 @@ pub fn build_rest_catalog(
             constraint_count,
         },
         spec_hash,
+        servers: document.servers,
         x_twinning,
         security_schemes,
         security_requirements: document.security,
@@ -922,7 +949,151 @@ fn resource_meta(schema: &SchemaObject) -> ResourceMeta {
     ResourceMeta {
         item_resource: array_item_resource_name(schema),
         object_map_value_resource: object_map_value_resource_name(schema),
+        path_lookup_columns: Vec::new(),
     }
+}
+
+fn add_path_lookup_selector_columns(
+    resources: &mut HashMap<String, ResourceSchema>,
+    document: &OpenApiDoc,
+) {
+    for (path, path_item) in &document.paths {
+        let path_params = path_template_params(path);
+        let [path_param] = path_params.as_slice() else {
+            continue;
+        };
+        let Some(operation) = path_item.get.as_ref() else {
+            continue;
+        };
+        let Some(response_resource_name) =
+            success_response_schema_ref(operation).and_then(|reference| {
+                schema_ref_name(reference)
+                    .ok()
+                    .map(|schema_name| resource_name(&schema_name))
+            })
+        else {
+            continue;
+        };
+        let Some(resource) = resources.get_mut(&response_resource_name) else {
+            continue;
+        };
+        if !resource_can_use_path_selector(resource, path_param) {
+            continue;
+        }
+
+        resource.columns.push(ResourceColumn {
+            name: path_param.clone(),
+            declared_type: String::from("string"),
+            normalized_type: String::from("text"),
+            nullable: false,
+            format: None,
+            warnings: Vec::new(),
+        });
+        resource.required.push(path_param.clone());
+        resource.required.sort();
+        resource.required.dedup();
+        resource.primary_key = Some(vec![path_param.clone()]);
+        resource.meta.path_lookup_columns.push(path_param.clone());
+        resource.meta.path_lookup_columns.sort();
+        resource.meta.path_lookup_columns.dedup();
+    }
+}
+
+fn resource_can_use_path_selector(resource: &ResourceSchema, path_param: &str) -> bool {
+    if resource.primary_key.is_some()
+        || resource
+            .columns
+            .iter()
+            .any(|column| column.name == path_param)
+    {
+        return false;
+    }
+    if !path_param_is_value_selector(path_param) {
+        return false;
+    }
+
+    let public_columns = resource
+        .columns
+        .iter()
+        .filter(|column| {
+            !resource
+                .meta
+                .path_lookup_columns
+                .iter()
+                .any(|hidden| hidden == &column.name)
+        })
+        .collect::<Vec<_>>();
+    let [column] = public_columns.as_slice() else {
+        return false;
+    };
+
+    column.normalized_type == "array" && matches!(column.name.as_str(), "data" | "items" | "values")
+}
+
+fn path_param_is_value_selector(path_param: &str) -> bool {
+    matches!(
+        canonical_identifier(path_param).as_str(),
+        "key" | "field" | "name" | "type"
+    )
+}
+
+fn canonical_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(|character| character.to_lowercase())
+        .collect()
+}
+
+fn success_response_schema_ref(operation: &OperationObject) -> Option<&str> {
+    let response = operation
+        .responses
+        .iter()
+        .filter_map(|(status, response)| {
+            status
+                .parse::<u16>()
+                .ok()
+                .filter(|status| (200..300).contains(status))
+                .map(|status| (status, response))
+        })
+        .min_by_key(|(status, _)| *status)
+        .map(|(_, response)| response)
+        .or_else(|| operation.responses.get("default"))?;
+
+    response
+        .content
+        .iter()
+        .filter(|(content_type, _)| content_type_is_json(content_type))
+        .filter_map(|(_, media)| media.schema.as_ref())
+        .filter_map(|schema| schema.reference.as_deref())
+        .next()
+}
+
+fn content_type_is_json(content_type: &str) -> bool {
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim()
+        .to_ascii_lowercase();
+
+    media_type == "application/json"
+        || (media_type.starts_with("application/") && media_type.ends_with("+json"))
+}
+
+fn path_template_params(path: &str) -> Vec<String> {
+    let mut params = Vec::new();
+    let mut remaining = path;
+    while let Some((_, after_open)) = remaining.split_once('{') {
+        let Some((name, after_close)) = after_open.split_once('}') else {
+            break;
+        };
+        if !name.is_empty() {
+            params.push(name.to_owned());
+        }
+        remaining = after_close;
+    }
+    params
 }
 
 fn array_item_resource_name(schema: &SchemaObject) -> Option<String> {
@@ -1408,7 +1579,7 @@ fn normalized_type(
             warnings.push(warning(
                 resource_name,
                 field_name,
-                "array is cataloged but requests using it are unsupported in REST twin v0.",
+                "array is cataloged for JSON bodies and responses; array path/query filters remain unsupported in REST twin v0.",
             ));
             "array".to_owned()
         }

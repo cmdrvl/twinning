@@ -110,25 +110,21 @@ pub fn normalize_request(
     }
 }
 
-pub fn json_to_scalar_value(field: &str, value: &JsonValue) -> Result<ScalarValue, RestRefusal> {
+pub fn json_to_scalar_value(_field: &str, value: &JsonValue) -> Result<ScalarValue, RestRefusal> {
     match value {
         JsonValue::Null => Ok(ScalarValue::Null),
         JsonValue::Bool(value) => Ok(ScalarValue::Boolean(*value)),
         JsonValue::Number(value) => Ok(value
             .as_i64()
             .map(ScalarValue::Integer)
-            .unwrap_or_else(|| ScalarValue::Text(value.to_string()))),
+            .unwrap_or_else(|| ScalarValue::Json(JsonValue::Number(value.clone())))),
         JsonValue::String(value) => Ok(ScalarValue::Text(value.clone())),
-        JsonValue::Object(_) => Err(RestRefusal::TypeMismatch {
-            field: field.to_owned(),
-            expected: String::from("scalar"),
-            received: String::from("object"),
-        }),
-        JsonValue::Array(_) => Err(RestRefusal::TypeMismatch {
-            field: field.to_owned(),
-            expected: String::from("scalar"),
-            received: String::from("array"),
-        }),
+        JsonValue::Object(_) => Ok(ScalarValue::Json(value.clone())),
+        JsonValue::Array(values) => values
+            .iter()
+            .map(|value| json_to_scalar_value(_field, value))
+            .collect::<Result<Vec<_>, _>>()
+            .map(ScalarValue::Array),
     }
 }
 
@@ -160,13 +156,15 @@ fn json_to_column_scalar_value(
             JsonValue::String(value) => Ok(ScalarValue::Text(value.clone())),
             _ => Err(type_mismatch(column, "string", value)),
         },
-        "json" => Ok(ScalarValue::Text(value.to_string())),
-        "array" => Err(RestRefusal::UnsupportedShape {
-            detail: format!(
-                "request body field `{}` has array type, which REST twin v0 cannot materialize from JSON bodies",
-                column.name
-            ),
-        }),
+        "json" => Ok(ScalarValue::Json(value.clone())),
+        "array" => match value {
+            JsonValue::Array(values) => values
+                .iter()
+                .map(|value| json_to_scalar_value(&column.name, value))
+                .collect::<Result<Vec<_>, _>>()
+                .map(ScalarValue::Array),
+            _ => Err(type_mismatch(column, "array", value)),
+        },
         _ => json_to_scalar_value(&column.name, value),
     }
 }
@@ -223,34 +221,57 @@ fn normalize_insert(
     route: &RouteEntry,
     request: NormalizeRequest<'_>,
 ) -> Result<IrOp, RestRefusal> {
-    let object = parse_request_body_object(route, request_resource, request.headers, request.body)?;
-    validate_inline_request_body_schema(route, &object, true)?;
-    if should_validate_request_resource_required_fields(route) {
-        validate_required_for(request_resource, &object, &resource.resource_name)?;
+    let objects =
+        parse_request_body_objects(route, request_resource, request.headers, request.body)?;
+    let mut columns = None;
+    let mut rows = Vec::new();
+    for object in &objects {
+        validate_inline_request_body_schema(route, object, true)?;
+        if should_validate_request_resource_required_fields(route) {
+            validate_required_for(request_resource, object, &resource.resource_name)?;
+        }
+        validate_present_fields_for_request_resource(route, resource, request_resource, object)?;
+        ensure_insert_can_materialize_required_target_fields(
+            resource,
+            request_resource,
+            route,
+            object,
+        )?;
+        let (mut object_columns, mut row) = mutation_fields_from_object(
+            resource,
+            request_resource,
+            route,
+            object,
+            BodyMode::PresentFields,
+        )?;
+        append_path_param_insert_fields(
+            resource,
+            route,
+            request.path_params,
+            &mut object_columns,
+            &mut row,
+        )?;
+        if let Some(columns) = &columns {
+            if columns != &object_columns {
+                return Err(RestRefusal::UnsupportedShape {
+                    detail: String::from(
+                        "bulk JSON request body objects must materialize the same target columns",
+                    ),
+                });
+            }
+        } else {
+            columns = Some(object_columns);
+        }
+        rows.push(row);
     }
-    validate_present_fields_for_request_resource(route, resource, request_resource, &object)?;
-    ensure_insert_can_materialize_required_target_fields(
-        resource,
-        request_resource,
-        route,
-        &object,
-    )?;
-    let (mut columns, mut row) = mutation_fields_from_object(
-        resource,
-        request_resource,
-        route,
-        &object,
-        BodyMode::PresentFields,
-    )?;
-    append_path_param_insert_fields(resource, route, request.path_params, &mut columns, &mut row)?;
     let returning = mutation_returning_columns(resource, route)?;
 
     Ok(IrOp::Mutation(MutationOp {
         session_id: request.session_id.to_owned(),
         table: resource.resource_name.clone(),
         kind: MutationKind::Insert,
-        columns,
-        rows: vec![row],
+        columns: columns.unwrap_or_default(),
+        rows,
         conflict_target: None,
         update_columns: Vec::new(),
         predicate: None,
@@ -271,7 +292,7 @@ fn normalize_read_many(
         session_id: session_id.to_owned(),
         table: resource.resource_name.clone(),
         shape: ReadShape::FilteredScan,
-        projection: projection_columns(resource),
+        projection: projection_columns(resource, route),
         predicate,
         aggregate: AggregateSpec::default(),
         group_by: Vec::new(),
@@ -307,7 +328,7 @@ fn normalize_read_one(
         session_id: session_id.to_owned(),
         table: resource.resource_name.clone(),
         shape,
-        projection: projection_columns(resource),
+        projection: projection_columns(resource, route),
         predicate,
         aggregate: AggregateSpec::default(),
         group_by: Vec::new(),
@@ -455,6 +476,20 @@ fn parse_request_body_object(
         RequestBodyContentType::Json => parse_json_body(body),
         RequestBodyContentType::FormUrlencoded => {
             parse_form_urlencoded_body(route, request_resource, body)
+        }
+    }
+}
+
+fn parse_request_body_objects(
+    route: &RouteEntry,
+    request_resource: &ResourceSchema,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<Vec<BTreeMap<String, JsonValue>>, RestRefusal> {
+    match request_body_content_type(headers)? {
+        RequestBodyContentType::Json => parse_json_body_objects(body),
+        RequestBodyContentType::FormUrlencoded => {
+            parse_form_urlencoded_body(route, request_resource, body).map(|object| vec![object])
         }
     }
 }
@@ -622,6 +657,35 @@ fn parse_json_body(body: &[u8]) -> Result<BTreeMap<String, JsonValue>, RestRefus
         other => Err(RestRefusal::TypeMismatch {
             field: String::from("<body>"),
             expected: String::from("object"),
+            received: json_kind(&other),
+        }),
+    }
+}
+
+fn parse_json_body_objects(body: &[u8]) -> Result<Vec<BTreeMap<String, JsonValue>>, RestRefusal> {
+    if body.is_empty() {
+        return Ok(vec![BTreeMap::new()]);
+    }
+
+    match serde_json::from_slice::<JsonValue>(body).map_err(|error| RestRefusal::InvalidJson {
+        detail: error.to_string(),
+    })? {
+        JsonValue::Object(object) => Ok(vec![object.into_iter().collect()]),
+        JsonValue::Array(values) => values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| match value {
+                JsonValue::Object(object) => Ok(object.into_iter().collect()),
+                other => Err(RestRefusal::TypeMismatch {
+                    field: format!("<body>[{index}]"),
+                    expected: String::from("object"),
+                    received: json_kind(&other),
+                }),
+            })
+            .collect(),
+        other => Err(RestRefusal::TypeMismatch {
+            field: String::from("<body>"),
+            expected: String::from("object or array<object>"),
             received: json_kind(&other),
         }),
     }
@@ -1776,8 +1840,21 @@ fn predicate_from_comparisons(mut comparisons: Vec<PredicateComparison>) -> Pred
     }
 }
 
-fn projection_columns(resource: &ResourceSchema) -> Vec<String> {
-    result_scalar_columns(resource)
+fn projection_columns(resource: &ResourceSchema, route: &RouteEntry) -> Vec<String> {
+    if route.response_resource_name.is_some() && !route.response_fields.is_empty() {
+        return route.response_fields.clone();
+    }
+
+    legacy_projection_columns(resource)
+}
+
+fn legacy_projection_columns(resource: &ResourceSchema) -> Vec<String> {
+    resource
+        .columns
+        .iter()
+        .filter(|column| legacy_projection_type(&column.normalized_type))
+        .map(|column| column.name.clone())
+        .collect()
 }
 
 fn mutation_returning_columns(
@@ -1847,6 +1924,10 @@ fn result_scalar_columns(resource: &ResourceSchema) -> Vec<String> {
 }
 
 fn result_scalar_type(normalized_type: &str) -> bool {
+    !matches!(normalized_type, "bytes")
+}
+
+fn legacy_projection_type(normalized_type: &str) -> bool {
     !matches!(normalized_type, "json" | "bytes" | "array")
 }
 
@@ -2823,7 +2904,8 @@ properties:
 
         match refusal {
             RestRefusal::UnsupportedShape { detail } => {
-                assert!(detail.contains("field `users` has array type"));
+                assert!(detail.contains("target resource `usergroups.users`"));
+                assert!(detail.contains("divergent request/response field types"));
             }
             other => panic!("expected unsupported shape, got {other:?}"),
         }
@@ -4216,22 +4298,16 @@ properties:
     }
 
     #[test]
-    fn object_and_array_body_values_are_type_mismatches() {
+    fn object_and_array_body_values_round_trip_as_json_capable_scalars() {
         assert_eq!(
             json_to_scalar_value("metadata", &json!({ "nested": true })),
-            Err(RestRefusal::TypeMismatch {
-                field: String::from("metadata"),
-                expected: String::from("scalar"),
-                received: String::from("object"),
-            })
+            Ok(ScalarValue::Json(json!({ "nested": true })))
         );
         assert_eq!(
             json_to_scalar_value("tags", &json!(["a"])),
-            Err(RestRefusal::TypeMismatch {
-                field: String::from("tags"),
-                expected: String::from("scalar"),
-                received: String::from("array"),
-            })
+            Ok(ScalarValue::Array(vec![ScalarValue::Text(String::from(
+                "a"
+            ))]))
         );
     }
 

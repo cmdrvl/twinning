@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{collections::BTreeMap, fmt, path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,7 @@ pub struct RestConfig {
     pub canary_path: Option<PathBuf>,
     pub strict: bool,
     pub routing: RoutingConfig,
+    pub server_variables: BTreeMap<String, String>,
     pub auth_mode: Option<RestAuthMode>,
     pub chaos: Option<ChaosConfig>,
     pub json: bool,
@@ -27,7 +28,8 @@ pub struct RestConfig {
 impl RestConfig {
     pub fn from_parts(args: RestConfigParts, json: bool) -> Self {
         let serve_defaulted = !args.serve && args.run_command.is_none();
-        let routing = resolve_routing_config(args.routing, args.base_prefix, None);
+        let mut routing = resolve_routing_config(args.routing, args.base_prefix, None);
+        routing.server_variables = args.server_variables.clone();
 
         Self {
             spec_path: args.spec_path,
@@ -40,6 +42,7 @@ impl RestConfig {
             canary_path: args.canary_path,
             strict: args.strict,
             routing,
+            server_variables: args.server_variables,
             auth_mode: args.auth_mode,
             chaos: args.chaos,
             json,
@@ -59,6 +62,7 @@ pub struct RestConfigParts {
     pub strict: bool,
     pub routing: Option<RoutingPolicy>,
     pub base_prefix: Option<String>,
+    pub server_variables: BTreeMap<String, String>,
     pub auth_mode: Option<RestAuthMode>,
     pub chaos: Option<ChaosConfig>,
 }

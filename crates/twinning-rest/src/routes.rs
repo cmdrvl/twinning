@@ -466,10 +466,18 @@ fn build_route_registry_inner(
     };
 
     for (path, path_item) in paths {
-        let pattern = PathPattern::parse(path);
+        let source_pattern = PathPattern::parse(path);
+        let mounted_path = mounted_route_path(catalog, &effective_config, path);
+        let mounted_pattern = PathPattern::parse(&mounted_path);
         for (method, operation) in operations(path_item) {
-            let (entry, source) =
-                route_entry(&context, path, path_item, operation, method, &pattern);
+            let (entry, source) = route_entry(
+                &context,
+                path,
+                path_item,
+                operation,
+                method,
+                &source_pattern,
+            );
             stats.record(source, &entry.kind);
             if let RouteKind::Refusal { detail } = &entry.kind {
                 warnings.push(detail.clone());
@@ -479,7 +487,7 @@ fn build_route_registry_inner(
                     "Pagination detected on {path}: {style}. REST twin returns all rows. Client may need to handle response truncation."
                 ));
             }
-            routes.push((method, pattern.clone(), entry.clone()));
+            routes.push((method, mounted_pattern.clone(), entry.clone()));
         }
     }
 
@@ -488,17 +496,94 @@ fn build_route_registry_inner(
     RouteRegistry { routes, warnings }
 }
 
+fn mounted_route_path(catalog: &RestCatalog, config: &RoutingConfig, source_path: &str) -> String {
+    let Some(prefix) = selected_server_mount_prefix(catalog, config) else {
+        return source_path.to_owned();
+    };
+    join_paths(&prefix, source_path)
+}
+
+fn selected_server_mount_prefix(catalog: &RestCatalog, config: &RoutingConfig) -> Option<String> {
+    if config.server_variables.is_empty() {
+        return None;
+    }
+
+    catalog
+        .servers
+        .iter()
+        .filter_map(|server| rendered_server_path(server, &config.server_variables))
+        .find(|path| !path.is_empty() && path != "/")
+}
+
+fn rendered_server_path(
+    server: &super::spec::ServerObject,
+    selected: &BTreeMap<String, String>,
+) -> Option<String> {
+    let mut rendered = server.url.clone();
+    for (name, variable) in &server.variables {
+        let value = selected
+            .get(name)
+            .map(String::as_str)
+            .unwrap_or(&variable.default);
+        rendered = rendered.replace(&format!("{{{name}}}"), value);
+    }
+    if rendered.contains('{') || rendered.contains('}') {
+        return None;
+    }
+    let path = server_url_path(&rendered)?;
+    Some(normalize_mount_prefix(path))
+}
+
+fn server_url_path(url: &str) -> Option<&str> {
+    if let Some(after_scheme) = url.split_once("://").map(|(_, rest)| rest) {
+        let path_start = after_scheme.find('/')?;
+        return Some(&after_scheme[path_start..]);
+    }
+
+    Some(url)
+}
+
+fn normalize_mount_prefix(path: &str) -> String {
+    let without_query = path
+        .split_once('?')
+        .map(|(head, _)| head)
+        .unwrap_or(path)
+        .split_once('#')
+        .map(|(head, _)| head)
+        .unwrap_or(path);
+    let trimmed = without_query.trim_matches('/');
+    if trimmed.is_empty() {
+        String::from("/")
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn join_paths(prefix: &str, source_path: &str) -> String {
+    let prefix = prefix.trim_end_matches('/');
+    let source = source_path.trim_start_matches('/');
+    if prefix.is_empty() || prefix == "/" {
+        format!("/{source}")
+    } else if source.is_empty() {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}/{source}")
+    }
+}
+
 pub fn build_route_table(catalog: &RestCatalog) -> RouteTable {
     build_route_registry_with_config(catalog, &RoutingConfig::default()).routes
 }
 
 fn effective_routing_config(catalog: &RestCatalog, config: &RoutingConfig) -> RoutingConfig {
     let cli_policy = (config.policy != RoutingPolicy::Auto).then_some(config.policy);
-    resolve_routing_config(
+    let mut routing = resolve_routing_config(
         cli_policy,
         config.base_prefix.clone(),
         catalog.x_twinning.as_ref(),
-    )
+    );
+    routing.server_variables = config.server_variables.clone();
+    routing
 }
 
 pub fn match_route<'a>(
@@ -1714,22 +1799,6 @@ fn unsupported_request_body_refusal(
                 source: ClassificationSource::Waterfall,
             });
         }
-        if let Some(field) = unsupported_json_request_body_array_field(catalog, request_body) {
-            return Some(Classification {
-                kind: RouteKind::Refusal {
-                    detail: format!(
-                        "REST route declares request body field `{field}` with array type, which REST twin v0 cannot materialize from JSON bodies. Path: {path}"
-                    ),
-                },
-                matched_policy: None,
-                effective_resource_name: None,
-                routing_evidence: None,
-                confidence: None,
-                conflict: None,
-                response_fields_resource_name: resource_name(&PathPattern::parse(path)),
-                source: ClassificationSource::Waterfall,
-            });
-        }
         return None;
     }
 
@@ -1770,55 +1839,6 @@ fn unsupported_json_request_body_top_level_kind(
 
     let kind = schema_type_string(schema)?;
     (!kind.is_empty()).then_some(kind)
-}
-
-fn unsupported_json_request_body_array_field(
-    catalog: &RestCatalog,
-    request_body: &RequestBodyObject,
-) -> Option<String> {
-    let schema = request_body_json_schema(request_body)?;
-    if let Some(resource_name) = schema
-        .reference
-        .as_deref()
-        .and_then(component_resource_name)
-    {
-        return catalog.resources.get(&resource_name).and_then(|resource| {
-            if let Some(column) = resource.required.iter().find_map(|field| {
-                resource
-                    .columns
-                    .iter()
-                    .find(|column| column.name == *field && column.normalized_type == "array")
-            }) {
-                return Some(column.name.clone());
-            }
-
-            resource
-                .columns
-                .iter()
-                .find(|column| column.normalized_type == "array")
-                .map(|column| column.name.clone())
-        });
-    }
-
-    if let Some(field) = schema
-        .required
-        .iter()
-        .find(|field| {
-            schema
-                .properties
-                .get(*field)
-                .is_some_and(schema_declares_array)
-        })
-        .cloned()
-    {
-        return Some(field);
-    }
-
-    schema
-        .properties
-        .iter()
-        .find(|(_, property)| schema_declares_array(property))
-        .map(|(field, _)| field.clone())
 }
 
 fn request_target_required_fields_refusal(
@@ -2217,11 +2237,20 @@ fn response_fields(
             resource
                 .columns
                 .iter()
+                .filter(|column| !is_path_lookup_column(resource, &column.name))
                 .filter(|column| is_rest_returning_type(&column.normalized_type))
                 .map(|column| column.name.clone())
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn is_path_lookup_column(resource: &ResourceSchema, column_name: &str) -> bool {
+    resource
+        .meta
+        .path_lookup_columns
+        .iter()
+        .any(|name| name == column_name)
 }
 
 fn response_wrapper(
@@ -2866,7 +2895,7 @@ fn trim_plural_suffix(value: &str) -> &str {
 }
 
 fn is_rest_returning_type(normalized_type: &str) -> bool {
-    !matches!(normalized_type, "json" | "bytes" | "array")
+    !matches!(normalized_type, "bytes")
 }
 
 fn component_resource_name(reference: &str) -> Option<String> {
@@ -3549,7 +3578,7 @@ paths:
     }
 
     #[test]
-    fn array_request_body_field_is_route_refusal() {
+    fn required_array_request_body_field_classifies_as_create() {
         let registry = registry(
             r##"
 openapi: 3.0.3
@@ -3566,10 +3595,6 @@ components:
             type: object
             properties:
               toContractAddress: { type: string }
-    Step:
-      type: object
-      properties:
-        id: { type: string }
 paths:
   /v1/quote/contractCalls:
     post:
@@ -3583,22 +3608,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Step"
+                $ref: "#/components/schemas/ContractCallsRequest"
 "##,
         );
 
         let create = route(&registry, Method::Post, "/v1/quote/contractCalls");
-        assert!(matches!(
-            create.kind,
-            RouteKind::Refusal { ref detail }
-                if detail.contains("request body field `contractCalls`")
-                    && detail.contains("array type")
-                    && detail.contains("/v1/quote/contractCalls")
-        ));
+        assert_eq!(create.kind, RouteKind::Create);
+        assert!(create.request_body_declared);
+        assert_eq!(
+            create.request_schema_ref.as_deref(),
+            Some("#/components/schemas/ContractCallsRequest")
+        );
+        assert_eq!(
+            create.request_resource_name.as_deref(),
+            Some("contractcallsrequests")
+        );
     }
 
     #[test]
-    fn optional_json_array_request_body_field_is_route_refusal() {
+    fn optional_array_request_body_field_classifies_as_create() {
         let registry = registry(
             r##"
 openapi: 3.0.3
@@ -3612,11 +3640,6 @@ components:
         items:
           type: array
           items: { type: string }
-    Batch:
-      type: object
-      properties:
-        id: { type: string }
-        name: { type: string }
 paths:
   /batches:
     post:
@@ -3630,18 +3653,21 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Batch"
+                $ref: "#/components/schemas/BatchRequest"
 "##,
         );
 
         let create = route(&registry, Method::Post, "/batches");
-        assert!(matches!(
-            create.kind,
-            RouteKind::Refusal { ref detail }
-                if detail.contains("request body field `items`")
-                    && detail.contains("array type")
-                    && detail.contains("/batches")
-        ));
+        assert_eq!(create.kind, RouteKind::Create);
+        assert!(create.request_body_declared);
+        assert_eq!(
+            create.request_schema_ref.as_deref(),
+            Some("#/components/schemas/BatchRequest")
+        );
+        assert_eq!(
+            create.request_resource_name.as_deref(),
+            Some("batchrequests")
+        );
     }
 
     #[test]
@@ -3710,6 +3736,7 @@ paths:
         let config = RoutingConfig {
             policy: RoutingPolicy::PrefixScoped,
             base_prefix: Some("/v1/advanced".to_owned()),
+            ..RoutingConfig::default()
         };
         let registry = registry_with_config(
             r##"
@@ -3781,6 +3808,7 @@ paths:
         let config = RoutingConfig {
             policy: RoutingPolicy::PrefixScoped,
             base_prefix: Some("/v1/advanced".to_owned()),
+            ..RoutingConfig::default()
         };
         let registry = registry_with_config(
             r##"
@@ -3990,7 +4018,7 @@ paths:
             install_status.effective_resource_name.as_deref(),
             Some("installstatuss")
         );
-        assert_eq!(install_status.response_fields, Vec::<String>::new());
+        assert_eq!(install_status.response_fields, vec!["status"]);
     }
 
     #[test]
@@ -5160,7 +5188,14 @@ paths:
         );
         assert_eq!(
             route.response_fields,
-            vec!["brand", "id", "object", "routing_number", "status"]
+            vec![
+                "available_payout_methods",
+                "brand",
+                "id",
+                "object",
+                "routing_number",
+                "status"
+            ]
         );
         assert_eq!(route.response_wrapper, None);
     }
@@ -5170,6 +5205,7 @@ paths:
         let config = RoutingConfig {
             policy: RoutingPolicy::FlatCrud,
             base_prefix: Some("/api".to_owned()),
+            ..RoutingConfig::default()
         };
         let registry = registry_with_config(
             r#"
@@ -5434,7 +5470,7 @@ paths:
     }
 
     #[test]
-    fn response_fields_match_safe_rest_returning_columns() {
+    fn response_fields_include_json_and_array_returning_columns() {
         let registry = registry(
             r##"
 openapi: 3.0.3
@@ -5466,7 +5502,7 @@ paths:
 
         assert_eq!(
             route(&registry, Method::Post, "/files").response_fields,
-            vec!["id", "name", "ratio"]
+            vec!["id", "name", "payload", "ratio", "tags"]
         );
     }
 
@@ -5511,11 +5547,14 @@ paths:
             route.kind,
             RouteKind::Refusal {
                 detail: String::from(
-                    "REST route response resource `files` declares unsupported response field(s) [payload (json), raw (bytes), tags (array)]; REST twin v0 cannot materialize nested, array, or binary response fields without returning a partial body. Path: /files/{id}/cancel"
+                    "REST route response resource `files` declares unsupported response field(s) [raw (bytes)]; REST twin v0 cannot materialize nested, array, or binary response fields without returning a partial body. Path: /files/{id}/cancel"
                 )
             }
         );
-        assert_eq!(route.response_fields, vec!["id", "name", "ratio"]);
+        assert_eq!(
+            route.response_fields,
+            vec!["id", "name", "payload", "ratio", "tags"]
+        );
     }
 
     #[test]

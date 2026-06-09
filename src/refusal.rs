@@ -26,6 +26,16 @@ pub fn ambiguous_rest_live_mode() -> RefusalEnvelope {
     )
 }
 
+#[cfg(feature = "rest")]
+pub fn invalid_rest_server_variable(raw: &str, reason: &str) -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_REST_INVALID_SERVER_VARIABLE",
+        "Invalid REST OpenAPI server variable selection.",
+        json!({ "protocol": "rest", "server_variable": raw, "reason": reason }),
+        Some("twinning rest --spec api.yaml --server-variable basePath=v3 --json".to_owned()),
+    )
+}
+
 #[cfg(feature = "mcp")]
 pub fn missing_mcp_catalog_source() -> RefusalEnvelope {
     RefusalEnvelope::new(

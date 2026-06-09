@@ -77,6 +77,7 @@ impl FromStr for RoutingPolicy {
 pub struct RoutingConfig {
     pub policy: RoutingPolicy,
     pub base_prefix: Option<String>,
+    pub server_variables: BTreeMap<String, String>,
 }
 
 impl Default for RoutingConfig {
@@ -84,6 +85,7 @@ impl Default for RoutingConfig {
         Self {
             policy: RoutingPolicy::Auto,
             base_prefix: None,
+            server_variables: BTreeMap::new(),
         }
     }
 }
@@ -102,6 +104,7 @@ pub fn resolve_routing_config(
             .or(extension_policy)
             .unwrap_or(RoutingPolicy::Auto),
         base_prefix: cli_base_prefix.or(extension_base_prefix),
+        server_variables: BTreeMap::new(),
     }
 }
 
@@ -385,6 +388,7 @@ mod tests {
             RoutingConfig {
                 policy: RoutingPolicy::PrefixScoped,
                 base_prefix: Some("/override".to_owned()),
+                ..RoutingConfig::default()
             }
         );
 
@@ -393,6 +397,7 @@ mod tests {
             RoutingConfig {
                 policy: RoutingPolicy::SchemaFirst,
                 base_prefix: Some("/v1".to_owned()),
+                ..RoutingConfig::default()
             }
         );
 

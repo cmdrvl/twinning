@@ -205,6 +205,7 @@ fn collect_examples(catalog: &RestCatalog) -> Vec<SeedExample> {
     collect_component_examples(catalog, &mut examples);
     collect_path_examples(catalog, PathExamplePass::Inline, &mut examples);
     collect_path_examples(catalog, PathExamplePass::Named, &mut examples);
+    collect_path_response_examples(catalog, &mut examples);
 
     examples
 }
@@ -296,6 +297,112 @@ fn collect_path_examples(
     }
 }
 
+fn collect_path_response_examples(catalog: &RestCatalog, examples: &mut Vec<SeedExample>) {
+    let registry = build_route_registry_with_config(catalog, &RoutingConfig::default());
+    let mut paths = catalog.paths.iter().collect::<Vec<_>>();
+    paths.sort_by_key(|(path, _)| path.as_str());
+
+    for (path, path_item) in paths {
+        let pattern = PathPattern::parse(path);
+        for (method, operation) in operations(path_item) {
+            if method != Method::Get {
+                continue;
+            }
+            let Some(entry) = registry
+                .routes
+                .iter()
+                .find(|(candidate_method, candidate_pattern, _)| {
+                    *candidate_method == method && *candidate_pattern == pattern
+                })
+                .map(|(_, _, entry)| entry)
+            else {
+                continue;
+            };
+            if matches!(entry.kind, RouteKind::Refusal { .. }) {
+                continue;
+            }
+            let resource_name = entry
+                .effective_resource_name
+                .as_deref()
+                .unwrap_or(entry.resource_name.as_str());
+            let Some(resource) = catalog.resources.get(resource_name) else {
+                continue;
+            };
+            let [selector_column] = resource.meta.path_lookup_columns.as_slice() else {
+                continue;
+            };
+            let public_columns = public_seed_columns(resource);
+            let Some(media) = json_success_response_media(operation) else {
+                continue;
+            };
+
+            let mut named_examples = media.examples.iter().collect::<Vec<_>>();
+            named_examples.sort_by_key(|(name, _)| name.as_str());
+            for (name, example) in named_examples {
+                let Some(value) = resolve_example_value(catalog, example) else {
+                    continue;
+                };
+                if let Some(mut object) = response_example_object(resource, &public_columns, value)
+                {
+                    object.insert(selector_column.clone(), JsonValue::String(name.clone()));
+                    examples.push(SeedExample {
+                        resource_name: resource.resource_name.clone(),
+                        source: format!("{path}.{}.responses.2xx.examples.{name}", method.as_str()),
+                        value: JsonValue::Object(object.into_iter().collect()),
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn public_seed_columns(resource: &ResourceSchema) -> Vec<String> {
+    resource
+        .columns
+        .iter()
+        .filter(|column| {
+            !resource
+                .meta
+                .path_lookup_columns
+                .iter()
+                .any(|hidden| hidden == &column.name)
+        })
+        .map(|column| column.name.clone())
+        .collect()
+}
+
+fn response_example_object(
+    resource: &ResourceSchema,
+    public_columns: &[String],
+    value: JsonValue,
+) -> Option<BTreeMap<String, JsonValue>> {
+    if let JsonValue::Object(object) = &value {
+        let object = object
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        if public_columns
+            .iter()
+            .any(|column| object.contains_key(column))
+        {
+            return Some(object);
+        }
+    }
+
+    let [column] = public_columns else {
+        return None;
+    };
+    let resource_column = resource
+        .columns
+        .iter()
+        .find(|candidate| candidate.name == *column)?;
+    if resource_column.normalized_type != "array" || !value.is_array() {
+        return None;
+    }
+
+    Some(BTreeMap::from([(column.clone(), value)]))
+}
+
 fn operations(path_item: &PathItem) -> Vec<(Method, &OperationObject)> {
     let mut operations = Vec::new();
     if let Some(operation) = &path_item.get {
@@ -323,6 +430,30 @@ fn json_request_media(operation: &OperationObject) -> Option<&MediaTypeObject> {
     let request_body = operation.request_body.as_ref()?;
     request_body.content.get("application/json").or_else(|| {
         let mut content = request_body.content.iter().collect::<Vec<_>>();
+        content.sort_by_key(|(media_type, _)| media_type.as_str());
+        content
+            .into_iter()
+            .find(|(media_type, _)| media_type.eq_ignore_ascii_case("application/json"))
+            .map(|(_, media)| media)
+    })
+}
+
+fn json_success_response_media(operation: &OperationObject) -> Option<&MediaTypeObject> {
+    let response = operation
+        .responses
+        .iter()
+        .filter_map(|(status, response)| {
+            status
+                .parse::<u16>()
+                .ok()
+                .filter(|status| (200..300).contains(status))
+                .map(|status| (status, response))
+        })
+        .min_by_key(|(status, _)| *status)
+        .map(|(_, response)| response)?;
+
+    response.content.get("application/json").or_else(|| {
+        let mut content = response.content.iter().collect::<Vec<_>>();
         content.sort_by_key(|(media_type, _)| media_type.as_str());
         content
             .into_iter()
@@ -453,17 +584,6 @@ fn mutation_from_example(
         let Some(value) = object.get(&column.name) else {
             continue;
         };
-        if column.normalized_type == "array" {
-            result.push_warning(
-                Some(resource.resource_name.clone()),
-                Some(column.name.clone()),
-                format!(
-                    "Example `{}` has array field `{}`, but array fields are not seedable in REST twin v0.",
-                    example.source, column.name
-                ),
-            );
-            return None;
-        }
         match scalar_value_for_column(column, value) {
             Ok(value) => {
                 columns.push(column.name.clone());
@@ -538,14 +658,40 @@ fn scalar_value_for_column(
             .as_str()
             .map(|value| ScalarValue::Text(value.to_owned()))
             .ok_or_else(|| coercion_error(column, value)),
-        "json" => serde_json::to_string(value)
-            .map(ScalarValue::Text)
-            .map_err(|_| coercion_error(column, value)),
-        "array" => Err(coercion_error(column, value)),
+        "json" => Ok(ScalarValue::Json(value.clone())),
+        "array" => value
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .map(json_to_rest_scalar)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .map(ScalarValue::Array)
+            .ok_or_else(|| coercion_error(column, value)),
         _ => value
             .as_str()
             .map(|value| ScalarValue::Text(value.to_owned()))
             .ok_or_else(|| coercion_error(column, value)),
+    }
+}
+
+fn json_to_rest_scalar(value: &JsonValue) -> Result<ScalarValue, SeedCoercionError> {
+    match value {
+        JsonValue::Null => Ok(ScalarValue::Null),
+        JsonValue::Bool(value) => Ok(ScalarValue::Boolean(*value)),
+        JsonValue::Number(value) => Ok(value
+            .as_i64()
+            .map(ScalarValue::Integer)
+            .unwrap_or_else(|| ScalarValue::Json(JsonValue::Number(value.clone())))),
+        JsonValue::String(value) => Ok(ScalarValue::Text(value.clone())),
+        JsonValue::Array(values) => values
+            .iter()
+            .map(json_to_rest_scalar)
+            .collect::<Result<Vec<_>, _>>()
+            .map(ScalarValue::Array),
+        JsonValue::Object(_) => Ok(ScalarValue::Json(value.clone())),
     }
 }
 
@@ -813,7 +959,7 @@ paths: {}
     }
 
     #[test]
-    fn array_example_fields_get_precise_unsupported_seed_warning() {
+    fn array_example_fields_seed_as_kernel_arrays() {
         let catalog = parse(
             r#"
 openapi: 3.0.3
@@ -837,15 +983,28 @@ paths: {}
 
         let result = seed_from_spec(&catalog, &mut backend).expect("seed should succeed");
 
-        assert_eq!(result.rows_seeded, 0);
-        assert_eq!(result.skipped_examples, 1);
-        assert!(result.warnings.iter().any(|warning| {
-            warning.field.as_deref() == Some("rooms")
-                && warning
-                    .message
-                    .contains("array fields are not seedable in REST twin v0")
-                && !warning.message.contains("expected array, received array")
-        }));
+        assert_eq!(result.rows_seeded, 1);
+        assert_eq!(result.skipped_examples, 0);
+
+        let table = catalog.catalog.table("bookings").expect("bookings table");
+        let rooms_index = table
+            .columns
+            .iter()
+            .position(|column| column.name == "rooms")
+            .expect("rooms column");
+        let row = backend
+            .visible_table("bookings")
+            .expect("bookings storage")
+            .rows()
+            .next()
+            .expect("seeded row");
+        assert_eq!(
+            row.values[rooms_index],
+            KernelValue::Array(vec![
+                KernelValue::Text(String::from("deluxe")),
+                KernelValue::Text(String::from("suite")),
+            ])
+        );
     }
 
     #[test]

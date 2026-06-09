@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use sqlparser::{
     ast::{
@@ -217,7 +218,9 @@ pub enum ScalarValue {
     Null,
     Boolean(bool),
     Integer(i64),
+    Json(JsonValue),
     Text(String),
+    Array(Vec<ScalarValue>),
 }
 
 type NormalizationResult<T> = Result<T, RefusalOp>;

@@ -328,6 +328,7 @@ fn scalar_to_comparable(value: &ScalarValue) -> Option<ComparableValue> {
         ScalarValue::Boolean(value) => Some(ComparableValue::Boolean(*value)),
         ScalarValue::Integer(value) => Some(ComparableValue::Integer(i128::from(*value))),
         ScalarValue::Text(value) => Some(ComparableValue::Text(value.clone())),
+        ScalarValue::Json(_) | ScalarValue::Array(_) => None,
     }
 }
 

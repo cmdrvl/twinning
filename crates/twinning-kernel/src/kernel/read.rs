@@ -404,6 +404,44 @@ fn scalar_to_kernel_value(
                 column: column.name.clone(),
                 source,
             }),
+        ScalarValue::Json(value) => coerce_input(&ClientInput::Json(value.clone()), declared_type)
+            .map_err(|source| ReadValueError::Coercion {
+                column: column.name.clone(),
+                source,
+            }),
+        ScalarValue::Array(values) => match declared_type {
+            ValueType::Array => values
+                .iter()
+                .map(scalar_to_array_kernel_value)
+                .collect::<Result<Vec<_>, _>>()
+                .map(KernelValue::Array)
+                .map_err(|source| ReadValueError::Coercion {
+                    column: column.name.clone(),
+                    source,
+                }),
+            _ => Err(ReadValueError::Coercion {
+                column: column.name.clone(),
+                source: CoercionError::UnsupportedInputKind {
+                    declared_type,
+                    input_kind: "array",
+                },
+            }),
+        },
+    }
+}
+
+fn scalar_to_array_kernel_value(value: &ScalarValue) -> Result<KernelValue, CoercionError> {
+    match value {
+        ScalarValue::Null => Ok(KernelValue::Null),
+        ScalarValue::Boolean(value) => Ok(KernelValue::Boolean(*value)),
+        ScalarValue::Integer(value) => Ok(KernelValue::Bigint(*value)),
+        ScalarValue::Json(value) => Ok(KernelValue::Json(value.clone())),
+        ScalarValue::Text(value) => Ok(KernelValue::Text(value.clone())),
+        ScalarValue::Array(values) => values
+            .iter()
+            .map(scalar_to_array_kernel_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(KernelValue::Array),
     }
 }
 
@@ -479,7 +517,13 @@ fn kernel_to_result_value(value: &KernelValue) -> Result<ScalarValue, String> {
         | KernelValue::Date(value)
         | KernelValue::Text(value) => Ok(ScalarValue::Text(value.clone())),
         KernelValue::Float(value) => Ok(ScalarValue::Text(value.to_string())),
-        KernelValue::Bytes(_) | KernelValue::Json(_) | KernelValue::Array(_) => Err(String::from(
+        KernelValue::Json(value) => Ok(ScalarValue::Json(value.clone())),
+        KernelValue::Array(values) => values
+            .iter()
+            .map(kernel_to_result_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(ScalarValue::Array),
+        KernelValue::Bytes(_) => Err(String::from(
             "read results currently support only null, boolean, integer, and text-like scalar values",
         )),
     }

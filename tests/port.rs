@@ -22,6 +22,15 @@ fn fixture_path() -> PathBuf {
         .join("minimal-api.yaml")
 }
 
+fn openfigi_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("rest")
+        .join("openfigi_v2_v3")
+        .join("schema.json")
+}
+
 fn run_twinning(args: &[&str]) -> Output {
     Command::new(twinning_bin())
         .args(args)
@@ -51,6 +60,26 @@ fn run_port(client_cmd: &str, report_path: &Path) -> Output {
         spec.to_str().expect("spec path"),
         "--to-spec",
         spec.to_str().expect("spec path"),
+        "--client-cmd",
+        client_cmd,
+        "--report",
+        report_path.to_str().expect("report path"),
+        "--json",
+    ])
+}
+
+fn run_openfigi_v2_v3_port(client_cmd: &str, report_path: &Path) -> Output {
+    let spec = openfigi_fixture_path();
+    run_twinning(&[
+        "port",
+        "--from-spec",
+        spec.to_str().expect("spec path"),
+        "--to-spec",
+        spec.to_str().expect("spec path"),
+        "--from-server-variable",
+        "basePath=v2",
+        "--to-server-variable",
+        "basePath=v3",
         "--client-cmd",
         client_cmd,
         "--report",
@@ -106,6 +135,22 @@ fn port_cli_reports_incomplete_when_target_misses_operation() {
             .any(|operation| operation == "GET /files"),
         "missing operation should identify the target gap: {stdout}"
     );
+}
+
+#[test]
+fn port_cli_can_compare_openfigi_v2_and_v3_server_variable_twins() {
+    let dir = tempdir().expect("tempdir");
+    let report_path = dir.path().join("openfigi-port-proof.json");
+    let client_cmd = r#"curl -fsS -H 'X-OPENFIGI-APIKEY: test-token' "$TWIN_FROM_URL/v2/mapping/values/idType" >/dev/null; curl -fsS -H 'X-OPENFIGI-APIKEY: test-token' "$TWIN_TO_URL/v3/mapping/values/idType" >/dev/null"#;
+
+    let output = run_openfigi_v2_v3_port(client_cmd, &report_path);
+
+    assert_success(&output);
+    let stdout = parse_stdout(&output);
+    assert_eq!(stdout["verdict"], "EQUIVALENT");
+    assert_eq!(stdout["source_session"]["request_count"], 1);
+    assert_eq!(stdout["target_session"]["request_count"], 1);
+    assert_eq!(stdout["missing_operations"], serde_json::json!([]));
 }
 
 #[test]

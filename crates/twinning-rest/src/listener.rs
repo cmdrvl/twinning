@@ -264,6 +264,7 @@ fn rest_server_session(
 
 fn build_shared_state(config: &RestConfig) -> RefusalResult<Arc<RestSharedState>> {
     let catalog = load_rest_catalog(&config.spec_path)?;
+    validate_selected_server_variables(&catalog, &config.server_variables)?;
     if config.strict {
         eprintln!("--strict response validation is not yet implemented");
     }
@@ -316,14 +317,65 @@ fn build_shared_state(config: &RestConfig) -> RefusalResult<Arc<RestSharedState>
     }))
 }
 
+fn validate_selected_server_variables(
+    catalog: &RestCatalog,
+    selected: &std::collections::BTreeMap<String, String>,
+) -> RefusalResult<()> {
+    if selected.is_empty() {
+        return Ok(());
+    }
+
+    let declared = catalog
+        .servers
+        .iter()
+        .flat_map(|server| server.variables.iter())
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if declared.is_empty() {
+        return Err(Box::new(rest_server_variable_refusal(
+            "<none>",
+            "spec does not declare OpenAPI server variables",
+        )));
+    }
+
+    for (name, value) in selected {
+        let Some(variable) = declared.get(name) else {
+            return Err(Box::new(rest_server_variable_refusal(
+                name,
+                "variable is not declared by any OpenAPI server",
+            )));
+        };
+        if !variable.enum_values.is_empty()
+            && !variable.enum_values.iter().any(|allowed| allowed == value)
+        {
+            return Err(Box::new(rest_server_variable_refusal(
+                name,
+                "selected value is outside the declared enum",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn rest_server_variable_refusal(name: &str, reason: &str) -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_REST_INVALID_SERVER_VARIABLE",
+        "Invalid REST OpenAPI server variable selection.",
+        json!({ "protocol": "rest", "server_variable": name, "reason": reason }),
+        Some("twinning rest --spec api.yaml --server-variable basePath=v3 --json".to_owned()),
+    )
+}
+
 fn effective_routing_config(config: &RestConfig, catalog: &RestCatalog) -> RoutingConfig {
     let cli_policy =
         (config.routing.policy != RoutingPolicy::Auto).then_some(config.routing.policy);
-    resolve_routing_config(
+    let mut routing = resolve_routing_config(
         cli_policy,
         config.routing.base_prefix.clone(),
         catalog.x_twinning.as_ref(),
-    )
+    );
+    routing.server_variables = config.server_variables.clone();
+    routing
 }
 
 fn initialize_backend(catalog: &RestCatalog) -> RefusalResult<BaseSnapshotBackend> {
@@ -1063,6 +1115,7 @@ mod tests {
             canary_path: None,
             strict: false,
             routing: crate::protocol::rest::policy::RoutingConfig::default(),
+            server_variables: std::collections::BTreeMap::new(),
             auth_mode: None,
             chaos: None,
             json: false,

@@ -274,6 +274,7 @@ fn infer_column_type(rows: &[ResultRow], column_index: usize) -> (u32, i16) {
                 ScalarValue::Null => continue,
                 ScalarValue::Boolean(_) => return (BOOL_OID, 1),
                 ScalarValue::Integer(_) => return (INT8_OID, 8),
+                ScalarValue::Json(_) | ScalarValue::Array(_) => return (TEXT_OID, -1),
                 ScalarValue::Text(_) => return (TEXT_OID, -1),
             }
         }
@@ -291,7 +292,25 @@ fn encode_scalar_text(value: &ScalarValue) -> Option<String> {
             String::from("f")
         }),
         ScalarValue::Integer(value) => Some(value.to_string()),
+        ScalarValue::Json(value) => Some(serde_json::to_string(value).expect("serialize JSON")),
         ScalarValue::Text(value) => Some(value.clone()),
+        ScalarValue::Array(values) => {
+            let json_values = values.iter().map(scalar_value_to_json).collect::<Vec<_>>();
+            Some(serde_json::to_string(&json_values).expect("serialize array"))
+        }
+    }
+}
+
+fn scalar_value_to_json(value: &ScalarValue) -> serde_json::Value {
+    match value {
+        ScalarValue::Null => serde_json::Value::Null,
+        ScalarValue::Boolean(value) => serde_json::Value::Bool(*value),
+        ScalarValue::Integer(value) => serde_json::Value::Number((*value).into()),
+        ScalarValue::Json(value) => value.clone(),
+        ScalarValue::Text(value) => serde_json::Value::String(value.clone()),
+        ScalarValue::Array(values) => {
+            serde_json::Value::Array(values.iter().map(scalar_value_to_json).collect())
+        }
     }
 }
 
@@ -420,6 +439,38 @@ mod tests {
             vec![Some(String::from("deal-1")), Some(String::from("7"))]
         );
         assert_eq!(decode_command_complete(&frames[2]), "INSERT 0 1");
+    }
+
+    #[test]
+    fn json_and_array_values_render_as_text_payloads() {
+        let read = KernelResult::Read(ReadResult {
+            columns: vec![String::from("payload"), String::from("tags")],
+            rows: vec![vec![
+                ScalarValue::Json(serde_json::json!({"active": true, "count": 2})),
+                ScalarValue::Array(vec![
+                    ScalarValue::Text(String::from("alpha")),
+                    ScalarValue::Integer(7),
+                    ScalarValue::Json(serde_json::json!({"nested": false})),
+                ]),
+            ]],
+        });
+
+        let frames = encode_kernel_result_frames(&read, ResultFrameMetadata::default());
+
+        assert_eq!(
+            decode_row_description(&frames[0]),
+            vec![
+                (String::from("payload"), TEXT_OID),
+                (String::from("tags"), TEXT_OID),
+            ]
+        );
+        assert_eq!(
+            decode_data_row(&frames[1]),
+            vec![
+                Some(String::from(r#"{"active":true,"count":2}"#)),
+                Some(String::from(r#"["alpha",7,{"nested":false}]"#)),
+            ]
+        );
     }
 
     #[test]

@@ -209,6 +209,9 @@ pub struct RestArgs {
     #[arg(long, value_name = "PREFIX")]
     pub base_prefix: Option<String>,
 
+    #[arg(long = "server-variable", value_name = "NAME=VALUE")]
+    pub server_variables: Vec<String>,
+
     #[arg(long, value_enum)]
     pub auth_mode: Option<RestAuthMode>,
 
@@ -233,6 +236,12 @@ pub struct PortArgs {
 
     #[arg(long)]
     pub to_port: Option<u16>,
+
+    #[arg(long = "from-server-variable", value_name = "NAME=VALUE")]
+    pub from_server_variables: Vec<String>,
+
+    #[arg(long = "to-server-variable", value_name = "NAME=VALUE")]
+    pub to_server_variables: Vec<String>,
 
     #[arg(long, value_name = "FILE")]
     pub shared_snapshot: Option<PathBuf>,

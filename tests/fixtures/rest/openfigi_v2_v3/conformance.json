@@ -1,0 +1,91 @@
+{
+  "source_url": "https://api.openfigi.com/schema",
+  "sha256": "d83fbc4ad3053c23684ec9c9b24e667d61ef1022e1d98456252f8cba3159d520",
+  "openapi": "3.0.0",
+  "info_version": "2.0.0",
+  "server_variable": {
+    "name": "basePath",
+    "default": "v3",
+    "enum": ["v3", "v2"]
+  },
+  "operations": [
+    {
+      "id": "mapping",
+      "method": "POST",
+      "source_path": "/mapping",
+      "versioned_paths": ["/v2/mapping", "/v3/mapping"],
+      "twin_status": "executable",
+      "request_shape": "array<object>",
+      "response_shape": "array<object>",
+      "auth": "apiKey:X-OPENFIGI-APIKEY"
+    },
+    {
+      "id": "filter",
+      "method": "POST",
+      "source_path": "/filter",
+      "versioned_paths": ["/v2/filter", "/v3/filter"],
+      "twin_status": "executable",
+      "request_shape": "object_with_interval_arrays",
+      "response_shape": "array<object>",
+      "auth": "apiKey:X-OPENFIGI-APIKEY"
+    },
+    {
+      "id": "search",
+      "method": "POST",
+      "source_path": "/search",
+      "versioned_paths": ["/v2/search", "/v3/search"],
+      "twin_status": "executable",
+      "request_shape": "object_with_interval_arrays",
+      "response_shape": "array<object>",
+      "auth": "apiKey:X-OPENFIGI-APIKEY"
+    },
+    {
+      "id": "mapping_values",
+      "method": "GET",
+      "source_path": "/mapping/values/{key}",
+      "versioned_paths": ["/v2/mapping/values/{key}", "/v3/mapping/values/{key}"],
+      "twin_status": "executable",
+      "request_shape": "path_lookup",
+      "response_shape": "object_with_values_array",
+      "auth": "apiKey:X-OPENFIGI-APIKEY"
+    }
+  ],
+  "canary_requests": [
+    {
+      "id": "mapping_isin",
+      "method": "POST",
+      "path": "/mapping",
+      "body": [
+        {
+          "idType": "ID_ISIN",
+          "idValue": "US4592001014"
+        }
+      ]
+    },
+    {
+      "id": "filter_equity_option_interval",
+      "method": "POST",
+      "path": "/filter",
+      "body": {
+        "query": "IBM",
+        "securityType2": "Option",
+        "contractSize": [null, 100],
+        "expiration": ["2026-01-01", null]
+      }
+    },
+    {
+      "id": "search_query_interval",
+      "method": "POST",
+      "path": "/search",
+      "body": {
+        "query": "Apple",
+        "strike": [100, 250]
+      }
+    },
+    {
+      "id": "mapping_values_id_type",
+      "method": "GET",
+      "path": "/mapping/values/idType"
+    }
+  ]
+}

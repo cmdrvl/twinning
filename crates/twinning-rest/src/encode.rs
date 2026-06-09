@@ -86,7 +86,12 @@ pub fn kernel_value_to_json(value: &KernelValue) -> JsonValue {
         }
         KernelValue::Bytes(value) => JsonValue::String(BASE64_STANDARD.encode(value)),
         KernelValue::Json(value) => value.clone(),
-        KernelValue::Array(_) => JsonValue::Null,
+        KernelValue::Array(values) => JsonValue::Array(
+            values
+                .iter()
+                .map(kernel_value_to_json)
+                .collect::<Vec<JsonValue>>(),
+        ),
     }
 }
 
@@ -535,7 +540,14 @@ fn scalar_value_to_json(value: &ScalarValue) -> JsonValue {
         ScalarValue::Null => JsonValue::Null,
         ScalarValue::Boolean(value) => JsonValue::Bool(*value),
         ScalarValue::Integer(value) => JsonValue::Number((*value).into()),
+        ScalarValue::Json(value) => value.clone(),
         ScalarValue::Text(value) => JsonValue::String(value.clone()),
+        ScalarValue::Array(values) => JsonValue::Array(
+            values
+                .iter()
+                .map(scalar_value_to_json)
+                .collect::<Vec<JsonValue>>(),
+        ),
     }
 }
 

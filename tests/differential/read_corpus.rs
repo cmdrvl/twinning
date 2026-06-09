@@ -421,7 +421,11 @@ fn scalar_to_json(value: ScalarValue) -> Value {
         ScalarValue::Null => Value::Null,
         ScalarValue::Boolean(value) => Value::Bool(value),
         ScalarValue::Integer(value) => json!(value),
+        ScalarValue::Json(value) => value,
         ScalarValue::Text(value) => Value::String(value),
+        ScalarValue::Array(values) => {
+            Value::Array(values.into_iter().map(scalar_to_json).collect())
+        }
     }
 }
 

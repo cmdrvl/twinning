@@ -36,6 +36,7 @@ fn test_config(chaos: Option<ChaosConfig>) -> RestConfig {
         canary_path: None,
         strict: false,
         routing: RoutingConfig::default(),
+        server_variables: std::collections::BTreeMap::new(),
         auth_mode: None,
         chaos,
         json: false,

@@ -103,6 +103,7 @@ pub fn rest_config_from_args(args: &crate::cli::RestArgs, json: bool) -> Refusal
     if args.serve && args.run.is_some() {
         return Err(Box::new(refusal::ambiguous_rest_live_mode()));
     }
+    let server_variables = parse_rest_server_variables(&args.server_variables)?;
 
     Ok(RestConfig::from_parts(
         RestConfigParts {
@@ -116,11 +117,42 @@ pub fn rest_config_from_args(args: &crate::cli::RestArgs, json: bool) -> Refusal
             strict: args.strict,
             routing: args.routing,
             base_prefix: args.base_prefix.clone(),
+            server_variables,
             auth_mode: args.auth_mode,
             chaos: args.chaos,
         },
         json,
     ))
+}
+
+#[cfg(feature = "rest")]
+pub(crate) fn parse_rest_server_variables(
+    raw: &[String],
+) -> RefusalResult<std::collections::BTreeMap<String, String>> {
+    let mut parsed = std::collections::BTreeMap::new();
+    for item in raw {
+        let Some((name, value)) = item.split_once('=') else {
+            return Err(Box::new(refusal::invalid_rest_server_variable(
+                item,
+                "expected NAME=VALUE",
+            )));
+        };
+        let name = name.trim();
+        let value = value.trim();
+        if name.is_empty() || value.is_empty() {
+            return Err(Box::new(refusal::invalid_rest_server_variable(
+                item,
+                "name and value must both be non-empty",
+            )));
+        }
+        if parsed.insert(name.to_owned(), value.to_owned()).is_some() {
+            return Err(Box::new(refusal::invalid_rest_server_variable(
+                item,
+                "variable name is repeated",
+            )));
+        }
+    }
+    Ok(parsed)
 }
 
 #[cfg(feature = "mcp")]
@@ -312,6 +344,7 @@ mod tests {
             strict: false,
             routing: None,
             base_prefix: None,
+            server_variables: Vec::new(),
             auth_mode: None,
             chaos: None,
         };
@@ -344,6 +377,7 @@ mod tests {
             strict: false,
             routing: None,
             base_prefix: None,
+            server_variables: Vec::new(),
             auth_mode: None,
             chaos: None,
         };
@@ -368,6 +402,7 @@ mod tests {
             strict: false,
             routing: None,
             base_prefix: None,
+            server_variables: Vec::new(),
             auth_mode: None,
             chaos: None,
         };
@@ -391,6 +426,7 @@ mod tests {
             strict: true,
             routing: None,
             base_prefix: None,
+            server_variables: Vec::new(),
             auth_mode: None,
             chaos: None,
         };
@@ -414,6 +450,7 @@ mod tests {
             strict: false,
             routing: Some(RoutingPolicy::FlatCrud),
             base_prefix: Some("/api".to_owned()),
+            server_variables: Vec::new(),
             auth_mode: None,
             chaos: None,
         };
@@ -437,6 +474,7 @@ mod tests {
             strict: false,
             routing: None,
             base_prefix: None,
+            server_variables: Vec::new(),
             auth_mode: Some(RestAuthMode::Bypass),
             chaos: None,
         };

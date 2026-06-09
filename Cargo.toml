@@ -1,6 +1,6 @@
 [package]
 name = "twinning"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 authors = ["CMD+RVL <engineering@cmdrvl.com>"]
 description = "In-memory database twin bootstrap: validate schema assets, emit deterministic reports, and prepare the Postgres-first twin runtime"
@@ -50,6 +50,7 @@ all = ["rest", "postgres", "mcp", "snowflake"]
 [dev-dependencies]
 arrow-array = "58.3.0"
 arrow-ipc = "58.3.0"
+axum = "0.7"
 base64 = "0.22"
 tempfile = "3"
 ureq = { version = "2", features = ["json"] }

@@ -47,6 +47,7 @@ fn test_config(report_path: PathBuf) -> RestConfig {
         canary_path: None,
         strict: false,
         routing: RoutingConfig::default(),
+        server_variables: std::collections::BTreeMap::new(),
         auth_mode: None,
         chaos: None,
         json: false,

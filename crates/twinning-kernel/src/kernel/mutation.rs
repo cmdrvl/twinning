@@ -907,6 +907,33 @@ fn scalar_to_kernel_value(
             _ => coerce_input(&ClientInput::Text(value.to_string()), declared_type),
         },
         ScalarValue::Text(value) => coerce_input(&ClientInput::Text(value.clone()), declared_type),
+        ScalarValue::Json(value) => coerce_input(&ClientInput::Json(value.clone()), declared_type),
+        ScalarValue::Array(values) => match declared_type {
+            ValueType::Array => values
+                .iter()
+                .map(scalar_to_array_kernel_value)
+                .collect::<Result<Vec<_>, _>>()
+                .map(KernelValue::Array),
+            _ => Err(CoercionError::UnsupportedInputKind {
+                declared_type,
+                input_kind: "array",
+            }),
+        },
+    }
+}
+
+fn scalar_to_array_kernel_value(value: &ScalarValue) -> Result<KernelValue, CoercionError> {
+    match value {
+        ScalarValue::Null => Ok(KernelValue::Null),
+        ScalarValue::Boolean(value) => Ok(KernelValue::Boolean(*value)),
+        ScalarValue::Integer(value) => Ok(KernelValue::Bigint(*value)),
+        ScalarValue::Json(value) => Ok(KernelValue::Json(value.clone())),
+        ScalarValue::Text(value) => Ok(KernelValue::Text(value.clone())),
+        ScalarValue::Array(values) => values
+            .iter()
+            .map(scalar_to_array_kernel_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(KernelValue::Array),
     }
 }
 
@@ -963,7 +990,13 @@ fn kernel_to_result_value(value: &KernelValue) -> Result<ScalarValue, String> {
         KernelValue::Timestamp(value) => Ok(ScalarValue::Text(value.clone())),
         KernelValue::Date(value) => Ok(ScalarValue::Text(value.clone())),
         KernelValue::Text(value) => Ok(ScalarValue::Text(value.clone())),
-        KernelValue::Bytes(_) | KernelValue::Json(_) | KernelValue::Array(_) => Err(String::from(
+        KernelValue::Json(value) => Ok(ScalarValue::Json(value.clone())),
+        KernelValue::Array(values) => values
+            .iter()
+            .map(kernel_to_result_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(ScalarValue::Array),
+        KernelValue::Bytes(_) => Err(String::from(
             "RETURNING currently supports only null, boolean, integer, and text-like scalar values",
         )),
     }
