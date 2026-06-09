@@ -1,6 +1,6 @@
 [package]
 name = "twinning-postgres"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 authors = ["CMD+RVL <engineering@cmdrvl.com>"]
 description = "Postgres pgwire protocol adapter for twinning"

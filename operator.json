@@ -1,7 +1,7 @@
 {
   "schema_version": "operator.v0",
   "name": "twinning",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Interface twin bootstrap: parse DDL, prepare deterministic twin artifacts, and stage bounded-memory tournament twins plus heavier replay backends",
   "repository": "https://github.com/cmdrvl/twinning",
   "license": "MIT",
