@@ -1,0 +1,100 @@
+openapi: 3.0.3
+info:
+  title: OpenFIGI response-stub fixture
+  version: "2.0.0"
+servers:
+  - url: https://api.openfigi.com/{basePath}
+    variables:
+      basePath:
+        default: v3
+        enum: [v3, v2]
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      name: X-OPENFIGI-APIKEY
+      in: header
+  schemas:
+    MappingRequest:
+      type: object
+      required: [idType, idValue]
+      additionalProperties: false
+      properties:
+        idType:
+          type: string
+        idValue:
+          type: string
+    BulkMappingJob:
+      type: array
+      items:
+        $ref: "#/components/schemas/MappingRequest"
+    FigiResult:
+      type: object
+      additionalProperties: true
+      properties:
+        figi:
+          type: string
+        compositeFIGI:
+          type: string
+        ticker:
+          type: string
+        name:
+          type: string
+        securityType:
+          type: string
+        exchCode:
+          type: string
+    MappingResult:
+      type: object
+      additionalProperties: true
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/FigiResult"
+        warning:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+    BulkMappingJobResult:
+      type: array
+      items:
+        $ref: "#/components/schemas/MappingResult"
+paths:
+  /mapping:
+    post:
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkMappingJob"
+      responses:
+        "200":
+          description: OpenFIGI batch mapping response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkMappingJobResult"
+x-twinning:
+  response-stubs:
+    - id: openfigi_cusip_success
+      method: POST
+      path: /v3/mapping
+      when:
+        body-json-equals:
+          - idType: ID_CUSIP
+            idValue: "037833100"
+      status: 200
+      body:
+        - data:
+            - figi: BBG000B9XRY4
+              compositeFIGI: BBG000B9XRY4
+              ticker: AAPL
+              name: APPLE INC
+              securityType: Common Stock
+              exchCode: US

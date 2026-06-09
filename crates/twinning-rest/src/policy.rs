@@ -377,6 +377,7 @@ mod tests {
             routing: Some(RoutingPolicy::SchemaFirst),
             base_prefix: Some("/v1".to_owned()),
             auth_mode: Some(RestAuthMode::Bypass),
+            response_stubs: Vec::new(),
         };
 
         assert_eq!(

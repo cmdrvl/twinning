@@ -10,5 +10,8 @@ mod run_mode;
 #[path = "rest/chaos.rs"]
 mod chaos;
 
+#[path = "rest/response_stubs.rs"]
+mod response_stubs;
+
 #[path = "rest/openfigi_v2_v3.rs"]
 mod openfigi_v2_v3;

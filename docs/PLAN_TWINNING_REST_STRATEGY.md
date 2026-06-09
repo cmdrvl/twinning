@@ -439,6 +439,14 @@ schema-valid synthetic data that has the structural properties of regulated data
 record structures) without being real PII or PHI. Tear the environment down
 without any compliance concern.
 
+**Current response-stub boundary.** `x-twinning.response-stubs` is the narrow
+deterministic fixture mechanism available now. A stub matches a concrete method,
+mounted path, and optional canonical JSON request body, then returns a declared
+status/header/body. It is useful for protocol contract cases such as OpenFIGI
+success, no-match, error, malformed, or ambiguity variants. It is not synthetic
+data generation, not random fixture fabrication, and not a stateful scenario
+engine; keep those as separate future capabilities.
+
 **Ambitious version.** The OpenAPI spec already knows which fields carry sensitive
 data — or it should. Extend the spec with standard annotations
 (`x-pii-classification`, `x-sensitivity`, or the emerging OAS `x-security`

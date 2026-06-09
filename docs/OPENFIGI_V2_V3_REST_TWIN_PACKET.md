@@ -24,9 +24,55 @@ Implemented support:
   value-list rows while returning only the public `values` array field.
 - `/v2/*` and `/v3/*` mount from the OpenAPI `basePath` server variable when
   `--server-variable basePath=v2` or `--server-variable basePath=v3` is selected.
+- Deterministic `x-twinning.response-stubs` can model OpenFIGI batch mapping
+  responses for local contract tests. This fixes the generic mutation fallback
+  where `POST /v3/mapping` accepted the request shape but returned
+  `{"data":null,"warning":null}` because the REST kernel cannot infer FIGI
+  provider semantics from `idType`/`idValue`.
 - `twinning port` can start separate v2 and v3 twins from the same schema via
   `--from-server-variable basePath=v2 --to-server-variable basePath=v3` and
   compares mounted routes by their unversioned logical OpenAPI path.
+
+Response-stub fixture:
+
+- `tests/fixtures/rest/openfigi_v2_v3/response-stub-schema.yaml` is a small
+  OpenFIGI-shaped spec variant for contract tests. It keeps response semantics
+  deterministic and local; it does not call OpenFIGI and does not require a real
+  API key.
+- The fixture matches `POST /v3/mapping` with body
+  `[{"idType":"ID_CUSIP","idValue":"037833100"}]` and header
+  `X-OPENFIGI-APIKEY: test-token`, then returns a top-level OpenFIGI batch array:
+
+```json
+[
+  {
+    "data": [
+      {
+        "figi": "BBG000B9XRY4",
+        "compositeFIGI": "BBG000B9XRY4",
+        "ticker": "AAPL",
+        "name": "APPLE INC",
+        "securityType": "Common Stock",
+        "exchCode": "US"
+      }
+    ]
+  }
+]
+```
+
+Local proof command shape:
+
+```bash
+twinning --json rest \
+  --spec tests/fixtures/rest/openfigi_v2_v3/response-stub-schema.yaml \
+  --server-variable basePath=v3 \
+  --auth-mode shape \
+  --run '<local client command using $TWIN_BASE_URL/v3/mapping>'
+```
+
+Use separate spec variants or overlays for success, no-match, per-item error,
+malformed response, and ambiguity scenarios rather than adding runtime scenario
+state to the REST twin.
 
 Compatibility invariants:
 
@@ -35,6 +81,8 @@ Compatibility invariants:
 - Existing `--base-prefix` and `x-twinning` routing behavior remains compatible.
 - Existing REST report fields remain stable; version identity fields must be
   additive.
+- Response stubs run after route matching, auth shape enforcement, and chaos
+  injection, and before generic normalize/kernel/encode fallback.
 - Existing scalar result serialization for null, boolean, integer, and text
   remains stable.
 - JSON and array values remain unsupported in path/query predicates unless a
@@ -62,6 +110,9 @@ Current focused coverage:
 - `tests/rest/openfigi_v2_v3.rs` verifies schema hash, server-variable
   mounting, executable route kinds, array-body normalization, value-list seeding,
   and key-filtered reads.
+- `tests/rest/response_stubs.rs` verifies response-stub parsing, mounted path
+  matching, auth-before-stub, chaos-before-stub, body mismatch fallthrough, and
+  OpenFIGI-shaped `/v3/mapping` responses.
 - `tests/port.rs` verifies separate OpenFIGI v2/v3 port twins compare as the
   same logical operations after selected server-variable mount prefixes are
   stripped.

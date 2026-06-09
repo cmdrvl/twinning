@@ -19,7 +19,7 @@ use axum::{
     Router,
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, Method as HttpMethod, StatusCode, Uri, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method as HttpMethod, StatusCode, Uri, header},
     response::Response,
 };
 use serde_json::json;
@@ -58,7 +58,7 @@ use super::{
     session_log::{RestRequestLog, RestSessionLog, RestSessionSummary, constraint_violation_kind},
     spec::{RestCatalog, SecurityScheme, load_rest_catalog},
     topology::build_spec_topology,
-    xext::resolve_auth_mode,
+    xext::{ResponseStub, ResponseStubBody, resolve_auth_mode, x_twinning_refusal},
 };
 
 const MAX_REQUEST_BYTES: usize = 1_048_576;
@@ -96,6 +96,7 @@ pub struct RestServerSession {
 struct DispatchOutcome {
     response: Response,
     route: String,
+    response_stub: Option<String>,
     refusal: Option<String>,
     constraint_violation: Option<String>,
 }
@@ -287,6 +288,7 @@ fn build_shared_state(config: &RestConfig) -> RefusalResult<Arc<RestSharedState>
     let routing = effective_routing_config(config, &catalog);
     let topology = build_spec_topology(&catalog, &config.routing);
     let registry = build_route_registry(&catalog, &topology, &routing);
+    validate_response_stub_paths(&catalog, &registry.routes)?;
     RoutingReport::from_registry(&registry, &catalog).log_at_startup();
     for warning in catalog
         .warnings
@@ -390,6 +392,29 @@ fn initialize_backend(catalog: &RestCatalog) -> RefusalResult<BaseSnapshotBacken
         .map_err(|error| Box::new(refusal::runtime_io("rest_backend_init", error.to_string())))
 }
 
+fn validate_response_stub_paths(catalog: &RestCatalog, routes: &RouteTable) -> RefusalResult<()> {
+    let Some(extension) = catalog.x_twinning.as_ref() else {
+        return Ok(());
+    };
+
+    for stub in &extension.response_stubs {
+        let known_route = routes.iter().any(|(method, pattern, _)| {
+            method.as_str() == stub.method && pattern.captures(&stub.path).is_some()
+        });
+        if !known_route {
+            return Err(Box::new(x_twinning_refusal(
+                "unknown_stub_route",
+                format!(
+                    "response stub `{}` targets {} {}, but no mounted route matches that path",
+                    stub.id, stub.method, stub.path
+                ),
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn serve_on_current_thread(
     host: String,
     port: u16,
@@ -458,6 +483,7 @@ async fn dispatch(
             route: outcome.route,
             status: status.as_u16(),
             duration_ms,
+            response_stub: outcome.response_stub,
             constraint_violation: outcome.constraint_violation,
             refusal: outcome
                 .refusal
@@ -536,6 +562,12 @@ fn dispatch_inner(
         return outcome;
     }
 
+    if let Some(outcome) =
+        maybe_response_stub(&state.catalog, method, uri.path(), body.as_ref(), &route)
+    {
+        return outcome;
+    }
+
     let session_id = state.session_ids.next_session_id();
     let normalized = normalize_request(
         &state.catalog,
@@ -558,6 +590,7 @@ fn dispatch_inner(
             return DispatchOutcome {
                 response: encode_rest_refusal(refusal, &session_id),
                 route,
+                response_stub: None,
                 refusal: Some(code),
                 constraint_violation,
             };
@@ -600,6 +633,7 @@ fn dispatch_inner(
     DispatchOutcome {
         response: encode(result, matched.entry, &session_id),
         route,
+        response_stub: None,
         refusal,
         constraint_violation,
     }
@@ -610,6 +644,7 @@ impl DispatchOutcome {
         Self {
             response: json_response(status, body),
             route: route.to_owned(),
+            response_stub: None,
             refusal: Some(refusal.to_owned()),
             constraint_violation: constraint_violation_kind(refusal).map(str::to_owned),
         }
@@ -632,6 +667,7 @@ impl DispatchOutcome {
                 &allow_header,
             ),
             route: String::from("unmatched"),
+            response_stub: None,
             refusal: Some(String::from("method_not_allowed")),
             constraint_violation: constraint_violation_kind("method_not_allowed")
                 .map(str::to_owned),
@@ -671,6 +707,7 @@ impl DispatchOutcome {
                 challenge.as_deref(),
             ),
             route: route.to_owned(),
+            response_stub: None,
             refusal: Some(String::from("unauthorized")),
             constraint_violation: None,
         }
@@ -687,6 +724,7 @@ impl DispatchOutcome {
                 "1",
             ),
             route: route.to_owned(),
+            response_stub: None,
             refusal: Some(String::from("rate_limited")),
             constraint_violation: None,
         }
@@ -702,6 +740,7 @@ impl DispatchOutcome {
                 }),
             ),
             route: route.to_owned(),
+            response_stub: None,
             refusal: Some(String::from("internal_error")),
             constraint_violation: None,
         }
@@ -715,6 +754,7 @@ impl DispatchOutcome {
                 .body(Body::empty())
                 .expect("static REST timeout response"),
             route: route.to_owned(),
+            response_stub: None,
             refusal: Some(String::from("timeout")),
             constraint_violation: None,
         }
@@ -738,6 +778,81 @@ fn maybe_inject_chaos(state: &RestSharedState, route: &str) -> Option<DispatchOu
     }
 
     None
+}
+
+fn maybe_response_stub(
+    catalog: &RestCatalog,
+    method: Method,
+    path: &str,
+    body: &[u8],
+    route: &str,
+) -> Option<DispatchOutcome> {
+    let extension = catalog.x_twinning.as_ref()?;
+    let method = method.as_str();
+    for stub in &extension.response_stubs {
+        if stub.method != method || stub.path != path {
+            continue;
+        }
+        if !stub_body_matches(stub, body) {
+            continue;
+        }
+
+        return Some(DispatchOutcome {
+            response: response_from_stub(stub),
+            route: route.to_owned(),
+            response_stub: Some(stub.id.clone()),
+            refusal: None,
+            constraint_violation: None,
+        });
+    }
+
+    None
+}
+
+fn stub_body_matches(stub: &ResponseStub, body: &[u8]) -> bool {
+    let Some(expected) = stub.body_json_equals.as_ref() else {
+        return true;
+    };
+    let Ok(actual) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+
+    &actual == expected
+}
+
+fn response_from_stub(stub: &ResponseStub) -> Response {
+    let status = StatusCode::from_u16(stub.status).expect("response stub status is validated");
+    let mut builder = Response::builder().status(status);
+    let mut has_content_type = false;
+
+    for (name, value) in &stub.headers {
+        if name.eq_ignore_ascii_case(header::CONTENT_TYPE.as_str()) {
+            has_content_type = true;
+        }
+        let header_name =
+            HeaderName::from_bytes(name.as_bytes()).expect("response stub header is validated");
+        let header_value = HeaderValue::from_str(value).expect("response stub header is validated");
+        builder = builder.header(header_name, header_value);
+    }
+
+    let body = match &stub.body {
+        ResponseStubBody::Json(value) => {
+            if !has_content_type {
+                builder = builder.header(header::CONTENT_TYPE, "application/json");
+            }
+            serde_json::to_string(value).expect("response stub JSON body serializes")
+        }
+        ResponseStubBody::Text(value) => {
+            if !has_content_type {
+                builder = builder.header(header::CONTENT_TYPE, "text/plain; charset=utf-8");
+            }
+            value.clone()
+        }
+    };
+
+    builder
+        .body(Body::from(body))
+        .expect("validated REST response stub builds")
 }
 
 fn chance(state: &RestSharedState, per_million: u32) -> bool {
@@ -1598,6 +1713,7 @@ paths:
                 route: String::from("/files"),
                 status: 201,
                 duration_ms: 4,
+                response_stub: None,
                 constraint_violation: None,
                 refusal: None,
             });

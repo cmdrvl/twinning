@@ -85,6 +85,13 @@ cargo run -- postgres --schema schema.sql --run 'your-client-command' --json
 # REST twin — serve OpenAPI-spec-driven HTTP endpoints
 cargo run --features rest -- rest --spec openapi.yaml --serve --report out/rest.json
 
+# REST response stubs — deterministic contract responses declared in x-twinning
+cargo run --features rest -- rest \
+  --spec tests/fixtures/rest/openfigi_v2_v3/response-stub-schema.yaml \
+  --server-variable basePath=v3 \
+  --auth-mode shape \
+  --serve
+
 # MCP twin — serve Model Context Protocol over HTTP (or stdio)
 cargo run --features mcp -- mcp --server 'npx @scope/mcp-server' --report out/mcp.json
 cargo run --features mcp -- mcp --manifest manifest.json --serve
@@ -294,6 +301,7 @@ Implemented now:
 **REST twin** (`--features rest`):
 - OpenAPI-spec-driven HTTP endpoint generation
 - auth shape enforcement (bearer/apiKey), chaos injection, routing modes
+- deterministic `x-twinning.response-stubs` for fixture-backed contract responses
 - canary manifest validation, startup report, `port` dual-twin migration proof
 
 **MCP twin** (`--features mcp`):
@@ -355,6 +363,21 @@ Current options:
 - `--materialize-source-url <URL>`: capture declared source rows into the final report/snapshot
 - `--json`: emit machine-readable status
 - `--describe`: print `operator.json`
+
+REST response stubs are declared inside the OpenAPI document under
+`x-twinning.response-stubs` and are consumed through the existing
+`twinning rest --spec <FILE>` path. They are deterministic contract fixtures:
+the runtime matches method, mounted path, and optional canonical JSON request
+body equality, then returns the declared status, headers, and JSON/text body
+after auth and chaos checks. They are not generated dummy data, not a live
+provider simulator, and not a separate REST `--seed` mode.
+
+Use separate specs or thin spec overlays to model separate API scenarios for the
+same upstream service, such as happy path, no-match, malformed/error, and
+ambiguity twins. The OpenFIGI fixture at
+`tests/fixtures/rest/openfigi_v2_v3/response-stub-schema.yaml` demonstrates a
+local `/v3/mapping` response that returns the OpenFIGI top-level batch array
+instead of the generic `{"data":null,"warning":null}` fallback.
 
 Managed paths:
 
@@ -509,6 +532,7 @@ Refusals are structured errors with exit code `2`. Each includes a code, message
 | `E_SEED_BOOTSTRAP_SOURCE` | Seed import/export requested with `--restore` | Use `--schema` |
 | `E_SEED_SOURCE_COMPOSITION` | `--seed` combined with `--materialize-source-url` | Pick one source for v1 |
 | `E_SEED_JSONL` | Seed JSONL is malformed or violates catalog/constraint rules | Regenerate or fix seed rows |
+| `E_REST_INVALID_X_TWINNING` | REST `x-twinning` response stubs are malformed or target no mounted route | Fix the OpenAPI `x-twinning` extension |
 | `E_TWIN_PAIR_PROOF` | Twin-pair proof inputs or query fixture are incompatible | Use snapshots with the same schema/catalog/declaration and a supported query fixture |
 | `E_SERIALIZATION` | Internal JSON rendering failure | Report bug |
 

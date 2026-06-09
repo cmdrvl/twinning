@@ -180,6 +180,7 @@ mod tests {
             route: String::from("/files"),
             status: 201,
             duration_ms: 1,
+            response_stub: None,
             constraint_violation: None,
             refusal: None,
         });
@@ -189,6 +190,7 @@ mod tests {
             route: String::from("/files/{id}"),
             status: 404,
             duration_ms: 1,
+            response_stub: None,
             constraint_violation: None,
             refusal: Some(String::from("not_found")),
         });

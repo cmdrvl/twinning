@@ -9,6 +9,7 @@ Subtrees:
 - `declarations/` — catalog-selected subset declarations that twinning imports
 - `differential/` — read and write parity corpora for real-Postgres comparison
 - `doctor_detectors/` — failure-mode fixtures backing the read-only doctor detector catalog
+- `rest/` — OpenAPI fixtures for REST adapter routing, response-stub, and protocol-shape tests
 - `snapshots/` — committed-row snapshot fixtures for deterministic freeze/restore checks
 - `storage/` — tournament-mode budget gate notes and storage-economics fixtures
 
@@ -23,6 +24,11 @@ The current files are active contract inputs:
   comparisons
 - `doctor_detectors/` pins the refusal/report signals that must exist before
   any future doctor fix mode can be exposed
+- `rest/` pins REST specs used by local tests. Response-stub specs should be
+  named by protocol and scenario, for example
+  `openfigi_v2_v3/response-stub-schema.yaml`; separate happy-path, no-match,
+  error, malformed, and ambiguity scenarios should use separate specs or
+  overlays rather than runtime scenario state.
 - `snapshots/` pins canonical committed-state bytes independently of artifact
   metadata such as creation time and restore lineage
 - `storage/` documents which budget metrics are mandatory in CI and which can

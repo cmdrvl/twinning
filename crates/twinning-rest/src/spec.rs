@@ -490,7 +490,7 @@ pub fn build_rest_catalog(
     let mut resources = HashMap::new();
     let mut tables_by_name = BTreeMap::new();
     let mut warnings = Vec::new();
-    let x_twinning = parse_x_twinning(&document);
+    let x_twinning = parse_x_twinning(&document)?;
     let remote_response_refs = resolve_remote_response_refs(&mut document, &mut warnings);
     let component_schemas = document.components.schemas.clone();
 

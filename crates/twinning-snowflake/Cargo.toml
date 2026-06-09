@@ -1,6 +1,6 @@
 [package]
 name = "twinning-snowflake"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 authors = ["CMD+RVL <engineering@cmdrvl.com>"]
 description = "Snowflake HTTP wire protocol adapter for twinning"

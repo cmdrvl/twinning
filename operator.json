@@ -1,7 +1,7 @@
 {
   "schema_version": "operator.v0",
   "name": "twinning",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Interface twin bootstrap: parse DDL, prepare deterministic twin artifacts, and stage bounded-memory tournament twins plus heavier replay backends",
   "repository": "https://github.com/cmdrvl/twinning",
   "license": "MIT",
@@ -267,6 +267,7 @@
       "v1 adaptive routing policy engine: flat-crud, schema-first, prefix-scoped evidence sources combined into ResourceTopology at startup",
       "ResourceTopology with confidence scoring (Pinned/High/Medium/Low) and per-route conflict reporting",
       "x-twinning OpenAPI extension for per-spec routing policy, base prefix, and auth mode overrides",
+      "x-twinning response stubs for deterministic REST contract fixtures declared in OpenAPI specs",
       "Startup routing report: route coverage, confidence coverage, per-route classification table",
       "Remote $ref URL resolution with 5s timeout and in-process cache",
       "Response wrapper detection for data/items/results/entries payload fields and hint-matched semantic names",
@@ -313,7 +314,7 @@
     {
       "name": "twinning.rest-report.v0",
       "kind": "session_report",
-      "description": "REST session report: spec identity, routing table with confidence scores, exercised endpoints, refusals, constraint violations, and optional canary assertions"
+      "description": "REST session report: spec identity, routing table with confidence scores, exercised endpoints, response-stub counts, refusals, constraint violations, and optional canary assertions"
     },
     {
       "name": "twinning.mcp-report.v0",

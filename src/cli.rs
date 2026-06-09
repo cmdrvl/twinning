@@ -35,7 +35,9 @@ pub enum Command {
     #[command(about = "Declared but refused until the Postgres v0 center is real")]
     Oracle(TwinArgs),
     #[cfg(feature = "rest")]
-    #[command(about = "Prepare an OpenAPI-spec-driven REST interface twin")]
+    #[command(
+        about = "Prepare an OpenAPI-spec-driven REST interface twin with x-twinning fixtures"
+    )]
     Rest(RestArgs),
     #[cfg(feature = "rest")]
     #[command(about = "Run dual REST twins for client migration proof")]

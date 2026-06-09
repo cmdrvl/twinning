@@ -437,6 +437,7 @@ mod tests {
             route: route.to_owned(),
             status,
             duration_ms: 1,
+            response_stub: None,
             constraint_violation: None,
             refusal: refusal.map(str::to_owned),
         }
