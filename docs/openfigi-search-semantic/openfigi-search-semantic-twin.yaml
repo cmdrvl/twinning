@@ -1,0 +1,406 @@
+openapi: 3.0.3
+info:
+  title: OpenFIGI /search semantic twin overlay (measured 2026-06-10)
+  version: 2.0.0
+  description: 'Overlay of the official OpenFIGI schema (sha256:d83fbc4ad3053c23684ec9c9b24e667d61ef1022e1d98456252f8cba3159d520)
+    with x-twinning response stubs encoding measured /search semantics: error envelopes at HTTP 200, identifier
+    routing, relevance recipes, silent enum no-match, deterministic pagination.'
+servers:
+- url: https://api.openfigi.com/{basePath}
+  variables:
+    basePath:
+      default: v3
+      enum:
+      - v3
+      - v2
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      name: X-OPENFIGI-APIKEY
+      in: header
+  schemas:
+    SearchRequest:
+      type: object
+      properties:
+        query:
+          type: string
+        start:
+          type: string
+        exchCode:
+          type: string
+        securityType:
+          type: string
+        marketSecDes:
+          type: string
+    SearchEnvelope:
+      type: object
+      description: 'Measured top-level shape: a single object, not the array the published spec declares.
+        error/data/next are mutually present per case; all arrive with HTTP status 200.'
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        next:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+paths:
+  /search:
+    post:
+      security:
+      - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: All measured /search outcomes, including validation errors.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEnvelope'
+x-twinning:
+  response-stubs:
+  - id: search_figi_exact_hit
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: BBG000B9XRY4
+    status: 200
+    body:
+      data:
+      - figi: BBG000B9XRY4
+        name: APPLE INC
+        ticker: AAPL
+        exchCode: US
+        compositeFIGI: BBG000B9XRY4
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPL
+  - id: search_cusip_no_match
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: 037833100
+    status: 200
+    body:
+      data: []
+  - id: search_isin_no_match
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: US0378331005
+    status: 200
+    body:
+      data: []
+  - id: search_bare_name_drowns
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: apple
+    status: 200
+    body:
+      data:
+      - figi: BBG000D0PWH8
+        name: APPLE VALLEY
+        ticker: MN APP 5.9 05/01/1995
+        exchCode: null
+        compositeFIGI: null
+        securityType: FIXED
+        marketSector: Muni
+        shareClassFIGI: null
+        securityType2: Muni
+        securityDescription: null
+      - figi: BBG000D0PYN7
+        name: APPLE VALLEY
+        ticker: MN APP 6 05/01/1998
+        exchCode: null
+        compositeFIGI: null
+        securityType: FIXED
+        marketSector: Muni
+        shareClassFIGI: null
+        securityType2: Muni
+        securityDescription: null
+      - figi: BBG000D14R26
+        name: APPLE VALLEY
+        ticker: MN APP 7 12/01/1987
+        exchCode: null
+        compositeFIGI: null
+        securityType: FIXED
+        marketSector: Muni
+        shareClassFIGI: null
+        securityType2: Muni
+        securityDescription: null
+      - figi: BBG000D14WN2
+        name: APPLE VALLEY
+        ticker: MN APP 9.1 12/01/1995
+        exchCode: null
+        compositeFIGI: null
+        securityType: FIXED
+        marketSector: Muni
+        shareClassFIGI: null
+        securityType2: Muni
+        securityDescription: null
+      - figi: BBG000D1CZY4
+        name: APPLE VALLEY
+        ticker: MN APP 7.2 08/01/1996
+        exchCode: null
+        compositeFIGI: null
+        securityType: FIXED
+        marketSector: Muni
+        shareClassFIGI: null
+        securityType2: Muni
+        securityDescription: null
+      next: QW9JSVFhZXh1Q3hDUWtjd01USktTbFl3VXpjPSAx.+W9k8XXUVjRqp3atVeM3NsLS10soLtihEcTb3mDbecY=
+  - id: search_ticker_works
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: AAPL
+    status: 200
+    body:
+      data:
+      - figi: BBG000N88Y03
+        name: APPLE INC
+        ticker: AAPL
+        exchCode: XC
+        compositeFIGI: BBG000N88V36
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPL
+      - figi: BBG0032FLQC3
+        name: APPLE INC
+        ticker: AAPL
+        exchCode: CI
+        compositeFIGI: BBG0032FLQC3
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPL
+      - figi: BBG01293F546
+        name: APPLE INC-CDR
+        ticker: AAPL
+        exchCode: CJ
+        compositeFIGI: BBG01293F4X7
+        securityType: Canadian DR
+        marketSector: Equity
+        shareClassFIGI: BBG01293F5Y3
+        securityType2: Depositary Receipt
+        securityDescription: AAPL
+      - figi: BBG01293F591
+        name: APPLE INC-CDR
+        ticker: AAPL
+        exchCode: TA
+        compositeFIGI: BBG01293F4X7
+        securityType: Canadian DR
+        marketSector: Equity
+        shareClassFIGI: BBG01293F5Y3
+        securityType2: Depositary Receipt
+        securityDescription: AAPL
+      - figi: BBG000B9Y5X2
+        name: APPLE INC
+        ticker: AAPL
+        exchCode: UW
+        compositeFIGI: BBG000B9XRY4
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPL
+      next: QW9JSVFaSTRzaXhDUWtjd01FNUxVMHRZVmpZPSAx.5nsj2beZXSyYP909X0Q8G4BgQITO/IyrmD/mPwFi+nU=
+  - id: search_name_exch_rescues
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: apple
+        exchCode: US
+    status: 200
+    body:
+      data:
+      - figi: BBG000B9XRY4
+        name: APPLE INC
+        ticker: AAPL
+        exchCode: US
+        compositeFIGI: BBG000B9XRY4
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPL
+      - figi: BBG006473QX9
+        name: APPLE HOSPITALITY REIT INC
+        ticker: APLE
+        exchCode: US
+        compositeFIGI: BBG006473QX9
+        securityType: REIT
+        marketSector: Equity
+        shareClassFIGI: BBG006473QY8
+        securityType2: REIT
+        securityDescription: APLE
+      - figi: BBG000TKJLW1
+        name: APPLE RUSH CO INC
+        ticker: APRU
+        exchCode: US
+        compositeFIGI: BBG000TKJLW1
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001T0B360
+        securityType2: Common Stock
+        securityDescription: APRU
+      - figi: BBG000CQN9X7
+        name: APPLE ISPORT GROUP INC
+        ticker: AAPI
+        exchCode: US
+        compositeFIGI: BBG000CQN9X7
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001SGHPN2
+        securityType2: Common Stock
+        securityDescription: AAPI
+      - figi: BBG000C1TL32
+        name: GOLDEN APPLE OIL & GAS INC
+        ticker: GAPJ
+        exchCode: US
+        compositeFIGI: BBG000C1TL32
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001SKSF62
+        securityType2: Common Stock
+        securityDescription: GAPJ
+      next: QW9JSVFHQXlPQ3hDUWtjd01EQXhVMUZPTVRZPSAx.z/g1zqrnN+T59sKMwBZ1GZO/EYN3h+utO4R2YGDJpvQ=
+  - id: search_empty_query_err
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: ''
+    status: 200
+    body:
+      error: query must be a non-empty string.
+  - id: search_empty_object_err
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals: {}
+    status: 200
+    body:
+      error: query must contain at least one parameter
+  - id: search_unknown_key_err
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: apple
+        definitelyNotAField: x
+    status: 200
+    body:
+      error: Invalid key 'definitelyNotAField'.
+  - id: search_bad_start_token_err
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: apple
+        start: not-a-real-token
+    status: 200
+    body:
+      error: Invalid start value.
+  - id: search_invalid_enum_silent
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: apple
+        securityType: NotARealType
+    status: 200
+    body:
+      data: []
+  - id: search_no_match_empty_data
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: zzzzqqqqxxxxwwww
+    status: 200
+    body:
+      data: []
+  - id: search_page_2_via_next
+    method: POST
+    path: /v3/search
+    when:
+      body-json-equals:
+        query: apple
+        start: QW9JSVFhZXh1Q3hDUWtjd01USktTbFl3VXpjPSAx.+W9k8XXUVjRqp3atVeM3NsLS10soLtihEcTb3mDbecY=
+    status: 200
+    body:
+      data:
+      - figi: BBG014K9CX02
+        name: APPLE INC
+        ticker: AAPLHUF
+        exchCode: XF
+        compositeFIGI: BBG014K9CWV0
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPLHUF
+      - figi: BBG014K9CXF6
+        name: APPLE INC
+        ticker: AAPLHUF
+        exchCode: XW
+        compositeFIGI: BBG014K9CWV0
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPLHUF
+      - figi: BBG014K9CXP5
+        name: APPLE INC
+        ticker: AAPLHUF
+        exchCode: XX
+        compositeFIGI: BBG014K9CWV0
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPLHUF
+      - figi: BBG01NYDFYN6
+        name: APPLE INC
+        ticker: AAPLPLN
+        exchCode: X2
+        compositeFIGI: BBG01NYDFYM7
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPLPLN
+      - figi: BBG01NYDFYX5
+        name: APPLE INC
+        ticker: AAPLPLN
+        exchCode: XL
+        compositeFIGI: BBG01NYDFYM7
+        securityType: Common Stock
+        marketSector: Equity
+        shareClassFIGI: BBG001S5N8V8
+        securityType2: Common Stock
+        securityDescription: AAPLPLN
+      next: QW9JSVFhZXF2Q3hDUWtjd01GUk9NbEJPTWpZPSAy.IPg6PBCatb5su4oT925WJmHfyqVKribZNAW834137Po=
