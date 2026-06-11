@@ -1637,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "verify-core"
-version = "0.2.1"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "verify-engine"
-version = "0.2.1"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "verify-core",

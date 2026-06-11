@@ -275,7 +275,7 @@ fn chaos_rate_limit_runs_before_response_stubs() {
 }
 
 #[test]
-fn response_stub_unknown_mounted_route_refuses_startup() {
+fn response_stub_unknown_mounted_route_refuses_startup() -> Result<(), Box<dyn std::error::Error>> {
     let (_dir, spec_path) = response_stub_spec();
     let raw = fs::read_to_string(&spec_path).expect("read spec");
     fs::write(
@@ -285,7 +285,10 @@ fn response_stub_unknown_mounted_route_refuses_startup() {
     .expect("rewrite spec");
 
     let error = match start_embedded_server(test_config(spec_path)) {
-        Ok(_) => panic!("startup should fail"),
+        Ok(server) => {
+            let _ = server.shutdown();
+            return Err(std::io::Error::other("startup should fail").into());
+        }
         Err(error) => error,
     };
     let rendered = serde_json::to_value(error.as_ref()).expect("serialize refusal");
@@ -294,6 +297,7 @@ fn response_stub_unknown_mounted_route_refuses_startup() {
         rendered["refusal"]["detail"]["reason"],
         "unknown_stub_route"
     );
+    Ok(())
 }
 
 #[test]
@@ -344,7 +348,7 @@ fn response_stub_fixture_parses_as_openapi() {
             .expect("x-twinning")
             .response_stubs
             .len(),
-        1
+        2
     );
 }
 

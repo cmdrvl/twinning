@@ -98,3 +98,20 @@ x-twinning:
               name: APPLE INC
               securityType: Common Stock
               exchCode: US
+    - id: openfigi_cusip_success_us
+      method: POST
+      path: /v3/mapping
+      when:
+        body-json-equals:
+          - idType: ID_CUSIP
+            idValue: "037833100"
+            exchCode: US
+      status: 200
+      body:
+        - data:
+            - figi: BBG000B9XRY4
+              compositeFIGI: BBG000B9XRY4
+              ticker: AAPL
+              name: APPLE INC
+              securityType: Common Stock
+              exchCode: US
