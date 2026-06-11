@@ -49,8 +49,9 @@ treat it as live parity.
 semantic. The published schema declares almost none of the behavior below.
 Every row was measured live (full request/response pairs in
 [corpus.trimmed.jsonl](./openfigi-search-semantic/corpus.trimmed.jsonl);
-regenerate with [probe.py](./openfigi-search-semantic/probe.py) and
-[probe2.py](./openfigi-search-semantic/probe2.py)).
+regenerate with [probe.py](./openfigi-search-semantic/probe.py),
+[probe2.py](./openfigi-search-semantic/probe2.py), and
+[probe3.py](./openfigi-search-semantic/probe3.py)).
 
 | # | Measured behavior | What the spec says | Gap class |
 |---|-------------------|--------------------|-----------|
@@ -63,6 +64,7 @@ regenerate with [probe.py](./openfigi-search-semantic/probe.py) and
 | 7 | Page size fixed at 100, opaque `next` cursor, no `total` on `/search`; the same query on `/filter` returns `total` (`"apple"` → 1,350,538 instruments) | `start`/`next` described, `total` only on filter response | cross-endpoint asymmetry |
 | 8 | Identical query → identical page-1 ordering and identical `next` token across runs | nothing | determinism (twin-friendly) |
 | 9 | `query` is optional when another filter property is present (`securityType2` + `strike` alone works) | "At least one property must be populated" | confirmed |
+| 10 | Free-text dates match the descriptor dialect, not the calendar: `"apple may 1995"` → 0 results; `"apple 05/1995"` and `"apple 05/01/1995"` → exactly the 2 Apple Valley bonds maturing 1995-05-01. Structured `maturity` interval filters work as documented | nothing | date-dialect semantics |
 
 Rows 2–4 are the agent killers. A client that branches on HTTP status never
 sees an OpenFIGI validation error. A client that typos a `securityType` value
@@ -73,9 +75,10 @@ schema-synthesis twin.
 
 Row 5 is the relevance problem in one probe: the FIGI corpus is dominated by
 fixed income and derivatives (every muni, tranche, and option contract has a
-FIGI), so bare name queries drown. Rows 6 shows the measured recipes that
-rescue intent. Row 8 is the good news: the behavior is deterministic, which
-means it twins faithfully.
+FIGI), so bare name queries drown. Rows 6 and 10 show the measured recipes that rescue intent — including the
+date dialect: descriptors carry `MM/DD/YYYY` / `MM/YY` dates, so
+`"may 1995"` finds nothing while `"05/1995"` is surgical. Row 8 is the good
+news: the behavior is deterministic, which means it twins faithfully.
 
 ## 3. The method: spec → probes → corpus → overlay → twin
 
