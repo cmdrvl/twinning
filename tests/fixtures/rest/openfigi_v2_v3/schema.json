@@ -1183,5 +1183,100 @@
                 "in": "header"
             }
         }
+    },
+    "x-twinning": {
+        "response-stubs": [
+            {
+                "id": "openfigi_search_apple",
+                "method": "POST",
+                "path": "/v3/search",
+                "when": {
+                    "body-json-equals": {
+                        "query": "Apple"
+                    }
+                },
+                "status": 200,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": {
+                    "data": [
+                        {
+                            "figi": "BBG000D0PWH8",
+                            "name": "APPLE VALLEY",
+                            "ticker": "MN APP 5.9 05/01/1995",
+                            "exchCode": null,
+                            "compositeFIGI": null,
+                            "securityType": "FIXED",
+                            "marketSector": "Muni",
+                            "shareClassFIGI": null,
+                            "securityType2": "Muni",
+                            "securityDescription": null
+                        },
+                        {
+                            "figi": "BBG000D0PYN7",
+                            "name": "APPLE VALLEY",
+                            "ticker": "MN APP 6 05/01/1998",
+                            "exchCode": null,
+                            "compositeFIGI": null,
+                            "securityType": "FIXED",
+                            "marketSector": "Muni",
+                            "shareClassFIGI": null,
+                            "securityType2": "Muni",
+                            "securityDescription": null
+                        },
+                        {
+                            "figi": "BBG000D14R26",
+                            "name": "APPLE VALLEY",
+                            "ticker": "MN APP 7 12/01/1987",
+                            "exchCode": null,
+                            "compositeFIGI": null,
+                            "securityType": "FIXED",
+                            "marketSector": "Muni",
+                            "shareClassFIGI": null,
+                            "securityType2": "Muni",
+                            "securityDescription": null
+                        },
+                        {
+                            "figi": "BBG000D14WN2",
+                            "name": "APPLE VALLEY",
+                            "ticker": "MN APP 9.1 12/01/1995",
+                            "exchCode": null,
+                            "compositeFIGI": null,
+                            "securityType": "FIXED",
+                            "marketSector": "Muni",
+                            "shareClassFIGI": null,
+                            "securityType2": "Muni",
+                            "securityDescription": null
+                        },
+                        {
+                            "figi": "BBG000D1CZY4",
+                            "name": "APPLE VALLEY",
+                            "ticker": "MN APP 7.2 08/01/1996",
+                            "exchCode": null,
+                            "compositeFIGI": null,
+                            "securityType": "FIXED",
+                            "marketSector": "Muni",
+                            "shareClassFIGI": null,
+                            "securityType2": "Muni",
+                            "securityDescription": null
+                        },
+                        {
+                            "figi": "BBG000P09C78",
+                            "name": "APPLE INC",
+                            "ticker": "AAPLCHF",
+                            "exchCode": "XO",
+                            "compositeFIGI": "BBG000P092T6",
+                            "securityType": "Common Stock",
+                            "marketSector": "Equity",
+                            "shareClassFIGI": "BBG001S5N8V8",
+                            "securityType2": "Common Stock",
+                            "securityDescription": "AAPLCHF"
+                        }
+                    ],
+                    "next": "QW9JSVFhZXo2Q3hDUWtjd01USktTbFl3VXpjPSAx.Y0QXbCz4+WiuE6qSqcna6IhrkzH7RQ/q82GgLaIeHd8="
+                }
+            }
+        ]
     }
 }

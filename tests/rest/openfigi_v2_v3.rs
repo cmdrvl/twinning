@@ -93,7 +93,7 @@ fn openfigi_fixture_preserves_server_variable_contract() {
 
     assert_eq!(
         catalog.spec_hash,
-        "sha256:d83fbc4ad3053c23684ec9c9b24e667d61ef1022e1d98456252f8cba3159d520"
+        "sha256:5afdc7dd1da201fbf83be014df847996250abd138a760844625c5bc0384aea4f"
     );
     assert_eq!(catalog.paths.len(), 4);
     for path in ["/mapping", "/filter", "/search", "/mapping/values/{key}"] {

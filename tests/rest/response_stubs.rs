@@ -93,6 +93,15 @@ fn openfigi_stub_fixture_path() -> PathBuf {
         .join("response-stub-schema.yaml")
 }
 
+fn openfigi_schema_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("rest")
+        .join("openfigi_v2_v3")
+        .join("schema.json")
+}
+
 fn test_config(spec_path: PathBuf) -> RestConfig {
     RestConfig {
         spec_path,
@@ -332,6 +341,55 @@ fn openfigi_mapping_response_stub_returns_protocol_shaped_array() {
 
     let session = server.shutdown().expect("shutdown");
     assert_eq!(session.summary.response_stubs["openfigi_cusip_success"], 1);
+}
+
+#[test]
+fn openfigi_search_response_stub_returns_live_shaped_page() {
+    let mut config = test_config(openfigi_schema_fixture_path());
+    config
+        .server_variables
+        .insert("basePath".to_owned(), "v3".to_owned());
+    config.routing.server_variables = config.server_variables.clone();
+    let server = start_embedded_server(config).expect("server starts");
+
+    let response = request(
+        server.addr(),
+        "POST",
+        "/v3/search",
+        &[
+            ("Content-Type", "application/json"),
+            ("X-OPENFIGI-APIKEY", "test-token"),
+        ],
+        r#"{"query":"Apple"}"#,
+    );
+    assert_eq!(response.status, 200, "body: {}", response.body);
+    assert!(
+        !response.body.contains(r#""contractSize":null"#),
+        "search should use the explicit live-shaped stub, not schema fallback: {}",
+        response.body
+    );
+
+    let body = serde_json::from_str::<Value>(&response.body).expect("OpenFIGI search JSON");
+    let data = body["data"]
+        .as_array()
+        .expect("search response should include a data array");
+    assert!(
+        data.len() >= 6,
+        "expected representative search rows: {body}"
+    );
+    assert_eq!(data[0]["figi"], "BBG000D0PWH8");
+    assert_eq!(data[0]["name"], "APPLE VALLEY");
+    assert_eq!(data[0]["marketSector"], "Muni");
+    assert!(
+        data.iter().any(|row| row["name"] == "APPLE INC"
+            && row["marketSector"] == "Equity"
+            && row["securityType2"] == "Common Stock"),
+        "representative page should include an Apple Inc equity row: {body}"
+    );
+    assert!(body["next"].as_str().is_some(), "body: {body}");
+
+    let session = server.shutdown().expect("shutdown");
+    assert_eq!(session.summary.response_stubs["openfigi_search_apple"], 1);
 }
 
 #[test]
