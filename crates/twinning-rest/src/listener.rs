@@ -289,6 +289,7 @@ fn build_shared_state(config: &RestConfig) -> RefusalResult<Arc<RestSharedState>
     let topology = build_spec_topology(&catalog, &config.routing);
     let registry = build_route_registry(&catalog, &topology, &routing);
     validate_response_stub_paths(&catalog, &registry.routes)?;
+    validate_response_stub_files(&catalog)?;
     RoutingReport::from_registry(&registry, &catalog).log_at_startup();
     for warning in catalog
         .warnings
@@ -401,12 +402,149 @@ fn validate_response_stub_paths(catalog: &RestCatalog, routes: &RouteTable) -> R
         let known_route = routes.iter().any(|(method, pattern, _)| {
             method.as_str() == stub.method && pattern.captures(&stub.path).is_some()
         });
-        if !known_route {
+        if !known_route && !stub_targets_declared_server_mount(catalog, stub) {
             return Err(Box::new(x_twinning_refusal(
                 "unknown_stub_route",
                 format!(
                     "response stub `{}` targets {} {}, but no mounted route matches that path",
                     stub.id, stub.method, stub.path
+                ),
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn stub_targets_declared_server_mount(catalog: &RestCatalog, stub: &ResponseStub) -> bool {
+    for prefix in declared_server_mount_prefixes(catalog) {
+        let Some(unmounted_path) = strip_mount_prefix(&stub.path, &prefix) else {
+            continue;
+        };
+        if catalog_path_declares_method(catalog, &unmounted_path, &stub.method) {
+            return true;
+        }
+    }
+    false
+}
+
+fn declared_server_mount_prefixes(catalog: &RestCatalog) -> BTreeSet<String> {
+    let mut prefixes = BTreeSet::new();
+    for server in &catalog.servers {
+        for rendered in render_server_variable_paths(server) {
+            let Some(path) = server_url_path(&rendered) else {
+                continue;
+            };
+            let prefix = normalize_mount_prefix(path);
+            if prefix != "/" {
+                prefixes.insert(prefix);
+            }
+        }
+    }
+    prefixes
+}
+
+fn render_server_variable_paths(server: &super::spec::ServerObject) -> Vec<String> {
+    let mut rendered = vec![server.url.clone()];
+    for (name, variable) in &server.variables {
+        let values = if variable.enum_values.is_empty() {
+            vec![variable.default.as_str()]
+        } else {
+            variable
+                .enum_values
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        };
+        let placeholder = format!("{{{name}}}");
+        rendered = rendered
+            .into_iter()
+            .flat_map(|url| {
+                values
+                    .iter()
+                    .map(|value| url.replace(&placeholder, value))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+    }
+    rendered
+        .into_iter()
+        .filter(|url| !url.contains('{') && !url.contains('}'))
+        .collect()
+}
+
+fn server_url_path(url: &str) -> Option<&str> {
+    if let Some(after_scheme) = url.split_once("://").map(|(_, rest)| rest) {
+        let path_start = after_scheme.find('/')?;
+        return Some(&after_scheme[path_start..]);
+    }
+    Some(url)
+}
+
+fn normalize_mount_prefix(path: &str) -> String {
+    let without_query = path
+        .split_once('?')
+        .map(|(head, _)| head)
+        .unwrap_or(path)
+        .split_once('#')
+        .map(|(head, _)| head)
+        .unwrap_or(path);
+    let trimmed = without_query.trim_matches('/');
+    if trimmed.is_empty() {
+        String::from("/")
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn strip_mount_prefix(path: &str, prefix: &str) -> Option<String> {
+    let prefix = prefix.trim_end_matches('/');
+    if path == prefix {
+        return Some(String::from("/"));
+    }
+    path.strip_prefix(prefix)
+        .and_then(|suffix| suffix.starts_with('/').then(|| suffix.to_owned()))
+}
+
+fn catalog_path_declares_method(catalog: &RestCatalog, path: &str, method: &str) -> bool {
+    let Some(path_item) = catalog.paths.get(path) else {
+        return false;
+    };
+    match method {
+        "GET" => path_item.get.is_some(),
+        "HEAD" => path_item.head.is_some(),
+        "POST" => path_item.post.is_some(),
+        "PUT" => path_item.put.is_some(),
+        "PATCH" => path_item.patch.is_some(),
+        "DELETE" => path_item.delete.is_some(),
+        _ => false,
+    }
+}
+
+fn validate_response_stub_files(catalog: &RestCatalog) -> RefusalResult<()> {
+    let Some(extension) = catalog.x_twinning.as_ref() else {
+        return Ok(());
+    };
+
+    for stub in &extension.response_stubs {
+        let ResponseStubBody::File(path) = &stub.body else {
+            continue;
+        };
+        let metadata = fs::metadata(Path::new(path)).map_err(|error| {
+            Box::new(x_twinning_refusal(
+                "missing_stub_body_file",
+                format!(
+                    "response stub `{}` body-file `{path}` could not be read: {error}",
+                    stub.id
+                ),
+            ))
+        })?;
+        if !metadata.is_file() {
+            return Err(Box::new(x_twinning_refusal(
+                "invalid_stub_body_file",
+                format!(
+                    "response stub `{}` body-file `{path}` is not a file",
+                    stub.id
                 ),
             )));
         }
@@ -840,18 +978,38 @@ fn response_from_stub(stub: &ResponseStub) -> Response {
             if !has_content_type {
                 builder = builder.header(header::CONTENT_TYPE, "application/json");
             }
-            serde_json::to_string(value).expect("response stub JSON body serializes")
+            Body::from(serde_json::to_string(value).expect("response stub JSON body serializes"))
         }
         ResponseStubBody::Text(value) => {
             if !has_content_type {
                 builder = builder.header(header::CONTENT_TYPE, "text/plain; charset=utf-8");
             }
-            value.clone()
+            Body::from(value.clone())
+        }
+        ResponseStubBody::File(path) => {
+            if !has_content_type {
+                builder = builder.header(header::CONTENT_TYPE, "application/octet-stream");
+            }
+            match fs::read(Path::new(path)) {
+                Ok(bytes) => Body::from(bytes),
+                Err(error) => {
+                    return json_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        json!({
+                            "code": "response_stub_file_unavailable",
+                            "message": "response stub body-file could not be read",
+                            "stub_id": stub.id,
+                            "path": path,
+                            "error": error.to_string()
+                        }),
+                    );
+                }
+            }
         }
     };
 
     builder
-        .body(Body::from(body))
+        .body(body)
         .expect("validated REST response stub builds")
 }
 

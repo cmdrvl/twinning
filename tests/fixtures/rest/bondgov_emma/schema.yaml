@@ -1,0 +1,594 @@
+openapi: 3.0.3
+info:
+  title: BondGov Emma investor document twin
+  version: "1.0.0"
+  description: >
+    Compact OpenAPI twin for BondGov investor-document endpoints, backed by the
+    local EMMA sample PDFs in ../outcomes/emma/samples from the twinning repo root.
+servers:
+  - url: https://bondgov.com
+components:
+  securitySchemes:
+    BondGovApiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: BondGov API key
+  schemas:
+    BondGovApiAuthStatusResponse:
+      type: object
+      required: [schema, authenticated, client, key, quotas]
+      properties:
+        schema: { type: object, additionalProperties: true }
+        authenticated: { type: boolean }
+        client: { type: object, additionalProperties: true }
+        key: { type: object, additionalProperties: true }
+        quotas: { type: object, additionalProperties: true }
+    BondGovDoclistResponse:
+      type: object
+      required: [schema, query, security, groups, documents, counts, pagination]
+      properties:
+        schema: { type: object, additionalProperties: true }
+        query: { type: object, additionalProperties: true }
+        security: { type: object, additionalProperties: true }
+        groups: { type: object, additionalProperties: true }
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/BondGovInvestorDocument"
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+        pagination: { type: object, additionalProperties: true }
+    BondGovInvestorDocument:
+      type: object
+      required:
+        - document_id
+        - title
+        - category
+        - source_system
+        - source_type
+        - scopes
+        - issuer
+        - posting_date
+        - dated_date
+        - cache_status
+        - links
+      properties:
+        document_id: { type: string }
+        title: { type: string }
+        category: { type: string }
+        source_system: { type: string }
+        source_type: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        issuer: { type: object, additionalProperties: true }
+        reporting_entity:
+          type: object
+          nullable: true
+          additionalProperties: true
+        posting_date: { type: string }
+        dated_date: { type: string }
+        cache_status: { type: string }
+        links:
+          type: object
+          additionalProperties: { type: string }
+    BondGovDocumentLifecycleResponse:
+      type: object
+      required:
+        - schema
+        - document_id
+        - document
+        - cache_status
+        - extraction_status
+        - docintel_status
+        - ready
+        - storage
+        - links
+      properties:
+        schema: { type: object, additionalProperties: true }
+        document_id: { type: string }
+        document: { type: object, additionalProperties: true }
+        cache_status: { type: string }
+        extraction_status: { type: string }
+        docintel_status: { type: object, additionalProperties: true }
+        docintel_remediation: { type: object, additionalProperties: true }
+        ready: { type: object, additionalProperties: true }
+        storage: { type: object, additionalProperties: true }
+        links:
+          type: object
+          additionalProperties: { type: string }
+    BondGovTextResponse:
+      type: object
+      required: [schema, document, extraction_status, cache_status]
+      properties:
+        schema: { type: object, additionalProperties: true }
+        document: { type: object, additionalProperties: true }
+        extraction_status: { type: string }
+        cache_status: { type: string }
+        docintel_status: { type: object, additionalProperties: true }
+        ready: { type: object, additionalProperties: true }
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+        full_text: { type: string }
+        sections:
+          type: array
+          items: { type: object, additionalProperties: true }
+        tables:
+          type: array
+          items: { type: object, additionalProperties: true }
+paths:
+  /api/v1/investor-documents/auth/:
+    get:
+      summary: Check BondGov API authentication status
+      security:
+        - BondGovApiKeyAuth: []
+      responses:
+        "200":
+          description: Authentication status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BondGovApiAuthStatusResponse"
+  /api/v1/investor-documents/doclist/:
+    get:
+      summary: Find investor documents by CUSIP9
+      security:
+        - BondGovApiKeyAuth: []
+      parameters:
+        - in: query
+          name: cusip
+          required: true
+          schema: { type: string }
+        - in: query
+          name: source
+          schema: { type: string }
+        - in: query
+          name: category
+          schema: { type: string }
+        - in: query
+          name: scope
+          schema:
+            type: string
+            enum: [all, cusip, emma_issuer, entity]
+            default: all
+      responses:
+        "200":
+          description: Grouped and flattened document records.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BondGovDoclistResponse"
+  /api/v1/investor-documents/{id}/prepare/:
+    post:
+      summary: Prepare an investor document PDF and extracted text
+      security:
+        - BondGovApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Lifecycle status after preparation request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BondGovDocumentLifecycleResponse"
+  /api/v1/investor-documents/{id}/status/:
+    get:
+      summary: Check investor document lifecycle status
+      security:
+        - BondGovApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Lifecycle status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BondGovDocumentLifecycleResponse"
+  /api/v1/investor-documents/{id}/text/:
+    get:
+      summary: Retrieve extracted investor document text
+      security:
+        - BondGovApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Extracted text payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BondGovTextResponse"
+  /api/v1/investor-documents/{id}/download/:
+    get:
+      summary: Download an investor document PDF
+      security:
+        - BondGovApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: PDF download.
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+x-twinning:
+  auth-mode: shape
+  response-stubs:
+    - id: bondgov_auth_status
+      method: GET
+      path: /api/v1/investor-documents/auth/
+      status: 200
+      headers:
+        X-BondGov-Request-ID: twin-bondgov-auth-0001
+      body:
+        schema:
+          name: bondgov.investor_documents.auth_status
+          version: twin.emma.v1
+        authenticated: true
+        client:
+          name: cmdrvl-emma-twin
+          scopes: [documents:read, documents:download]
+        key:
+          label: synthetic-bearer-token
+          status: active
+        quotas:
+          requests:
+            limit: 10000
+            remaining: 9999
+          downloads:
+            limit_bytes: 1000000000
+            remaining_bytes: 994441000
+    - id: bondgov_doclist_emma_samples
+      method: GET
+      path: /api/v1/investor-documents/doclist/
+      status: 200
+      headers:
+        X-BondGov-Request-ID: twin-bondgov-doclist-0001
+        X-BondGov-RateLimit-Limit: "10000"
+        X-BondGov-RateLimit-Remaining: "9998"
+      body:
+        schema:
+          name: bondgov.investor_documents.doclist
+          version: twin.emma.v1
+        query:
+          cusip: 000000000
+          source: emma
+          scope: all
+          note: Synthetic query echo; response is fixed to the local Emma sample pack.
+        security:
+          cusip: 000000000
+          issuer_name: Local EMMA sample pack
+        groups:
+          by_source:
+            emma: 6
+          by_category:
+            official_statement: 3
+            continuing_disclosure: 3
+        counts:
+          total: 6
+          official_statement: 3
+          continuing_disclosure: 3
+        pagination:
+          limit: 100
+          next_cursor: null
+          has_more: false
+        documents:
+          - document_id: bgv-emma-p11968060-p11501443
+            title: EMMA sample P11968060 / P11501443
+            category: continuing_disclosure
+            source_system: emma
+            source_type: continuing_disclosure
+            scopes: [emma_issuer, entity]
+            issuer:
+              name: Local EMMA sample pack
+              cusip: 000000000
+            reporting_entity: null
+            posting_date: "2026-06-23"
+            dated_date: "2026-06-23"
+            cache_status: hit
+            links:
+              prepare: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p11968060-p11501443/prepare/
+              status: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p11968060-p11501443/status/
+              text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p11968060-p11501443/text/
+              download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p11968060-p11501443/download/
+          - document_id: bgv-emma-p22048145-p21558579
+            title: EMMA sample P22048145 / P21558579
+            category: continuing_disclosure
+            source_system: emma
+            source_type: continuing_disclosure
+            scopes: [emma_issuer, entity]
+            issuer:
+              name: Local EMMA sample pack
+              cusip: 000000000
+            reporting_entity: null
+            posting_date: "2026-06-23"
+            dated_date: "2026-06-23"
+            cache_status: hit
+            links:
+              prepare: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22048145-p21558579/prepare/
+              status: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22048145-p21558579/status/
+              text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22048145-p21558579/text/
+              download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22048145-p21558579/download/
+          - document_id: bgv-emma-p22049892-p21559777
+            title: EMMA sample P22049892 / P21559777
+            category: continuing_disclosure
+            source_system: emma
+            source_type: continuing_disclosure
+            scopes: [emma_issuer, entity]
+            issuer:
+              name: Local EMMA sample pack
+              cusip: 000000000
+            reporting_entity: null
+            posting_date: "2026-06-23"
+            dated_date: "2026-06-23"
+            cache_status: hit
+            links:
+              prepare: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22049892-p21559777/prepare/
+              status: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22049892-p21559777/status/
+              text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22049892-p21559777/text/
+              download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22049892-p21559777/download/
+          - document_id: bgv-emma-p22051190-p21560731-p22020081
+            title: EMMA sample P22051190 / P21560731 / P22020081
+            category: official_statement
+            source_system: emma
+            source_type: official_statement
+            scopes: [cusip, emma_issuer, entity]
+            issuer:
+              name: Local EMMA sample pack
+              cusip: 000000000
+            reporting_entity: null
+            posting_date: "2026-06-23"
+            dated_date: "2026-06-23"
+            cache_status: hit
+            links:
+              prepare: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/prepare/
+              status: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/status/
+              text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/text/
+              download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/download/
+          - document_id: bgv-emma-p22051230-p21560760-p22020113
+            title: EMMA sample P22051230 / P21560760 / P22020113
+            category: official_statement
+            source_system: emma
+            source_type: official_statement
+            scopes: [cusip, emma_issuer, entity]
+            issuer:
+              name: Local EMMA sample pack
+              cusip: 000000000
+            reporting_entity: null
+            posting_date: "2026-06-23"
+            dated_date: "2026-06-23"
+            cache_status: hit
+            links:
+              prepare: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/prepare/
+              status: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/status/
+              text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/text/
+              download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/download/
+          - document_id: bgv-emma-p22051233-p21560762-p22020115
+            title: EMMA sample P22051233 / P21560762 / P22020115
+            category: official_statement
+            source_system: emma
+            source_type: official_statement
+            scopes: [cusip, emma_issuer, entity]
+            issuer:
+              name: Local EMMA sample pack
+              cusip: 000000000
+            reporting_entity: null
+            posting_date: "2026-06-23"
+            dated_date: "2026-06-23"
+            cache_status: hit
+            links:
+              prepare: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/prepare/
+              status: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/status/
+              text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/text/
+              download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/download/
+    - id: lifecycle_p11968060
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p11968060-p11501443/status/
+      status: 200
+      body: &lifecycle_p11968060_body
+        schema: { name: bondgov.investor_documents.lifecycle, version: twin.emma.v1 }
+        document_id: bgv-emma-p11968060-p11501443
+        document: { title: EMMA sample P11968060 / P11501443, source_file: P11968060-P11501443-.pdf }
+        cache_status: hit
+        extraction_status: available
+        docintel_status: { state: available }
+        ready: { download: true, text: true }
+        storage: { backend: local-file, file: ../outcomes/emma/samples/P11968060-P11501443-.pdf }
+        links: { download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p11968060-p11501443/download/, text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p11968060-p11501443/text/ }
+    - id: prepare_p11968060
+      method: POST
+      path: /api/v1/investor-documents/bgv-emma-p11968060-p11501443/prepare/
+      status: 200
+      body: *lifecycle_p11968060_body
+    - id: text_p11968060
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p11968060-p11501443/text/
+      status: 200
+      body:
+        schema: { name: bondgov.investor_documents.text, version: twin.emma.v1 }
+        document: { document_id: bgv-emma-p11968060-p11501443, source_file: P11968060-P11501443-.pdf }
+        extraction_status: available
+        cache_status: hit
+        ready: { download: true, text: true }
+        counts: { pages: 0, sections: 1, tables: 0 }
+        full_text: "Text extraction placeholder for EMMA sample P11968060 / P11501443."
+        sections: [{ heading: Sample document, text: "PDF bytes are served by the download endpoint." }]
+        tables: []
+    - id: download_p11968060
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p11968060-p11501443/download/
+      status: 200
+      headers:
+        Content-Type: application/pdf
+        X-BondGov-Request-ID: twin-bondgov-download-p11968060
+        X-BondGov-Cache-Status: hit
+        Content-Disposition: attachment; filename="P11968060-P11501443-.pdf"
+      body-file: ../outcomes/emma/samples/P11968060-P11501443-.pdf
+    - id: lifecycle_p22048145
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22048145-p21558579/status/
+      status: 200
+      body: &lifecycle_p22048145_body
+        schema: { name: bondgov.investor_documents.lifecycle, version: twin.emma.v1 }
+        document_id: bgv-emma-p22048145-p21558579
+        document: { title: EMMA sample P22048145 / P21558579, source_file: P22048145-P21558579-.pdf }
+        cache_status: hit
+        extraction_status: available
+        docintel_status: { state: available }
+        ready: { download: true, text: true }
+        storage: { backend: local-file, file: ../outcomes/emma/samples/P22048145-P21558579-.pdf }
+        links: { download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22048145-p21558579/download/, text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22048145-p21558579/text/ }
+    - id: prepare_p22048145
+      method: POST
+      path: /api/v1/investor-documents/bgv-emma-p22048145-p21558579/prepare/
+      status: 200
+      body: *lifecycle_p22048145_body
+    - id: text_p22048145
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22048145-p21558579/text/
+      status: 200
+      body: { schema: { name: bondgov.investor_documents.text, version: twin.emma.v1 }, document: { document_id: bgv-emma-p22048145-p21558579, source_file: P22048145-P21558579-.pdf }, extraction_status: available, cache_status: hit, ready: { download: true, text: true }, counts: { pages: 0, sections: 1, tables: 0 }, full_text: "Text extraction placeholder for EMMA sample P22048145 / P21558579.", sections: [{ heading: Sample document, text: "PDF bytes are served by the download endpoint." }], tables: [] }
+    - id: download_p22048145
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22048145-p21558579/download/
+      status: 200
+      headers: { Content-Type: application/pdf, X-BondGov-Request-ID: twin-bondgov-download-p22048145, X-BondGov-Cache-Status: hit, Content-Disposition: 'attachment; filename="P22048145-P21558579-.pdf"' }
+      body-file: ../outcomes/emma/samples/P22048145-P21558579-.pdf
+    - id: lifecycle_p22049892
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22049892-p21559777/status/
+      status: 200
+      body: &lifecycle_p22049892_body
+        schema: { name: bondgov.investor_documents.lifecycle, version: twin.emma.v1 }
+        document_id: bgv-emma-p22049892-p21559777
+        document: { title: EMMA sample P22049892 / P21559777, source_file: P22049892-P21559777-.pdf }
+        cache_status: hit
+        extraction_status: available
+        docintel_status: { state: available }
+        ready: { download: true, text: true }
+        storage: { backend: local-file, file: ../outcomes/emma/samples/P22049892-P21559777-.pdf }
+        links: { download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22049892-p21559777/download/, text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22049892-p21559777/text/ }
+    - id: prepare_p22049892
+      method: POST
+      path: /api/v1/investor-documents/bgv-emma-p22049892-p21559777/prepare/
+      status: 200
+      body: *lifecycle_p22049892_body
+    - id: text_p22049892
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22049892-p21559777/text/
+      status: 200
+      body: { schema: { name: bondgov.investor_documents.text, version: twin.emma.v1 }, document: { document_id: bgv-emma-p22049892-p21559777, source_file: P22049892-P21559777-.pdf }, extraction_status: available, cache_status: hit, ready: { download: true, text: true }, counts: { pages: 0, sections: 1, tables: 0 }, full_text: "Text extraction placeholder for EMMA sample P22049892 / P21559777.", sections: [{ heading: Sample document, text: "PDF bytes are served by the download endpoint." }], tables: [] }
+    - id: download_p22049892
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22049892-p21559777/download/
+      status: 200
+      headers: { Content-Type: application/pdf, X-BondGov-Request-ID: twin-bondgov-download-p22049892, X-BondGov-Cache-Status: hit, Content-Disposition: 'attachment; filename="P22049892-P21559777-.pdf"' }
+      body-file: ../outcomes/emma/samples/P22049892-P21559777-.pdf
+    - id: lifecycle_p22051190
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/status/
+      status: 200
+      body: &lifecycle_p22051190_body
+        schema: { name: bondgov.investor_documents.lifecycle, version: twin.emma.v1 }
+        document_id: bgv-emma-p22051190-p21560731-p22020081
+        document: { title: EMMA sample P22051190 / P21560731 / P22020081, source_file: P22051190-P21560731-P22020081.pdf }
+        cache_status: hit
+        extraction_status: available
+        docintel_status: { state: available }
+        ready: { download: true, text: true }
+        storage: { backend: local-file, file: ../outcomes/emma/samples/P22051190-P21560731-P22020081.pdf }
+        links: { download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/download/, text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/text/ }
+    - id: prepare_p22051190
+      method: POST
+      path: /api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/prepare/
+      status: 200
+      body: *lifecycle_p22051190_body
+    - id: text_p22051190
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/text/
+      status: 200
+      body: { schema: { name: bondgov.investor_documents.text, version: twin.emma.v1 }, document: { document_id: bgv-emma-p22051190-p21560731-p22020081, source_file: P22051190-P21560731-P22020081.pdf }, extraction_status: available, cache_status: hit, ready: { download: true, text: true }, counts: { pages: 0, sections: 1, tables: 0 }, full_text: "Text extraction placeholder for EMMA sample P22051190 / P21560731 / P22020081.", sections: [{ heading: Sample document, text: "PDF bytes are served by the download endpoint." }], tables: [] }
+    - id: download_p22051190
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051190-p21560731-p22020081/download/
+      status: 200
+      headers: { Content-Type: application/pdf, X-BondGov-Request-ID: twin-bondgov-download-p22051190, X-BondGov-Cache-Status: hit, Content-Disposition: 'attachment; filename="P22051190-P21560731-P22020081.pdf"' }
+      body-file: ../outcomes/emma/samples/P22051190-P21560731-P22020081.pdf
+    - id: lifecycle_p22051230
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/status/
+      status: 200
+      body: &lifecycle_p22051230_body
+        schema: { name: bondgov.investor_documents.lifecycle, version: twin.emma.v1 }
+        document_id: bgv-emma-p22051230-p21560760-p22020113
+        document: { title: EMMA sample P22051230 / P21560760 / P22020113, source_file: P22051230-P21560760-P22020113.pdf }
+        cache_status: hit
+        extraction_status: available
+        docintel_status: { state: available }
+        ready: { download: true, text: true }
+        storage: { backend: local-file, file: ../outcomes/emma/samples/P22051230-P21560760-P22020113.pdf }
+        links: { download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/download/, text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/text/ }
+    - id: prepare_p22051230
+      method: POST
+      path: /api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/prepare/
+      status: 200
+      body: *lifecycle_p22051230_body
+    - id: text_p22051230
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/text/
+      status: 200
+      body: { schema: { name: bondgov.investor_documents.text, version: twin.emma.v1 }, document: { document_id: bgv-emma-p22051230-p21560760-p22020113, source_file: P22051230-P21560760-P22020113.pdf }, extraction_status: available, cache_status: hit, ready: { download: true, text: true }, counts: { pages: 0, sections: 1, tables: 0 }, full_text: "Text extraction placeholder for EMMA sample P22051230 / P21560760 / P22020113.", sections: [{ heading: Sample document, text: "PDF bytes are served by the download endpoint." }], tables: [] }
+    - id: download_p22051230
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051230-p21560760-p22020113/download/
+      status: 200
+      headers: { Content-Type: application/pdf, X-BondGov-Request-ID: twin-bondgov-download-p22051230, X-BondGov-Cache-Status: hit, Content-Disposition: 'attachment; filename="P22051230-P21560760-P22020113.pdf"' }
+      body-file: ../outcomes/emma/samples/P22051230-P21560760-P22020113.pdf
+    - id: lifecycle_p22051233
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/status/
+      status: 200
+      body: &lifecycle_p22051233_body
+        schema: { name: bondgov.investor_documents.lifecycle, version: twin.emma.v1 }
+        document_id: bgv-emma-p22051233-p21560762-p22020115
+        document: { title: EMMA sample P22051233 / P21560762 / P22020115, source_file: P22051233-P21560762-P22020115.pdf }
+        cache_status: hit
+        extraction_status: available
+        docintel_status: { state: available }
+        ready: { download: true, text: true }
+        storage: { backend: local-file, file: ../outcomes/emma/samples/P22051233-P21560762-P22020115.pdf }
+        links: { download: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/download/, text: http://127.0.0.1:8080/api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/text/ }
+    - id: prepare_p22051233
+      method: POST
+      path: /api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/prepare/
+      status: 200
+      body: *lifecycle_p22051233_body
+    - id: text_p22051233
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/text/
+      status: 200
+      body: { schema: { name: bondgov.investor_documents.text, version: twin.emma.v1 }, document: { document_id: bgv-emma-p22051233-p21560762-p22020115, source_file: P22051233-P21560762-P22020115.pdf }, extraction_status: available, cache_status: hit, ready: { download: true, text: true }, counts: { pages: 0, sections: 1, tables: 0 }, full_text: "Text extraction placeholder for EMMA sample P22051233 / P21560762 / P22020115.", sections: [{ heading: Sample document, text: "PDF bytes are served by the download endpoint." }], tables: [] }
+    - id: download_p22051233
+      method: GET
+      path: /api/v1/investor-documents/bgv-emma-p22051233-p21560762-p22020115/download/
+      status: 200
+      headers: { Content-Type: application/pdf, X-BondGov-Request-ID: twin-bondgov-download-p22051233, X-BondGov-Cache-Status: hit, Content-Disposition: 'attachment; filename="P22051233-P21560762-P22020115.pdf"' }
+      body-file: ../outcomes/emma/samples/P22051233-P21560762-P22020115.pdf

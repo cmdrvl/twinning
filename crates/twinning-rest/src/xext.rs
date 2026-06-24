@@ -37,6 +37,7 @@ pub struct ResponseStub {
 pub enum ResponseStubBody {
     Json(JsonValue),
     Text(String),
+    File(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -83,6 +84,8 @@ struct RawResponseStub {
     body: Option<JsonValue>,
     #[serde(default, rename = "body-text", alias = "body_text", alias = "bodyText")]
     body_text: Option<String>,
+    #[serde(default, rename = "body-file", alias = "body_file", alias = "bodyFile")]
+    body_file: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -189,21 +192,36 @@ fn parse_response_stub(raw: RawResponseStub) -> RefusalResult<ResponseStub> {
         })
         .transpose()?;
 
-    let body = match (raw.body, raw.body_text) {
-        (Some(body), None) => ResponseStubBody::Json(body),
-        (None, Some(body)) => ResponseStubBody::Text(body),
-        (None, None) => {
+    let body_count = usize::from(raw.body.is_some())
+        + usize::from(raw.body_text.is_some())
+        + usize::from(raw.body_file.is_some());
+    if body_count == 0 {
+        return Err(Box::new(x_twinning_refusal(
+            "missing_stub_body",
+            format!("response stub `{id}` must declare body, body-text, or body-file"),
+        )));
+    }
+    if body_count > 1 {
+        return Err(Box::new(x_twinning_refusal(
+            "ambiguous_stub_body",
+            format!("response stub `{id}` must declare only one of body, body-text, or body-file"),
+        )));
+    }
+
+    let body = if let Some(body) = raw.body {
+        ResponseStubBody::Json(body)
+    } else if let Some(body) = raw.body_text {
+        ResponseStubBody::Text(body)
+    } else {
+        let body_file = raw.body_file.expect("body_file checked by body_count");
+        let body_file = body_file.trim();
+        if body_file.is_empty() {
             return Err(Box::new(x_twinning_refusal(
-                "missing_stub_body",
-                format!("response stub `{id}` must declare body or body-text"),
+                "empty_stub_body_file",
+                format!("response stub `{id}` body-file must be non-empty"),
             )));
         }
-        (Some(_), Some(_)) => {
-            return Err(Box::new(x_twinning_refusal(
-                "ambiguous_stub_body",
-                format!("response stub `{id}` must not declare both body and body-text"),
-            )));
-        }
+        ResponseStubBody::File(body_file.to_owned())
     };
 
     Ok(ResponseStub {
@@ -382,6 +400,38 @@ paths: {}
             Some(serde_json::json!([{ "idType": "ID_CUSIP", "idValue": "037833100" }]))
         );
         assert!(matches!(stub.body, ResponseStubBody::Json(_)));
+    }
+
+    #[test]
+    fn parse_response_stub_with_file_body() {
+        let raw = r#"
+openapi: 3.0.3
+info: { title: Stubs, version: "1.0" }
+x-twinning:
+  response-stubs:
+    - id: pdf_download
+      method: get
+      path: /documents/signed-id/download
+      status: 200
+      headers:
+        Content-Type: application/pdf
+      body-file: fixtures/sample.pdf
+paths: {}
+"#;
+
+        let document: OpenApiDoc = serde_yaml::from_str(raw).expect("doc parses");
+        let extension = parse_x_twinning(&document)
+            .expect("x-twinning parses")
+            .expect("x-twinning extension");
+
+        let stub = &extension.response_stubs[0];
+        assert_eq!(stub.id, "pdf_download");
+        assert_eq!(stub.method, "GET");
+        assert_eq!(stub.path, "/documents/signed-id/download");
+        assert_eq!(
+            stub.body,
+            ResponseStubBody::File("fixtures/sample.pdf".to_owned())
+        );
     }
 
     #[test]

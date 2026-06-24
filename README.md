@@ -368,9 +368,10 @@ REST response stubs are declared inside the OpenAPI document under
 `x-twinning.response-stubs` and are consumed through the existing
 `twinning rest --spec <FILE>` path. They are deterministic contract fixtures:
 the runtime matches method, mounted path, and optional canonical JSON request
-body equality, then returns the declared status, headers, and JSON/text body
-after auth and chaos checks. They are not generated dummy data, not a live
-provider simulator, and not a separate REST `--seed` mode.
+body equality, then returns the declared status, headers, and JSON, text, or
+file-backed body after auth and chaos checks. File-backed bodies use
+`body-file` and are validated at startup. They are not generated dummy data, not
+a live provider simulator, and not a separate REST `--seed` mode.
 
 Use separate specs or thin spec overlays to model separate API scenarios for the
 same upstream service, such as happy path, no-match, malformed/error, and

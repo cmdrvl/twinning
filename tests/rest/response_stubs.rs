@@ -84,6 +84,60 @@ x-twinning:
     (dir, spec_path)
 }
 
+fn response_stub_file_spec() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempdir().expect("tempdir");
+    let body_path = dir.path().join("sample.pdf");
+    fs::write(&body_path, b"%PDF-1.7\nfixture pdf bytes\n").expect("write body file");
+    let spec_path = dir.path().join("response-stub-file.yaml");
+    fs::write(
+        &spec_path,
+        format!(
+            r##"
+openapi: 3.0.3
+info: {{ title: File response stubs, version: "1.0" }}
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      name: X-TEST-KEY
+      in: header
+paths:
+  /documents/{{id}}/download:
+    get:
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: PDF download.
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+x-twinning:
+  response-stubs:
+    - id: pdf_download_stub
+      method: GET
+      path: /documents/signed-doc-1/download
+      status: 200
+      headers:
+        Content-Type: application/pdf
+        X-Twinning-Stub: pdf_download_stub
+      body-file: {}
+"##,
+            body_path.display()
+        ),
+    )
+    .expect("write spec");
+    (dir, spec_path)
+}
+
 fn openfigi_stub_fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -305,6 +359,55 @@ fn response_stub_unknown_mounted_route_refuses_startup() -> Result<(), Box<dyn s
     assert_eq!(
         rendered["refusal"]["detail"]["reason"],
         "unknown_stub_route"
+    );
+    Ok(())
+}
+
+#[test]
+fn response_stub_file_body_streams_fixture_bytes() {
+    let (_dir, spec_path) = response_stub_file_spec();
+    let server = start_embedded_server(test_config(spec_path)).expect("server starts");
+
+    let response = request(
+        server.addr(),
+        "GET",
+        "/documents/signed-doc-1/download",
+        &[("X-TEST-KEY", "test-token")],
+        "",
+    );
+    assert_eq!(response.status, 200, "body: {}", response.body);
+    assert!(
+        response
+            .headers
+            .to_ascii_lowercase()
+            .contains("content-type: application/pdf"),
+        "headers: {}",
+        response.headers
+    );
+    assert_eq!(response.body, "%PDF-1.7\nfixture pdf bytes\n");
+
+    let session = server.shutdown().expect("shutdown");
+    assert_eq!(session.summary.response_stubs["pdf_download_stub"], 1);
+}
+
+#[test]
+fn response_stub_missing_file_refuses_startup() -> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, spec_path) = response_stub_file_spec();
+    let raw = fs::read_to_string(&spec_path).expect("read spec");
+    fs::write(&spec_path, raw.replace("sample.pdf", "missing-sample.pdf")).expect("rewrite spec");
+
+    let error = match start_embedded_server(test_config(spec_path)) {
+        Ok(server) => {
+            let _ = server.shutdown();
+            return Err(std::io::Error::other("startup should fail").into());
+        }
+        Err(error) => error,
+    };
+    let rendered = serde_json::to_value(error.as_ref()).expect("serialize refusal");
+    assert_eq!(rendered["refusal"]["code"], "E_REST_INVALID_X_TWINNING");
+    assert_eq!(
+        rendered["refusal"]["detail"]["reason"],
+        "missing_stub_body_file"
     );
     Ok(())
 }
