@@ -354,7 +354,7 @@ fn predicate_supports_point_lookup(predicate: &PredicateExpr) -> bool {
 }
 
 fn comparison_supports_point_lookup(comparison: &PredicateComparison) -> bool {
-    comparison.operator == PredicateOperator::Eq && comparison.values.len() == 1
+    matches!(comparison.operator, PredicateOperator::Eq) && comparison.values.len() == 1
 }
 
 fn normalize_update(
@@ -364,7 +364,7 @@ fn normalize_update(
     request: NormalizeRequest<'_>,
 ) -> Result<IrOp, RestRefusal> {
     let object = parse_request_body_object(route, request_resource, request.headers, request.body)?;
-    validate_inline_request_body_schema(route, &object, request.method == Method::Put)?;
+    validate_inline_request_body_schema(route, &object, matches!(request.method, Method::Put))?;
     validate_present_fields_for_request_resource(route, resource, request_resource, &object)?;
     let mode = match request.method {
         Method::Patch => BodyMode::PresentFields,
@@ -2622,6 +2622,45 @@ paths: {}
         value.parse().expect("uri")
     }
 
+    fn fail_test<T>(message: std::fmt::Arguments<'_>) -> T {
+        assert!(std::thread::panicking(), "{message}");
+        std::process::abort();
+    }
+
+    fn expect_mutation(op: IrOp) -> MutationOp {
+        match op {
+            IrOp::Mutation(mutation) => mutation,
+            other => fail_test(format_args!("expected mutation, got {other:?}")),
+        }
+    }
+
+    fn expect_read(op: IrOp) -> ReadOp {
+        match op {
+            IrOp::Read(read) => read,
+            other => fail_test(format_args!("expected read, got {other:?}")),
+        }
+    }
+
+    fn expect_comparison(
+        predicate: Option<PredicateExpr>,
+        expectation: &str,
+    ) -> PredicateComparison {
+        match predicate {
+            Some(PredicateExpr::Comparison(comparison)) => comparison,
+            other => fail_test(format_args!("{expectation}, got {other:?}")),
+        }
+    }
+
+    fn expect_conjunction(
+        predicate: Option<PredicateExpr>,
+        expectation: &str,
+    ) -> Vec<PredicateComparison> {
+        match predicate {
+            Some(PredicateExpr::Conjunction(comparisons)) => comparisons,
+            other => fail_test(format_args!("{expectation}, got {other:?}")),
+        }
+    }
+
     fn form_headers() -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -2650,9 +2689,7 @@ paths: {}
         )
         .expect("normalizes");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.session_id, "rest-1");
         assert_eq!(mutation.table, "files");
         assert_eq!(mutation.kind, MutationKind::Insert);
@@ -2689,9 +2726,7 @@ paths: {}
         )
         .expect("normalizes");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.returning, vec!["id"]);
     }
 
@@ -2778,9 +2813,7 @@ paths: {}
         )
         .expect("normalizes form body");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.session_id, "rest-form");
         assert_eq!(mutation.table, "files");
         assert_eq!(mutation.kind, MutationKind::Insert);
@@ -2861,7 +2894,7 @@ properties:
                 assert!(detail.contains("target resource `files.ratio`"));
                 assert!(detail.contains("divergent request/response field types"));
             }
-            other => panic!("expected unsupported shape, got {other:?}"),
+            other => fail_test(format_args!("expected unsupported shape, got {other:?}")),
         }
     }
 
@@ -2920,7 +2953,7 @@ properties:
                 assert!(detail.contains("target resource `usergroups.users`"));
                 assert!(detail.contains("divergent request/response field types"));
             }
-            other => panic!("expected unsupported shape, got {other:?}"),
+            other => fail_test(format_args!("expected unsupported shape, got {other:?}")),
         }
     }
 
@@ -3013,9 +3046,7 @@ properties:
             )
             .expect("case-only required mismatch should normalize to declared property");
 
-            let IrOp::Mutation(mutation) = op else {
-                panic!("expected mutation");
-            };
+            let mutation = expect_mutation(op);
             assert_eq!(mutation.kind, MutationKind::Insert);
             assert_eq!(mutation.table, "folders");
             assert_eq!(mutation.columns, vec![String::from("Name")]);
@@ -3044,9 +3075,7 @@ properties:
         )
         .expect("child create should materialize parent path fields");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Insert);
         assert_eq!(mutation.table, "faxmedias");
         assert_eq!(mutation.columns, vec!["content_type", "sid", "fax_sid"]);
@@ -3148,9 +3177,7 @@ properties:
         .expect(
             "extra target fields are allowed when request schema permits additional properties",
         );
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.table, "todos");
         assert_eq!(
             mutation.columns,
@@ -3294,15 +3321,11 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::PointLookup);
         assert_eq!(read.table, "files");
         assert_eq!(read.projection, vec!["id", "name", "ratio"]);
-        let Some(PredicateExpr::Comparison(comparison)) = read.predicate else {
-            panic!("expected comparison");
-        };
+        let comparison = expect_comparison(read.predicate, "expected comparison");
         assert_eq!(comparison.column, "id");
         assert_eq!(comparison.operator, PredicateOperator::Eq);
         assert_eq!(comparison.values, vec![ScalarValue::Integer(42)]);
@@ -3325,9 +3348,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.projection, vec!["id", "name", "ratio"]);
     }
 
@@ -3352,14 +3373,10 @@ properties:
         )
         .expect("single FileId path parameter should map to the Id primary key");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::PointLookup);
         assert_eq!(read.table, "fileobjects");
-        let Some(PredicateExpr::Comparison(comparison)) = read.predicate else {
-            panic!("expected pk predicate");
-        };
+        let comparison = expect_comparison(read.predicate, "expected pk predicate");
         assert_eq!(comparison.column, "Id");
         assert_eq!(
             comparison.values,
@@ -3388,9 +3405,7 @@ properties:
         )
         .expect("root singleton should normalize without a path lookup");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
         assert!(read.predicate.is_none());
         assert_eq!(read.limit, Some(1));
@@ -3422,14 +3437,10 @@ properties:
         )
         .expect("matching path parameter should be usable as lookup key");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
         assert_eq!(read.table, "files");
-        let Some(PredicateExpr::Comparison(comparison)) = read.predicate else {
-            panic!("expected comparison");
-        };
+        let comparison = expect_comparison(read.predicate, "expected comparison");
         assert_eq!(comparison.column, "name");
         assert_eq!(
             comparison.values,
@@ -3455,14 +3466,10 @@ properties:
         )
         .expect("identity-like path parameter should map to the sole required field");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
         assert_eq!(read.table, "authentiqids");
-        let Some(PredicateExpr::Comparison(comparison)) = read.predicate else {
-            panic!("expected comparison");
-        };
+        let comparison = expect_comparison(read.predicate, "expected comparison");
         assert_eq!(comparison.column, "sub");
         assert_eq!(
             comparison.values,
@@ -3488,14 +3495,10 @@ properties:
         )
         .expect("identity-like path parameter should map to the sole required field");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Delete);
         assert_eq!(mutation.table, "authentiqids");
-        let Some(PredicateExpr::Comparison(comparison)) = mutation.predicate else {
-            panic!("expected comparison");
-        };
+        let comparison = expect_comparison(mutation.predicate, "expected comparison");
         assert_eq!(comparison.column, "sub");
     }
 
@@ -3517,14 +3520,10 @@ properties:
         )
         .expect("resource-prefixed path parameter should map to the stripped field");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Delete);
         assert_eq!(mutation.table, "queues");
-        let Some(PredicateExpr::Comparison(comparison)) = mutation.predicate else {
-            panic!("expected comparison");
-        };
+        let comparison = expect_comparison(mutation.predicate, "expected comparison");
         assert_eq!(comparison.column, "name");
         assert_eq!(
             comparison.values,
@@ -3550,14 +3549,10 @@ properties:
         )
         .expect("child singleton route should normalize");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
         assert_eq!(read.table, "faxmedias");
-        let Some(PredicateExpr::Conjunction(comparisons)) = read.predicate else {
-            panic!("expected scoped child predicate");
-        };
+        let comparisons = expect_conjunction(read.predicate, "expected scoped child predicate");
         assert_eq!(comparisons.len(), 2);
         assert_eq!(comparisons[0].column, "fax_sid");
         assert_eq!(
@@ -3589,14 +3584,10 @@ properties:
         )
         .expect("child delete route should normalize");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Delete);
         assert_eq!(mutation.table, "faxmedias");
-        let Some(PredicateExpr::Conjunction(comparisons)) = mutation.predicate else {
-            panic!("expected scoped child predicate");
-        };
+        let comparisons = expect_conjunction(mutation.predicate, "expected scoped child predicate");
         assert_eq!(
             comparisons
                 .iter()
@@ -3624,14 +3615,10 @@ properties:
         )
         .expect("child singleton route should use terminal identifier column");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
         assert_eq!(read.table, "issues");
-        let Some(PredicateExpr::Conjunction(comparisons)) = read.predicate else {
-            panic!("expected scoped child predicate");
-        };
+        let comparisons = expect_conjunction(read.predicate, "expected scoped child predicate");
         assert_eq!(comparisons.len(), 3);
         assert_eq!(comparisons[0].column, "number");
         assert_eq!(comparisons[0].values, vec![ScalarValue::Integer(7)]);
@@ -3665,14 +3652,10 @@ properties:
         )
         .expect("ID-like terminal parameter should map to the primary key");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Delete);
         assert_eq!(mutation.table, "deploy-keys");
-        let Some(PredicateExpr::Comparison(comparison)) = mutation.predicate else {
-            panic!("expected pk predicate");
-        };
+        let comparison = expect_comparison(mutation.predicate, "expected pk predicate");
         assert_eq!(comparison.column, "id");
         assert_eq!(comparison.values, vec![ScalarValue::Integer(10)]);
     }
@@ -3715,13 +3698,9 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
-        let Some(PredicateExpr::Comparison(comparison)) = read.predicate else {
-            panic!("expected single comparison");
-        };
+        let comparison = expect_comparison(read.predicate, "expected single comparison");
         assert_eq!(comparison.column, "name");
         assert_eq!(
             comparison.values,
@@ -3804,13 +3783,9 @@ properties:
         )
         .expect("string-capable path params should not fail integer pk coercion");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
-        let Some(PredicateExpr::Comparison(comparison)) = read.predicate else {
-            panic!("expected single comparison");
-        };
+        let comparison = expect_comparison(read.predicate, "expected single comparison");
         assert_eq!(comparison.column, "id");
         assert_eq!(comparison.operator, PredicateOperator::IsNull);
         assert!(comparison.values.is_empty());
@@ -3837,9 +3812,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.table, "files");
         assert_eq!(read.shape, ReadShape::FilteredScan);
     }
@@ -4016,9 +3989,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Read(read) = op else {
-            panic!("expected read");
-        };
+        let read = expect_read(op);
         assert_eq!(read.shape, ReadShape::FilteredScan);
         assert!(read.predicate.is_none());
         assert_eq!(read.limit, None);
@@ -4091,9 +4062,7 @@ properties:
         )
         .expect("declared mutation query params should not block the mutation");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Insert);
     }
 
@@ -4344,9 +4313,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Update);
         assert_eq!(mutation.columns, vec!["name"]);
         assert_eq!(
@@ -4354,9 +4321,7 @@ properties:
             vec![vec![ScalarValue::Text(String::from("beta"))]]
         );
         assert!(mutation.update_columns.is_empty());
-        let Some(PredicateExpr::Comparison(comparison)) = mutation.predicate else {
-            panic!("expected pk predicate");
-        };
+        let comparison = expect_comparison(mutation.predicate, "expected pk predicate");
         assert_eq!(comparison.values, vec![ScalarValue::Integer(3)]);
     }
 
@@ -4377,9 +4342,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(
             mutation.columns,
             vec!["blob", "id", "metadata", "name", "ratio"]
@@ -4419,9 +4382,7 @@ properties:
         )
         .expect("update request schema has no required fields");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Update);
         assert_eq!(mutation.table, "todos");
         assert_eq!(mutation.columns, vec![String::from("completed")]);
@@ -4458,18 +4419,14 @@ properties:
         )
         .expect("inline request schema should not require response-only fields");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Update);
         assert_eq!(mutation.columns, vec![String::from("name")]);
         assert_eq!(
             mutation.rows,
             vec![vec![ScalarValue::Text(String::from("gamma"))]]
         );
-        let Some(PredicateExpr::Comparison(comparison)) = mutation.predicate else {
-            panic!("expected pk predicate");
-        };
+        let comparison = expect_comparison(mutation.predicate, "expected pk predicate");
         assert_eq!(comparison.values, vec![ScalarValue::Integer(4)]);
     }
 
@@ -4524,9 +4481,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Delete);
         assert!(mutation.columns.is_empty());
         assert!(mutation.rows.is_empty());
@@ -4556,9 +4511,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Delete);
         assert_eq!(mutation.returning, vec!["id", "name"]);
     }
@@ -4587,9 +4540,7 @@ properties:
         )
         .expect("normalizes");
 
-        let IrOp::Mutation(mutation) = op else {
-            panic!("expected mutation");
-        };
+        let mutation = expect_mutation(op);
         assert_eq!(mutation.kind, MutationKind::Delete);
         assert!(mutation.returning.is_empty());
     }

@@ -375,7 +375,7 @@ fn rest_server_variable_refusal(name: &str, reason: &str) -> RefusalEnvelope {
 
 fn effective_routing_config(config: &RestConfig, catalog: &RestCatalog) -> RoutingConfig {
     let cli_policy =
-        (config.routing.policy != RoutingPolicy::Auto).then_some(config.routing.policy);
+        (!matches!(config.routing.policy, RoutingPolicy::Auto)).then_some(config.routing.policy);
     let mut routing = resolve_routing_config(
         cli_policy,
         config.routing.base_prefix.clone(),
@@ -684,7 +684,7 @@ fn dispatch_inner(
     };
     let route = path_pattern_string(matched.pattern);
 
-    if state.auth_mode == RestAuthMode::Shape {
+    if matches!(state.auth_mode, RestAuthMode::Shape) {
         match check_auth(
             &matched.entry.required_auth_schemes,
             &state.catalog.security_schemes,
@@ -1408,7 +1408,7 @@ fn write_rest_report_if_requested(
 }
 
 fn security_schemes_bypassed(state: &RestSharedState) -> Vec<String> {
-    if state.auth_mode != RestAuthMode::Bypass {
+    if !matches!(state.auth_mode, RestAuthMode::Bypass) {
         return Vec::new();
     }
 

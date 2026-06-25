@@ -579,7 +579,7 @@ pub fn build_route_table(catalog: &RestCatalog) -> RouteTable {
 }
 
 fn effective_routing_config(catalog: &RestCatalog, config: &RoutingConfig) -> RoutingConfig {
-    let cli_policy = (config.policy != RoutingPolicy::Auto).then_some(config.policy);
+    let cli_policy = (!matches!(config.policy, RoutingPolicy::Auto)).then_some(config.policy);
     let mut routing = resolve_routing_config(
         cli_policy,
         config.base_prefix.clone(),
@@ -1234,7 +1234,7 @@ fn routing_policy_from_evidence(evidence: EvidenceSource, config: &RoutingConfig
         EvidenceSource::FlatCrud | EvidenceSource::Waterfall => RoutingPolicy::FlatCrud,
         EvidenceSource::SchemaFirst => RoutingPolicy::SchemaFirst,
         EvidenceSource::PrefixScoped => RoutingPolicy::PrefixScoped,
-        EvidenceSource::XTwinning if config.policy != RoutingPolicy::Auto => config.policy,
+        EvidenceSource::XTwinning if !matches!(config.policy, RoutingPolicy::Auto) => config.policy,
         EvidenceSource::XTwinning if config.base_prefix.is_some() => RoutingPolicy::PrefixScoped,
         EvidenceSource::XTwinning => RoutingPolicy::Auto,
     }

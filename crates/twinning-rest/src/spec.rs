@@ -564,7 +564,7 @@ pub fn resolve_response_object<'a>(
     response: &'a ResponseObject,
 ) -> &'a ResponseObject {
     let mut current = response;
-    let mut seen = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
 
     for _ in 0..16 {
         let Some(reference) = current.reference.as_deref() else {
@@ -580,7 +580,7 @@ pub fn resolve_response_object<'a>(
         let Some(name) = component_response_name(reference) else {
             return current;
         };
-        if seen.iter().any(|seen_name| seen_name == name) {
+        if seen.iter().any(|seen_name| seen_name.as_str().eq(name)) {
             return current;
         }
         let Some(next) = catalog.component_responses.get(name) else {
@@ -899,7 +899,10 @@ fn build_resource_schema(
     let primary_key = primary_key_for_resource(schema_name, &columns, &required);
     if let Some(primary_key_columns) = &primary_key {
         for column in &mut columns {
-            if primary_key_columns.iter().any(|pk| pk == &column.name) {
+            if primary_key_columns
+                .iter()
+                .any(|pk| pk.as_str().eq(column.name.as_str()))
+            {
                 column.nullable = false;
             }
         }
@@ -1006,7 +1009,7 @@ fn resource_can_use_path_selector(resource: &ResourceSchema, path_param: &str) -
         || resource
             .columns
             .iter()
-            .any(|column| column.name == path_param)
+            .any(|column| column.name.as_str().eq(path_param))
     {
         return false;
     }
@@ -1022,14 +1025,15 @@ fn resource_can_use_path_selector(resource: &ResourceSchema, path_param: &str) -
                 .meta
                 .path_lookup_columns
                 .iter()
-                .any(|hidden| hidden == &column.name)
+                .any(|hidden| hidden.as_str().eq(column.name.as_str()))
         })
         .collect::<Vec<_>>();
     let [column] = public_columns.as_slice() else {
         return false;
     };
 
-    column.normalized_type == "array" && matches!(column.name.as_str(), "data" | "items" | "values")
+    column.normalized_type.as_str().eq("array")
+        && matches!(column.name.as_str(), "data" | "items" | "values")
 }
 
 fn path_param_is_value_selector(path_param: &str) -> bool {
@@ -1099,7 +1103,7 @@ fn path_template_params(path: &str) -> Vec<String> {
 }
 
 fn array_item_resource_name(schema: &SchemaObject) -> Option<String> {
-    if schema_type_string(schema).as_deref() != Some("array") {
+    if !matches!(schema_type_string(schema).as_deref(), Some("array")) {
         return None;
     }
 
@@ -1122,7 +1126,7 @@ enum CircularRefMode {
 }
 
 fn object_map_value_resource_name(schema: &SchemaObject) -> Option<String> {
-    if schema_type_string(schema).as_deref() != Some("object") {
+    if !matches!(schema_type_string(schema).as_deref(), Some("object")) {
         return None;
     }
 
@@ -1213,7 +1217,10 @@ fn resolve_schema_reference(
     }
 
     let target_name = schema_ref_name(reference)?;
-    if ref_stack.iter().any(|seen| seen == &target_name) {
+    if ref_stack
+        .iter()
+        .any(|seen| seen.as_str().eq(target_name.as_str()))
+    {
         return match circular_ref_mode {
             CircularRefMode::Fatal => Err(Box::new(circular_ref_refusal(schema_name, reference))),
             CircularRefMode::Placeholder => Ok(circular_schema_ref_placeholder()),
@@ -1241,7 +1248,7 @@ fn resolve_schema_reference(
 }
 
 fn schema_is_nested_object_ref_boundary(schema: &SchemaObject) -> bool {
-    schema_type_string(schema).as_deref() == Some("object")
+    matches!(schema_type_string(schema).as_deref(), Some("object"))
         || !schema.properties.is_empty()
         || !schema.all_of.is_empty()
         || schema
@@ -1315,7 +1322,10 @@ fn resolve_schema_variant(
     }
 
     let target_name = schema_ref_name(reference)?;
-    if ref_stack.iter().any(|seen| seen == &target_name) {
+    if ref_stack
+        .iter()
+        .any(|seen| seen.as_str().eq(target_name.as_str()))
+    {
         return Ok(circular_schema_ref_placeholder());
     }
     let target = schemas.get(&target_name).ok_or_else(|| {
@@ -1408,7 +1418,7 @@ fn merge_all_of(
             if let Some(existing) = merged.properties.get(&field_name) {
                 let left = declared_type(existing);
                 let right = declared_type(&property);
-                if left != right {
+                if !left.eq(&right) {
                     if let Some(merged_property) =
                         merge_all_of_conflicting_property(existing, &property)
                     {
@@ -1450,7 +1460,7 @@ fn merge_all_of_conflicting_property(
         return Some(merge_polymorphic_property(left, right));
     }
     if all_of_field_types_can_converge_as_integer(left, right) {
-        return if schema_type_string(left).as_deref() == Some("integer") {
+        return if matches!(schema_type_string(left).as_deref(), Some("integer")) {
             Some(left.clone())
         } else {
             Some(right.clone())
@@ -1531,7 +1541,7 @@ fn column_from_schema(
         name: field_name.to_owned(),
         declared_type,
         normalized_type,
-        nullable: !required.iter().any(|field| field == field_name),
+        nullable: !required.iter().any(|field| field.as_str().eq(field_name)),
         format: resolved_property.format,
         warnings,
     })
@@ -1628,7 +1638,10 @@ fn primary_key_for_resource(
 ) -> Option<Vec<String>> {
     let resource_id = format!("{}_id", schema_name.to_ascii_lowercase());
     for candidate in ["id", resource_id.as_str()] {
-        if columns.iter().any(|column| column.name == candidate) {
+        if columns
+            .iter()
+            .any(|column| column.name.as_str().eq(candidate))
+        {
             return Some(vec![candidate.to_owned()]);
         }
     }
@@ -1636,8 +1649,10 @@ fn primary_key_for_resource(
     columns
         .iter()
         .find(|column| {
-            column.format.as_deref() == Some("uuid")
-                && required.iter().any(|field| field == &column.name)
+            matches!(column.format.as_deref(), Some("uuid"))
+                && required
+                    .iter()
+                    .any(|field| field.as_str().eq(column.name.as_str()))
         })
         .map(|column| vec![column.name.clone()])
 }
@@ -1726,7 +1741,8 @@ fn schema_type_string(schema: &SchemaObject) -> Option<String> {
 
 fn schema_with_implicit_object_type(schema: &SchemaObject) -> SchemaObject {
     let mut resolved = schema.clone();
-    if !resolved.properties.is_empty() && schema_type_string(&resolved).as_deref() != Some("object")
+    if !resolved.properties.is_empty()
+        && !matches!(schema_type_string(&resolved).as_deref(), Some("object"))
     {
         resolved.schema_type = Some(JsonValue::String("object".to_owned()));
     }
@@ -1881,7 +1897,7 @@ paths: {}
         let id = resource
             .columns
             .iter()
-            .find(|column| column.name == "id")
+            .find(|column| column.name.as_str().eq("id"))
             .expect("id column");
         assert_eq!(id.normalized_type, "integer");
     }
@@ -2094,7 +2110,7 @@ paths: {}
         let name = folders
             .columns
             .iter()
-            .find(|column| column.name == "Name")
+            .find(|column| column.name.as_str().eq("Name"))
             .expect("Name column");
         assert!(!name.nullable);
     }
@@ -2361,8 +2377,12 @@ paths: {}
             .resources
             .get("emptythings")
             .expect("empty object resource");
-        assert!(empty.warnings.iter().any(|warning| warning.message
-            == "Schema has type object but no properties; resource has zero fields."));
+        assert!(empty.warnings.iter().any(|warning| {
+            warning
+                .message
+                .as_str()
+                .eq("Schema has type object but no properties; resource has zero fields.")
+        }));
 
         for resource_name in ["textresponses", "countresponses"] {
             let resource = catalog
@@ -2453,16 +2473,16 @@ paths: {}
         let created_at = webhook_forks
             .columns
             .iter()
-            .find(|column| column.name == "created_at")
+            .find(|column| column.name.as_str().eq("created_at"))
             .expect("created_at column");
         assert_eq!(created_at.declared_type, "oneOf");
         assert_eq!(created_at.normalized_type, "text");
-        assert!(
-            webhook_forks
-                .warnings
-                .iter()
-                .any(|warning| warning.message == "oneOf is treated as text in REST twin v0.")
-        );
+        assert!(webhook_forks.warnings.iter().any(|warning| {
+            warning
+                .message
+                .as_str()
+                .eq("oneOf is treated as text in REST twin v0.")
+        }));
     }
 
     #[test]
@@ -2519,7 +2539,7 @@ paths: {}
         let language = repositories
             .columns
             .iter()
-            .find(|column| column.name == "language")
+            .find(|column| column.name.as_str().eq("language"))
             .expect("language column");
         assert_eq!(language.declared_type, "oneOf");
         assert_eq!(language.normalized_type, "text");
@@ -2552,7 +2572,7 @@ paths: {}
         let after_id = cards
             .columns
             .iter()
-            .find(|column| column.name == "after_id")
+            .find(|column| column.name.as_str().eq("after_id"))
             .expect("after_id column");
         assert_eq!(after_id.declared_type, "integer");
         assert_eq!(after_id.normalized_type, "integer");
@@ -2710,15 +2730,15 @@ paths:
         let file_column = file_link
             .columns
             .iter()
-            .find(|column| column.name == "file")
+            .find(|column| column.name.as_str().eq("file"))
             .expect("recursive field should be bounded as a column");
         assert_eq!(file_column.normalized_type, "text");
-        assert!(
-            file_link
-                .warnings
-                .iter()
-                .any(|warning| warning.message == "anyOf is treated as text in REST twin v0.")
-        );
+        assert!(file_link.warnings.iter().any(|warning| {
+            warning
+                .message
+                .as_str()
+                .eq("anyOf is treated as text in REST twin v0.")
+        }));
     }
 
     #[test]
@@ -2871,8 +2891,12 @@ paths: {}
             },
         );
 
-        let KernelResult::Mutation(result) = result else {
-            panic!("expected mutation result");
+        let result = match result {
+            KernelResult::Mutation(result) => result,
+            _ => {
+                assert!(std::thread::panicking(), "expected mutation result");
+                std::process::abort();
+            }
         };
         assert_eq!(result.rows_affected, 1);
         assert_eq!(

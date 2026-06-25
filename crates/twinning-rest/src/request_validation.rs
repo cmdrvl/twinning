@@ -899,7 +899,12 @@ paths:
                 assert_eq!(actual_received, received, "refusal={}", json!(refusal));
                 assert_eq!(schema.as_deref(), Some(expected_schema));
             }
-            other => panic!("expected schema validation refusal, got {other:?}"),
+            other => {
+                assert!(
+                    std::thread::panicking(),
+                    "expected schema validation refusal, got {other:?}"
+                );
+            }
         }
     }
 }
