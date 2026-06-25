@@ -13,6 +13,7 @@ pub mod mcp;
 pub mod normalize;
 pub mod policy;
 pub mod report;
+pub mod request_validation;
 pub mod routes;
 pub mod seed;
 pub mod session;
@@ -24,6 +25,6 @@ pub mod xext;
 mod protocol {
     pub(crate) mod rest {
         #[allow(unused_imports)]
-        pub(crate) use crate::{auth, policy, routes, session_log, spec, xext};
+        pub(crate) use crate::{auth, policy, request_validation, routes, session_log, spec, xext};
     }
 }

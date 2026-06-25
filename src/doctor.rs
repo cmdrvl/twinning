@@ -280,7 +280,7 @@ fn capabilities_report() -> CapabilitiesReport {
                 command: "twinning rest --spec <FILE> --json",
                 output: "twinning.rest-report.v0 JSON",
                 read_only: false,
-                description: "Starts an OpenAPI 3.x REST twin. Required input is JSON or YAML; key flags are --run, --serve, --report, --canary, and --port (default 8080). V1 REST twin with adaptive routing (flat-crud, schema-first, prefix-scoped topology), response wrapper detection, remote $ref resolution, and auth shape compliance. Nested paths handled via ResourceTopology. Bypasses auth credential validation in bypass mode (shape mode enforces credential presence).",
+                description: "Starts an OpenAPI 3.x REST twin. Required input is JSON or YAML; key flags are --run, --serve, --report, --canary, and --port (default 8080). V1 REST twin with adaptive routing (flat-crud, schema-first, prefix-scoped topology), response wrapper detection, remote $ref resolution, auth shape compliance, and matched JSON requestBody validation before response stubs/materialization/unsupported_shape. Nested paths handled via ResourceTopology. Bypasses auth credential validation in bypass mode (shape mode enforces credential presence).",
             },
             CommandCapability {
                 command: "twinning mcp --server <COMMAND> --json",
@@ -314,7 +314,7 @@ fn capabilities_report() -> CapabilitiesReport {
             OutputContract {
                 name: "REST session report",
                 version: "twinning.rest-report.v0",
-                description: "REST sessions report spec identity, exercised endpoints, refusals, constraint violations, and optional canary assertions.",
+                description: "REST sessions report spec identity, exercised endpoints, outcome counts, response-stub hits, refusals, constraint violations, and optional canary assertions.",
             },
             OutputContract {
                 name: "MCP session report",

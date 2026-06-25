@@ -443,6 +443,32 @@ fn encode_rest_refusal_payload(refusal: RestRefusal) -> EncodedRestResponse {
                 "detail": detail
             })),
         ),
+        RestRefusal::SchemaValidation {
+            path,
+            detail,
+            expected,
+            received,
+            schema,
+        } => {
+            let mut body = json!({
+                "code": "schema_validation_failed",
+                "detail": detail,
+                "path": path,
+            });
+            if let JsonValue::Object(object) = &mut body {
+                if let Some(expected) = expected {
+                    object.insert(String::from("expected"), JsonValue::String(expected));
+                }
+                if let Some(received) = received {
+                    object.insert(String::from("received"), JsonValue::String(received));
+                }
+                if let Some(schema) = schema {
+                    object.insert(String::from("schema"), JsonValue::String(schema));
+                }
+            }
+
+            EncodedRestResponse::json(StatusCode::UNPROCESSABLE_ENTITY, json_string(&body))
+        }
     }
 }
 
@@ -593,8 +619,11 @@ mod tests {
                 query_params: Vec::new(),
                 required_auth_schemes: Vec::new(),
                 request_body_declared: false,
+                request_body_required: false,
+                request_body_content_types: Vec::new(),
                 request_body_schema_present: false,
                 request_body_schema: None,
+                request_body_json_schema: None,
                 request_schema_ref: None,
                 request_resource_name: None,
                 response_schema_ref: Some(String::from("#/components/schemas/File")),
@@ -1169,6 +1198,24 @@ mod tests {
                 json!({
                     "code": "invalid_json",
                     "detail": "expected value at line 1 column 1"
+                }),
+            ),
+            (
+                RestRefusal::SchemaValidation {
+                    path: String::from("$.edges[0].downstream_key"),
+                    detail: String::from("required field `downstream_key` is missing"),
+                    expected: Some(String::from("present field")),
+                    received: Some(String::from("missing")),
+                    schema: Some(String::from("#/components/schemas/BulkLineageRequest")),
+                },
+                StatusCode::UNPROCESSABLE_ENTITY,
+                json!({
+                    "code": "schema_validation_failed",
+                    "detail": "required field `downstream_key` is missing",
+                    "path": "$.edges[0].downstream_key",
+                    "expected": "present field",
+                    "received": "missing",
+                    "schema": "#/components/schemas/BulkLineageRequest"
                 }),
             ),
         ];

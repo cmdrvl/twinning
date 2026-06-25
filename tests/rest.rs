@@ -13,5 +13,8 @@ mod chaos;
 #[path = "rest/response_stubs.rs"]
 mod response_stubs;
 
+#[path = "rest/request_validation.rs"]
+mod request_validation;
+
 #[path = "rest/openfigi_v2_v3.rs"]
 mod openfigi_v2_v3;

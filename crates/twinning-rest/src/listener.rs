@@ -52,7 +52,10 @@ use super::{
     normalize::{IrOp, NormalizeRequest, RestRefusal, normalize_request},
     policy::{RoutingConfig, RoutingPolicy, resolve_routing_config},
     report::RoutingReport,
-    routes::{Method, PathPattern, PathSegment, RouteTable, build_route_registry, match_route},
+    request_validation::{RequestValidationOutcome, validate_json_request_body},
+    routes::{
+        Method, PathPattern, PathSegment, RouteKind, RouteTable, build_route_registry, match_route,
+    },
     seed::seed_from_spec,
     session::RestSessionIds,
     session_log::{RestRequestLog, RestSessionLog, RestSessionSummary, constraint_violation_kind},
@@ -96,6 +99,7 @@ pub struct RestServerSession {
 struct DispatchOutcome {
     response: Response,
     route: String,
+    outcome: String,
     response_stub: Option<String>,
     refusal: Option<String>,
     constraint_violation: Option<String>,
@@ -620,6 +624,7 @@ async fn dispatch(
             path: uri.path().to_owned(),
             route: outcome.route,
             status: status.as_u16(),
+            outcome: outcome.outcome,
             duration_ms,
             response_stub: outcome.response_stub,
             constraint_violation: outcome.constraint_violation,
@@ -655,11 +660,12 @@ fn dispatch_inner(
     }
 
     let Some(method) = rest_method(&http_method) else {
-        return DispatchOutcome::rest_error(
+        return DispatchOutcome::rest_error_with_outcome(
             StatusCode::METHOD_NOT_ALLOWED,
             "unmatched",
             "method_not_allowed",
             json!({ "code": "method_not_allowed", "method": http_method.as_str() }),
+            "unmatched",
         );
     };
 
@@ -668,11 +674,12 @@ fn dispatch_inner(
         if !allowed_methods.is_empty() {
             return DispatchOutcome::method_not_allowed(&http_method, allowed_methods);
         }
-        return DispatchOutcome::rest_error(
+        return DispatchOutcome::rest_error_with_outcome(
             StatusCode::NOT_FOUND,
             "unmatched",
             "not_found",
             json!({ "code": "not_found", "detail": "route not found" }),
+            "unmatched",
         );
     };
     let route = path_pattern_string(matched.pattern);
@@ -700,13 +707,42 @@ fn dispatch_inner(
         return outcome;
     }
 
+    let session_id = state.session_ids.next_session_id();
+    let validation =
+        if should_prevalidate_request(&state.catalog, matched.entry, method, uri.path()) {
+            match validate_json_request_body(&state.catalog, matched.entry, &headers, body.as_ref())
+            {
+                Ok(validation) => validation,
+                Err(refusal) => {
+                    let code = rest_refusal_code(&refusal).to_owned();
+                    let outcome = rest_refusal_outcome(&refusal).to_owned();
+                    let constraint_violation = constraint_violation_kind(&code).map(str::to_owned);
+                    return DispatchOutcome {
+                        response: encode_rest_refusal(refusal, &session_id),
+                        route,
+                        outcome,
+                        response_stub: None,
+                        refusal: Some(code),
+                        constraint_violation,
+                    };
+                }
+            }
+        } else {
+            RequestValidationOutcome::NotDeclared
+        };
+
     if let Some(outcome) =
         maybe_response_stub(&state.catalog, method, uri.path(), body.as_ref(), &route)
     {
         return outcome;
     }
 
-    let session_id = state.session_ids.next_session_id();
+    if validation.request_valid()
+        && let RouteKind::Refusal { detail } = &matched.entry.kind
+    {
+        return DispatchOutcome::valid_unsupported(&route, detail, validation.schema());
+    }
+
     let normalized = normalize_request(
         &state.catalog,
         matched.entry,
@@ -728,6 +764,7 @@ fn dispatch_inner(
             return DispatchOutcome {
                 response: encode_rest_refusal(refusal, &session_id),
                 route,
+                outcome: String::from("rest_refusal"),
                 response_stub: None,
                 refusal: Some(code),
                 constraint_violation,
@@ -738,11 +775,12 @@ fn dispatch_inner(
     let mut backend = match state.backend.lock() {
         Ok(backend) => backend,
         Err(_) => {
-            return DispatchOutcome::rest_error(
+            return DispatchOutcome::rest_error_with_outcome(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &route,
                 "kernel_error",
                 json!({ "code": "kernel_error", "detail": "REST backend lock is poisoned" }),
+                "kernel_refusal",
             );
         }
     };
@@ -771,6 +809,11 @@ fn dispatch_inner(
     DispatchOutcome {
         response: encode(result, matched.entry, &session_id),
         route,
+        outcome: if refusal.is_some() {
+            String::from("kernel_refusal")
+        } else {
+            String::from("materialized_kernel")
+        },
         response_stub: None,
         refusal,
         constraint_violation,
@@ -779,9 +822,20 @@ fn dispatch_inner(
 
 impl DispatchOutcome {
     fn rest_error(status: StatusCode, route: &str, refusal: &str, body: serde_json::Value) -> Self {
+        Self::rest_error_with_outcome(status, route, refusal, body, "rest_refusal")
+    }
+
+    fn rest_error_with_outcome(
+        status: StatusCode,
+        route: &str,
+        refusal: &str,
+        body: serde_json::Value,
+        outcome: &str,
+    ) -> Self {
         Self {
             response: json_response(status, body),
             route: route.to_owned(),
+            outcome: outcome.to_owned(),
             response_stub: None,
             refusal: Some(refusal.to_owned()),
             constraint_violation: constraint_violation_kind(refusal).map(str::to_owned),
@@ -805,6 +859,7 @@ impl DispatchOutcome {
                 &allow_header,
             ),
             route: String::from("unmatched"),
+            outcome: String::from("unmatched"),
             response_stub: None,
             refusal: Some(String::from("method_not_allowed")),
             constraint_violation: constraint_violation_kind("method_not_allowed")
@@ -845,8 +900,34 @@ impl DispatchOutcome {
                 challenge.as_deref(),
             ),
             route: route.to_owned(),
+            outcome: String::from("auth_refusal"),
             response_stub: None,
             refusal: Some(String::from("unauthorized")),
+            constraint_violation: None,
+        }
+    }
+
+    fn valid_unsupported(route: &str, detail: &str, schema: Option<&str>) -> Self {
+        let mut body = json!({
+            "code": "unsupported_shape",
+            "detail": detail,
+            "request_valid": true,
+        });
+        if let serde_json::Value::Object(object) = &mut body
+            && let Some(schema) = schema
+        {
+            object.insert(
+                String::from("request_schema"),
+                serde_json::Value::String(schema.to_owned()),
+            );
+        }
+
+        Self {
+            response: json_response(StatusCode::NOT_IMPLEMENTED, body),
+            route: route.to_owned(),
+            outcome: String::from("valid_unsupported"),
+            response_stub: None,
+            refusal: Some(String::from("unsupported_shape")),
             constraint_violation: None,
         }
     }
@@ -862,6 +943,7 @@ impl DispatchOutcome {
                 "1",
             ),
             route: route.to_owned(),
+            outcome: String::from("chaos"),
             response_stub: None,
             refusal: Some(String::from("rate_limited")),
             constraint_violation: None,
@@ -878,6 +960,7 @@ impl DispatchOutcome {
                 }),
             ),
             route: route.to_owned(),
+            outcome: String::from("chaos"),
             response_stub: None,
             refusal: Some(String::from("internal_error")),
             constraint_violation: None,
@@ -892,6 +975,7 @@ impl DispatchOutcome {
                 .body(Body::empty())
                 .expect("static REST timeout response"),
             route: route.to_owned(),
+            outcome: String::from("chaos"),
             response_stub: None,
             refusal: Some(String::from("timeout")),
             constraint_violation: None,
@@ -918,6 +1002,27 @@ fn maybe_inject_chaos(state: &RestSharedState, route: &str) -> Option<DispatchOu
     None
 }
 
+fn should_prevalidate_request(
+    catalog: &RestCatalog,
+    route: &super::routes::RouteEntry,
+    method: Method,
+    path: &str,
+) -> bool {
+    matches!(route.kind, RouteKind::Refusal { .. })
+        || response_stub_candidate_exists(catalog, method, path)
+}
+
+fn response_stub_candidate_exists(catalog: &RestCatalog, method: Method, path: &str) -> bool {
+    let Some(extension) = catalog.x_twinning.as_ref() else {
+        return false;
+    };
+    let method = method.as_str();
+    extension
+        .response_stubs
+        .iter()
+        .any(|stub| stub.method == method && stub.path == path)
+}
+
 fn maybe_response_stub(
     catalog: &RestCatalog,
     method: Method,
@@ -938,6 +1043,7 @@ fn maybe_response_stub(
         return Some(DispatchOutcome {
             response: response_from_stub(stub),
             route: route.to_owned(),
+            outcome: String::from("response_stub"),
             response_stub: Some(stub.id.clone()),
             refusal: None,
             constraint_violation: None,
@@ -1114,6 +1220,14 @@ fn rest_refusal_code(refusal: &RestRefusal) -> &'static str {
         RestRefusal::UndeclaredQueryParam { .. } => "undeclared_query_param",
         RestRefusal::UnsupportedMediaType { .. } => "unsupported_media_type",
         RestRefusal::InvalidJson { .. } => "invalid_json",
+        RestRefusal::SchemaValidation { .. } => "schema_validation_failed",
+    }
+}
+
+fn rest_refusal_outcome(refusal: &RestRefusal) -> &'static str {
+    match refusal {
+        RestRefusal::SchemaValidation { .. } => "schema_validation_refusal",
+        _ => "rest_refusal",
     }
 }
 
@@ -1870,6 +1984,7 @@ paths:
                 path: String::from("/files"),
                 route: String::from("/files"),
                 status: 201,
+                outcome: String::from("materialized_kernel"),
                 duration_ms: 4,
                 response_stub: None,
                 constraint_violation: None,

@@ -212,8 +212,11 @@ pub struct RouteEntry {
     pub query_params: Vec<QueryParamSpec>,
     pub required_auth_schemes: Vec<String>,
     pub request_body_declared: bool,
+    pub request_body_required: bool,
+    pub request_body_content_types: Vec<String>,
     pub request_body_schema_present: bool,
     pub request_body_schema: Option<SchemaObject>,
+    pub request_body_json_schema: Option<SchemaObject>,
     pub request_schema_ref: Option<String>,
     pub request_resource_name: Option<String>,
     pub response_schema_ref: Option<String>,
@@ -626,7 +629,17 @@ fn route_entry(
         .map(|param| param.name.clone())
         .collect::<Vec<_>>();
     let auth_schemes = required_auth_schemes(context.catalog, operation);
+    let resolved_request_body = resolved_request_body(context.catalog, operation);
     let request_body_declared = operation.request_body.is_some();
+    let request_body_required = resolved_request_body
+        .and_then(|request_body| request_body.required)
+        .unwrap_or(false);
+    let request_body_content_types = resolved_request_body
+        .map(request_body_content_types)
+        .unwrap_or_default();
+    let request_body_json_schema = resolved_request_body
+        .and_then(request_body_json_schema)
+        .cloned();
     let request_body_schema = request_body_schema(context.catalog, operation).cloned();
     let request_body_schema_present = request_body_schema.is_some();
     let request_schema_ref = request_body_schema.as_ref().and_then(schema_ref);
@@ -651,8 +664,11 @@ fn route_entry(
         query_params: query_params.clone(),
         required_auth_schemes: auth_schemes.clone(),
         request_body_declared,
+        request_body_required,
+        request_body_content_types: request_body_content_types.clone(),
         request_body_schema_present,
         request_body_schema: request_body_schema.clone(),
+        request_body_json_schema: request_body_json_schema.clone(),
         request_schema_ref: request_schema_ref.clone(),
         request_resource_name: request_resource_name.clone(),
         response_schema_ref: response_schema_ref.clone(),
@@ -770,8 +786,11 @@ fn route_entry(
             query_params,
             required_auth_schemes: auth_schemes,
             request_body_declared,
+            request_body_required,
+            request_body_content_types,
             request_body_schema_present,
             request_body_schema,
+            request_body_json_schema,
             request_schema_ref,
             request_resource_name,
             response_schema_ref,
@@ -5731,6 +5750,12 @@ paths:
             create.request_schema_ref.as_deref(),
             Some("#/components/schemas/NewTodo")
         );
+        assert!(!create.request_body_required);
+        assert_eq!(
+            create.request_body_content_types,
+            vec![String::from("application/json")]
+        );
+        assert!(create.request_body_json_schema.is_some());
         assert_eq!(create.request_resource_name.as_deref(), Some("newtodos"));
 
         let update = route(&registry, Method::Put, "/todos/{id}");
@@ -5738,6 +5763,12 @@ paths:
             update.request_schema_ref.as_deref(),
             Some("#/components/schemas/TodoPatch")
         );
+        assert!(!update.request_body_required);
+        assert_eq!(
+            update.request_body_content_types,
+            vec![String::from("application/json")]
+        );
+        assert!(update.request_body_json_schema.is_some());
         assert_eq!(update.request_resource_name.as_deref(), Some("todopatchs"));
     }
 

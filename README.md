@@ -369,9 +369,19 @@ REST response stubs are declared inside the OpenAPI document under
 `twinning rest --spec <FILE>` path. They are deterministic contract fixtures:
 the runtime matches method, mounted path, and optional canonical JSON request
 body equality, then returns the declared status, headers, and JSON, text, or
-file-backed body after auth and chaos checks. File-backed bodies use
-`body-file` and are validated at startup. They are not generated dummy data, not
-a live provider simulator, and not a separate REST `--seed` mode.
+file-backed body after auth, chaos, and matched request-body validation checks.
+File-backed bodies use `body-file` and are validated at startup. They are not
+generated dummy data, not a live provider simulator, and not a separate REST
+`--seed` mode.
+
+For matched JSON routes, the REST twin validates the declared OpenAPI
+`requestBody.content.application/json.schema` before response stubs,
+materialization, or `unsupported_shape` route refusal. Schema failures return
+deterministic request paths such as `$.edges[0].downstream_key`; malformed JSON
+and unsupported content types keep their existing refusal mappings. If a valid
+request reaches a non-materialized route, `request_valid: true` only means the
+request matched the declared request schema. It does not mean side effects were
+modeled or persisted.
 
 Use separate specs or thin spec overlays to model separate API scenarios for the
 same upstream service, such as happy path, no-match, malformed/error, and

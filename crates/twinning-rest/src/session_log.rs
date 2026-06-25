@@ -16,6 +16,7 @@ pub struct RestRequestLog {
     pub path: String,
     pub route: String,
     pub status: u16,
+    pub outcome: String,
     pub duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_stub: Option<String>,
@@ -32,6 +33,8 @@ pub struct RestSessionSummary {
     pub endpoints_not_exercised: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub response_stubs: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub outcomes: BTreeMap<String, u64>,
     pub constraint_violations: BTreeMap<String, u64>,
     pub refusals: BTreeMap<String, u64>,
 }
@@ -59,6 +62,7 @@ impl RestSessionLog {
                     .iter()
                     .filter_map(|request| request.response_stub.as_deref()),
             ),
+            outcomes: count_by(self.requests.iter().map(|request| request.outcome.as_str())),
             constraint_violations: count_by(
                 self.requests
                     .iter()
@@ -104,6 +108,7 @@ mod tests {
             path: String::from("/files"),
             route: String::from("/files"),
             status: 201,
+            outcome: String::from("response_stub"),
             duration_ms: 1,
             response_stub: Some(String::from("create_file")),
             constraint_violation: None,
@@ -114,6 +119,7 @@ mod tests {
             path: String::from("/files/1"),
             route: String::from("/files/{id}"),
             status: 404,
+            outcome: String::from("kernel_refusal"),
             duration_ms: 1,
             response_stub: None,
             constraint_violation: Some(String::from("type_coercion")),
@@ -133,6 +139,8 @@ mod tests {
         );
         assert_eq!(summary.endpoints_not_exercised, vec!["DELETE /files/{id}"]);
         assert_eq!(summary.response_stubs["create_file"], 1);
+        assert_eq!(summary.outcomes["response_stub"], 1);
+        assert_eq!(summary.outcomes["kernel_refusal"], 1);
         assert_eq!(summary.refusals["not_found"], 1);
         assert_eq!(summary.constraint_violations["type_coercion"], 1);
     }

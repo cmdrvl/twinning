@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: Metadata lineage bulk fixture
+  version: 1.0.0
+components:
+  schemas:
+    BulkLineageRequest:
+      type: object
+      required:
+        - edges
+      additionalProperties: false
+      properties:
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/LineageEdge"
+    LineageEdge:
+      type: object
+      required:
+        - upstream_key
+        - downstream_key
+      additionalProperties: false
+      properties:
+        upstream_key:
+          type: string
+        downstream_key:
+          type: string
+        source:
+          type: string
+          enum:
+            - sql_lineage
+            - manual
+        confidence:
+          nullable: true
+          type: number
+    BulkResponse:
+      type: object
+      required:
+        - created
+        - errors
+        - results
+        - total
+      additionalProperties: false
+      properties:
+        created:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+        results:
+          type: array
+          items:
+            type: object
+        total:
+          type: integer
+paths:
+  /metadata-api/v2/lineage/bulk:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkLineageRequest"
+      responses:
+        "200":
+          description: Bulk lineage mutation response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkResponse"
+  /metadata-api/v2/lineage/optional:
+    post:
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkLineageRequest"
+      responses:
+        "200":
+          description: Optional bulk lineage mutation response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkResponse"
+x-twinning:
+  response-stubs:
+    - id: lineage_bulk_ok
+      method: POST
+      path: /metadata-api/v2/lineage/bulk
+      when:
+        body-json-equals:
+          edges:
+            - upstream_key: table://warehouse.raw/orders
+              downstream_key: table://warehouse.mart/orders
+              source: sql_lineage
+              confidence: null
+      status: 202
+      body:
+        request_valid: true
+        stubbed: true
+    - id: invalid_edges_should_not_match
+      method: POST
+      path: /metadata-api/v2/lineage/bulk
+      when:
+        body-json-equals:
+          edges: not-array
+      status: 202
+      body:
+        stubbed: invalid

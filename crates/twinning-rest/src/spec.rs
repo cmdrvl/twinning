@@ -273,6 +273,8 @@ pub struct SchemaObject {
     #[serde(default)]
     pub required: Vec<String>,
     #[serde(default)]
+    pub nullable: bool,
+    #[serde(default)]
     pub all_of: Vec<SchemaObject>,
     #[serde(default)]
     pub one_of: Vec<SchemaObject>,

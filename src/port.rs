@@ -436,6 +436,11 @@ mod tests {
             path: route.replace("{id}", "1"),
             route: route.to_owned(),
             status,
+            outcome: if refusal.is_some() {
+                String::from("rest_refusal")
+            } else {
+                String::from("materialized_kernel")
+            },
             duration_ms: 1,
             response_stub: None,
             constraint_violation: None,
