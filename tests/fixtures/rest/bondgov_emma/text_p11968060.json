@@ -1,0 +1,1097 @@
+{
+  "cache_status": "hit",
+  "counts": {
+    "pages": 27,
+    "sections": 4,
+    "tables": 22
+  },
+  "docintel_status": {
+    "engine": "pymupdf.find_tables",
+    "state": "available",
+    "table_hash_algorithm": "blake3"
+  },
+  "document": {
+    "category": "continuing_disclosure",
+    "document_id": "bgv-emma-p11968060-p11501443",
+    "fiscal_year": "2025",
+    "issuer": "SEATAC Fuel Facilities LLC",
+    "source_file": "P11968060-P11501443-.pdf"
+  },
+  "extraction_status": "available",
+  "facts": [
+    {
+      "evidence": {
+        "cell_hash": "blake3:7e15195db2924df7550afb3b4d2a0a834acf766a232b5fd614b283629fd83f1b",
+        "column_index": 1,
+        "header_path": [
+          "Balance Sheets - Assets",
+          "2025",
+          "Cash"
+        ],
+        "page": 6,
+        "row_index": 2,
+        "table_hash": "blake3:a177b53507dee8e1056ac4f3b957f85ee0d3d822838246729eabd51ce4af9fc3",
+        "table_id": "table:0001"
+      },
+      "fact_key": "cash",
+      "fiscal_year": "2025",
+      "label": "Cash",
+      "normalized_decimal": "7716941",
+      "raw": "$ 7,716,941",
+      "statement": "Balance Sheets - Assets"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:cfdbc65720110fbe2867197b4e87465f20f8f1ff43b4b7cfbf08efb208081703",
+        "column_index": 1,
+        "header_path": [
+          "Balance Sheets - Assets",
+          "2025",
+          "Total current assets"
+        ],
+        "page": 6,
+        "row_index": 6,
+        "table_hash": "blake3:a177b53507dee8e1056ac4f3b957f85ee0d3d822838246729eabd51ce4af9fc3",
+        "table_id": "table:0001"
+      },
+      "fact_key": "total_current_assets",
+      "fiscal_year": "2025",
+      "label": "Total current assets",
+      "normalized_decimal": "9037921",
+      "raw": "9,037,921",
+      "statement": "Balance Sheets - Assets"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:22a2c6e1f136a3137a131dd78ac47af8a86b2487e3501c29667e88f2752ca6b1",
+        "column_index": 1,
+        "header_path": [
+          "Balance Sheets - Assets",
+          "2025",
+          "Total assets"
+        ],
+        "page": 6,
+        "row_index": 17,
+        "table_hash": "blake3:a177b53507dee8e1056ac4f3b957f85ee0d3d822838246729eabd51ce4af9fc3",
+        "table_id": "table:0001"
+      },
+      "fact_key": "total_assets",
+      "fiscal_year": "2025",
+      "label": "Total assets",
+      "normalized_decimal": "70217138",
+      "raw": "$ 70,217,138",
+      "statement": "Balance Sheets - Assets"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:5cc747ac01497e5543021fff1e9b7a188e05f831b2f31dab0eacba9764d4cc46",
+        "column_index": 1,
+        "header_path": [
+          "Balance Sheets - Liabilities and Members' Equity",
+          "2025",
+          "Total liabilities"
+        ],
+        "page": 7,
+        "row_index": 22,
+        "table_hash": "blake3:2f84087f4fd48061d4250269f96d692a9527d03cf504e2499114b03b41351db3",
+        "table_id": "table:0002"
+      },
+      "fact_key": "total_liabilities",
+      "fiscal_year": "2025",
+      "label": "Total liabilities",
+      "normalized_decimal": "69980374",
+      "raw": "69,980,374",
+      "statement": "Balance Sheets - Liabilities and Members' Equity"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:a2a06264a0d515e2976f161a565f14bb1d2aedb9a6ab51d642ae72bc8e888cea",
+        "column_index": 1,
+        "header_path": [
+          "Balance Sheets - Liabilities and Members' Equity",
+          "2025",
+          "Total members' equity"
+        ],
+        "page": 7,
+        "row_index": 30,
+        "table_hash": "blake3:2f84087f4fd48061d4250269f96d692a9527d03cf504e2499114b03b41351db3",
+        "table_id": "table:0002"
+      },
+      "fact_key": "total_members_equity",
+      "fiscal_year": "2025",
+      "label": "Total members' equity",
+      "normalized_decimal": "236764",
+      "raw": "236,764",
+      "statement": "Balance Sheets - Liabilities and Members' Equity"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:7c0eb32b28562c93c27863187c1b2b57bcbaf03a64ff8bda059b4150dde74939",
+        "column_index": 1,
+        "header_path": [
+          "Balance Sheets - Liabilities and Members' Equity",
+          "2025",
+          "Total liabilities and members' equity"
+        ],
+        "page": 7,
+        "row_index": 32,
+        "table_hash": "blake3:2f84087f4fd48061d4250269f96d692a9527d03cf504e2499114b03b41351db3",
+        "table_id": "table:0002"
+      },
+      "fact_key": "total_liabilities_and_members_equity",
+      "fiscal_year": "2025",
+      "label": "Total liabilities and members' equity",
+      "normalized_decimal": "70217138",
+      "raw": "$ 70,217,138",
+      "statement": "Balance Sheets - Liabilities and Members' Equity"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:714a43de7fef2ae457c2b8dcf718bacb3c022e146c8edb4b6ba0dab8064f9c40",
+        "column_index": 1,
+        "header_path": [
+          "Statements of Income",
+          "2025",
+          "Total revenues"
+        ],
+        "page": 8,
+        "row_index": 4,
+        "table_hash": "blake3:113b61a63e0c89ac28c38c1790a6b8cbddff104dc29e0e25c2eb747dd4f325ce",
+        "table_id": "table:0003"
+      },
+      "fact_key": "total_revenues",
+      "fiscal_year": "2025",
+      "label": "Total revenues",
+      "normalized_decimal": "17073181",
+      "raw": "17,073,181",
+      "statement": "Statements of Income"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:597a874e62a9c3344e95d880f04ae9da181bf1d7e0ad2826c97cab95bae2a52a",
+        "column_index": 1,
+        "header_path": [
+          "Statements of Income",
+          "2025",
+          "Total operating expenses"
+        ],
+        "page": 8,
+        "row_index": 19,
+        "table_hash": "blake3:113b61a63e0c89ac28c38c1790a6b8cbddff104dc29e0e25c2eb747dd4f325ce",
+        "table_id": "table:0003"
+      },
+      "fact_key": "total_operating_expenses",
+      "fiscal_year": "2025",
+      "label": "Total operating expenses",
+      "normalized_decimal": "16953723",
+      "raw": "16,953,723",
+      "statement": "Statements of Income"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:671bf461c363fe437d4b8c66fb6d7f05c10bb51f02d1ed50ae4afce41af112f2",
+        "column_index": 1,
+        "header_path": [
+          "Statements of Income",
+          "2025",
+          "Net income"
+        ],
+        "page": 8,
+        "row_index": 35,
+        "table_hash": "blake3:113b61a63e0c89ac28c38c1790a6b8cbddff104dc29e0e25c2eb747dd4f325ce",
+        "table_id": "table:0003"
+      },
+      "fact_key": "net_income",
+      "fiscal_year": "2025",
+      "label": "Net income",
+      "normalized_decimal": "127031",
+      "raw": "$ 127,031",
+      "statement": "Statements of Income"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:2938712a9a4e42d936513b678a5eca67d5a3c2bea145fecb3e98352ebf73343a",
+        "column_index": 1,
+        "header_path": [
+          "Statements of Cash Flows",
+          "2025",
+          "Net cash provided by operating activities"
+        ],
+        "page": 10,
+        "row_index": 17,
+        "table_hash": "blake3:ca65eb05d901afff7671e4710331ab0b6ee41068314a9259bbdec75075469626",
+        "table_id": "table:0005"
+      },
+      "fact_key": "net_cash_provided_by_operating_activities",
+      "fiscal_year": "2025",
+      "label": "Net cash provided by operating activities",
+      "normalized_decimal": "3637973",
+      "raw": "3,637,973",
+      "statement": "Statements of Cash Flows"
+    },
+    {
+      "evidence": {
+        "cell_hash": "blake3:598f2592712c23af2c6c9ed22168cf91d6f29273276f9f9cb196ef27146babd3",
+        "column_index": 1,
+        "header_path": [
+          "Statements of Cash Flows",
+          "2025",
+          "Cash and restricted cash, end of year"
+        ],
+        "page": 10,
+        "row_index": 38,
+        "table_hash": "blake3:ca65eb05d901afff7671e4710331ab0b6ee41068314a9259bbdec75075469626",
+        "table_id": "table:0005"
+      },
+      "fact_key": "cash_and_restricted_cash_end_of_year",
+      "fiscal_year": "2025",
+      "label": "Cash and restricted cash, end of year",
+      "normalized_decimal": "8835879",
+      "raw": "$ 8,835,879",
+      "statement": "Statements of Cash Flows"
+    }
+  ],
+  "full_text": "SEATAC Fuel Facilities LLC\n2025 Audited Financial Statements\n\n## Balance Sheets (page 6, table:0001)\n  2025 | 2024\n  Current assets\n  Cash | $ 7,716,941 | $ 4,870,089\n  Accounts receivable, net | 1,026,651 | 2,750,646\n  Prepaid expenses and other current assets | 294,329 | 1,039,437\n  Total current assets | 9,037,921 | 8,660,172\n  Property and equipment, net | 7,015,261 | 7,363,946\n  Other assets\n  Operating lease right-of-use assets | 52,175,955 | 57,463,162\n  Security deposits | 869,063 | 1,337,199\n  Restricted cash | 1,118,938 | 1,837,189\n  Total other assets | 54,163,956 | 60,637,550\n  Total assets | $ 70,217,138 | $ 76,661,668\n\n## Balance Sheets (page 7, table:0002)\n  2025 | 2024\n  Current liabilities\n  Current portion of notes payable members | $ 1,397,213 | $ 1,346,263\n  Current portion of operating lease liabilities | 5,793,320 | 6,553,390\n  Accounts payable and accrued expenses | 827,434 | 1,809,504\n  Deferred revenue | 775,954 | 1,172,326\n  Advance billings | 3,542,502 | 1,152,664\n  Due to members | 927,985 | 2,190,355\n  Due to nonmembers | 22,369 | -\n  Total current liabilities | 13,286,777 | 14,224,502\n  Long-term liabilities\n  Notes payable members, net of current portion | 6,041,583 | 7,398,854\n  Operating lease liabilities, net of current portion | 42,449,103 | 48,242,424\n  Deferred revenue, lease | 3,933,532 | 2,667,348\n  Funds provided for Port of Seattle construction | 261,492 | 261,492\n  Deferred tax liability | 73,000 | 32,000\n  Reserve funds | 3,934,887 | 3,727,315\n  Total long-term liabilities | 56,693,597 | 62,329,433\n  Total liabilities | 69,980,374 | 76,553,935\n  Commitments and contingencies\n  Members' equity\n  Contributed capital | 45,000 | 43,000\n  Retained earnings | 191,764 | 64,733\n  Total members' equity | 236,764 | 107,733\n  Total liabilities and members' equity | $ 70,217,138 | $ 76,661,668\n\n## Statements of Income (page 8, table:0003)\n  2025 | 2024\n  Revenues\n  Member revenues | $ 10,623,224 | $ 9,793,082\n  Nonmember revenues | 6,449,957 | 6,582,200\n  Total revenues | 17,073,181 | 16,375,282\n  Operating expenses\n  Depreciation and amortization | 1,217,833 | 1,199,605\n  Environmental costs | 249,454 | 249,741\n  General and administrative | 1,194,848 | 1,454,154\n  Insurance | 483,048 | 433,712\n  Lease expense, net | 8,155,817 | 7,479,878\n  Management fees | 204,000 | 187,333\n  Operator salaries and fringe | 2,697,302 | 2,313,598\n  Outside services | 371,151 | 419,650\n  Professional fees | 242,516 | 388,850\n  Repairs and maintenance | 653,866 | 681,998\n  Taxes and licenses | 1,483,888 | 1,434,064\n  Total operating expenses | 16,953,723 | 16,242,583\n  Income from operations | 119,458 | 132,699\n  Other (income) expense\n  Interest expense | 377,988 | 475,337\n  New member entry fees | (175,000) | (275,000)\n  Withdrawal fees | (46,753) | -\n  Other income | (204,808) | (131,338)\n  Total other (income) expense | (48,573) | 68,999\n  Income before provision for income taxes | 168,031 | 63,700\n  Provision for income taxes | 41,000 | 32,000\n  Net income | $ 127,031 | $ 31,700\n\n## Statements of Cash Flows (page 10, table:0005)\n  2025 | 2024\n  Cash flows from operating activities\n  Net income | $ 127,031 | $ 31,700\n  Adjustments to reconcile net income to net cash\n  provided by operating activities\n  Depreciation and amortization | 1,217,833 | 1,199,605\n  Deferred tax liability | 41,000 | 32,000\n  Change in operating assets and liabilities\n  Accounts receivable | 1,723,995 | (444,307)\n  Prepaid expenses and other current assets | 745,108 | (869,621)\n  Accounts payable and accrued expenses | (970,459) | 795,341\n  Advance billings | 2,389,838 | (144,144)\n  Due to members | (1,262,370) | 131,626\n  Due to nonmembers | 22,369 | -\n  Deferred revenue, lease | 869,812 | 802,818\n  Noncash operating lease costs | (1,266,184) | (724,795)\n  Net cash provided by operating activities | 3,637,973 | 810,223\n  Cash flows from investing activities\n  Payment of security deposits | - | (782,592)\n  Refund of security deposits | 468,136 | -\n  Purchases of property and equipment | (880,759) | (508,044)\n  Net cash used in investing activities | (412,623) | (1,290,636)\n  Cash flows from financing activities\n  Principal payments on member notes | (1,306,321) | (1,329,208)\n  Capital contributions | 2,000 | 4,000\n  Reserve funds | 207,572 | 153,865\n  Net cash used in financing activities | (1,096,749) | (1,171,343)\n  Net increase (decrease) in cash\n  and restricted cash | 2,128,601 | (1,651,756)\n  Cash and restricted cash, beginning of year | 6,707,278 | 8,359,034\n  Cash and restricted cash, end of year | $ 8,835,879 | $ 6,707,278\n",
+  "ready": {
+    "download": true,
+    "text": true
+  },
+  "schema": {
+    "name": "bondgov.investor_documents.text",
+    "version": "twin.emma.v1"
+  },
+  "sections": [
+    {
+      "heading": "Balance Sheets",
+      "page": 6,
+      "table_ids": [
+        "table:0001"
+      ]
+    },
+    {
+      "heading": "Balance Sheets",
+      "page": 7,
+      "table_ids": [
+        "table:0002"
+      ]
+    },
+    {
+      "heading": "Statements of Income",
+      "page": 8,
+      "table_ids": [
+        "table:0003"
+      ]
+    },
+    {
+      "heading": "Statements of Cash Flows",
+      "page": 10,
+      "table_ids": [
+        "table:0005"
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "column_count": 4,
+      "page": 6,
+      "row_count": 18,
+      "rows": [
+        [
+          "",
+          "2025",
+          "",
+          "2024"
+        ],
+        [
+          "Current assets",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Cash",
+          "$ 7,716,941",
+          "",
+          "$ 4,870,089"
+        ],
+        [
+          "Accounts receivable, net",
+          "1,026,651",
+          "",
+          "2,750,646"
+        ],
+        [
+          "Prepaid expenses and other current assets",
+          "294,329",
+          "",
+          "1,039,437"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total current assets",
+          "9,037,921",
+          "",
+          "8,660,172"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Property and equipment, net",
+          "7,015,261",
+          "",
+          "7,363,946"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Other assets",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Operating lease right-of-use assets",
+          "52,175,955",
+          "",
+          "57,463,162"
+        ],
+        [
+          "Security deposits",
+          "869,063",
+          "",
+          "1,337,199"
+        ],
+        [
+          "Restricted cash",
+          "1,118,938",
+          "",
+          "1,837,189"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total other assets",
+          "54,163,956",
+          "",
+          "60,637,550"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total assets",
+          "$ 70,217,138",
+          "",
+          "$ 76,661,668"
+        ]
+      ],
+      "statement": "Balance Sheets",
+      "table_hash": "blake3:a177b53507dee8e1056ac4f3b957f85ee0d3d822838246729eabd51ce4af9fc3",
+      "table_id": "table:0001"
+    },
+    {
+      "column_count": 4,
+      "page": 7,
+      "row_count": 33,
+      "rows": [
+        [
+          "",
+          "2025",
+          "",
+          "2024"
+        ],
+        [
+          "Current liabilities",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Current portion of notes payable members",
+          "$ 1,397,213",
+          "",
+          "$ 1,346,263"
+        ],
+        [
+          "Current portion of operating lease liabilities",
+          "5,793,320",
+          "",
+          "6,553,390"
+        ],
+        [
+          "Accounts payable and accrued expenses",
+          "827,434",
+          "",
+          "1,809,504"
+        ],
+        [
+          "Deferred revenue",
+          "775,954",
+          "",
+          "1,172,326"
+        ],
+        [
+          "Advance billings",
+          "3,542,502",
+          "",
+          "1,152,664"
+        ],
+        [
+          "Due to members",
+          "927,985",
+          "",
+          "2,190,355"
+        ],
+        [
+          "Due to nonmembers",
+          "22,369",
+          "",
+          "-"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total current liabilities",
+          "13,286,777",
+          "",
+          "14,224,502"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Long-term liabilities",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Notes payable members, net of current portion",
+          "6,041,583",
+          "",
+          "7,398,854"
+        ],
+        [
+          "Operating lease liabilities, net of current portion",
+          "42,449,103",
+          "",
+          "48,242,424"
+        ],
+        [
+          "Deferred revenue, lease",
+          "3,933,532",
+          "",
+          "2,667,348"
+        ],
+        [
+          "Funds provided for Port of Seattle construction",
+          "261,492",
+          "",
+          "261,492"
+        ],
+        [
+          "Deferred tax liability",
+          "73,000",
+          "",
+          "32,000"
+        ],
+        [
+          "Reserve funds",
+          "3,934,887",
+          "",
+          "3,727,315"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total long-term liabilities",
+          "56,693,597",
+          "",
+          "62,329,433"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total liabilities",
+          "69,980,374",
+          "",
+          "76,553,935"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Commitments and contingencies",
+          "",
+          "",
+          ""
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Members' equity",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Contributed capital",
+          "45,000",
+          "",
+          "43,000"
+        ],
+        [
+          "Retained earnings",
+          "191,764",
+          "",
+          "64,733"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total members' equity",
+          "236,764",
+          "",
+          "107,733"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total liabilities and members' equity",
+          "$ 70,217,138",
+          "",
+          "$ 76,661,668"
+        ]
+      ],
+      "statement": "Balance Sheets",
+      "table_hash": "blake3:2f84087f4fd48061d4250269f96d692a9527d03cf504e2499114b03b41351db3",
+      "table_id": "table:0002"
+    },
+    {
+      "column_count": 4,
+      "page": 8,
+      "row_count": 36,
+      "rows": [
+        [
+          "",
+          "2025",
+          "",
+          "2024"
+        ],
+        [
+          "Revenues",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Member revenues",
+          "$ 10,623,224",
+          "",
+          "$ 9,793,082"
+        ],
+        [
+          "Nonmember revenues",
+          "6,449,957",
+          "",
+          "6,582,200"
+        ],
+        [
+          "Total revenues",
+          "17,073,181",
+          "",
+          "16,375,282"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Operating expenses",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Depreciation and amortization",
+          "1,217,833",
+          "",
+          "1,199,605"
+        ],
+        [
+          "Environmental costs",
+          "249,454",
+          "",
+          "249,741"
+        ],
+        [
+          "General and administrative",
+          "1,194,848",
+          "",
+          "1,454,154"
+        ],
+        [
+          "Insurance",
+          "483,048",
+          "",
+          "433,712"
+        ],
+        [
+          "Lease expense, net",
+          "8,155,817",
+          "",
+          "7,479,878"
+        ],
+        [
+          "Management fees",
+          "204,000",
+          "",
+          "187,333"
+        ],
+        [
+          "Operator salaries and fringe",
+          "2,697,302",
+          "",
+          "2,313,598"
+        ],
+        [
+          "Outside services",
+          "371,151",
+          "",
+          "419,650"
+        ],
+        [
+          "Professional fees",
+          "242,516",
+          "",
+          "388,850"
+        ],
+        [
+          "Repairs and maintenance",
+          "653,866",
+          "",
+          "681,998"
+        ],
+        [
+          "Taxes and licenses",
+          "1,483,888",
+          "",
+          "1,434,064"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total operating expenses",
+          "16,953,723",
+          "",
+          "16,242,583"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Income from operations",
+          "119,458",
+          "",
+          "132,699"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Other (income) expense",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Interest expense",
+          "377,988",
+          "",
+          "475,337"
+        ],
+        [
+          "New member entry fees",
+          "(175,000)",
+          "",
+          "(275,000)"
+        ],
+        [
+          "Withdrawal fees",
+          "(46,753)",
+          "",
+          "-"
+        ],
+        [
+          "Other income",
+          "(204,808)",
+          "",
+          "(131,338)"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Total other (income) expense",
+          "(48,573)",
+          "",
+          "68,999"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Income before provision for income taxes",
+          "168,031",
+          "",
+          "63,700"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Provision for income taxes",
+          "41,000",
+          "",
+          "32,000"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Net income",
+          "$ 127,031",
+          "",
+          "$ 31,700"
+        ]
+      ],
+      "statement": "Statements of Income",
+      "table_hash": "blake3:113b61a63e0c89ac28c38c1790a6b8cbddff104dc29e0e25c2eb747dd4f325ce",
+      "table_id": "table:0003"
+    },
+    {
+      "column_count": 4,
+      "page": 10,
+      "row_count": 40,
+      "rows": [
+        [
+          "",
+          "2025",
+          "",
+          "2024"
+        ],
+        [
+          "Cash flows from operating activities",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Net income",
+          "$ 127,031",
+          "",
+          "$ 31,700"
+        ],
+        [
+          "Adjustments to reconcile net income to net cash",
+          "",
+          "",
+          ""
+        ],
+        [
+          "provided by operating activities",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Depreciation and amortization",
+          "1,217,833",
+          "",
+          "1,199,605"
+        ],
+        [
+          "Deferred tax liability",
+          "41,000",
+          "",
+          "32,000"
+        ],
+        [
+          "Change in operating assets and liabilities",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Accounts receivable",
+          "1,723,995",
+          "",
+          "(444,307)"
+        ],
+        [
+          "Prepaid expenses and other current assets",
+          "745,108",
+          "",
+          "(869,621)"
+        ],
+        [
+          "Accounts payable and accrued expenses",
+          "(970,459)",
+          "",
+          "795,341"
+        ],
+        [
+          "Advance billings",
+          "2,389,838",
+          "",
+          "(144,144)"
+        ],
+        [
+          "Due to members",
+          "(1,262,370)",
+          "",
+          "131,626"
+        ],
+        [
+          "Due to nonmembers",
+          "22,369",
+          "",
+          "-"
+        ],
+        [
+          "Deferred revenue, lease",
+          "869,812",
+          "",
+          "802,818"
+        ],
+        [
+          "Noncash operating lease costs",
+          "(1,266,184)",
+          "",
+          "(724,795)"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Net cash provided by operating activities",
+          "3,637,973",
+          "",
+          "810,223"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Cash flows from investing activities",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Payment of security deposits",
+          "-",
+          "",
+          "(782,592)"
+        ],
+        [
+          "Refund of security deposits",
+          "468,136",
+          "",
+          "-"
+        ],
+        [
+          "Purchases of property and equipment",
+          "(880,759)",
+          "",
+          "(508,044)"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Net cash used in investing activities",
+          "(412,623)",
+          "",
+          "(1,290,636)"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Cash flows from financing activities",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Principal payments on member notes",
+          "(1,306,321)",
+          "",
+          "(1,329,208)"
+        ],
+        [
+          "Capital contributions",
+          "2,000",
+          "",
+          "4,000"
+        ],
+        [
+          "Reserve funds",
+          "207,572",
+          "",
+          "153,865"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Net cash used in financing activities",
+          "(1,096,749)",
+          "",
+          "(1,171,343)"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Net increase (decrease) in cash",
+          "",
+          "",
+          ""
+        ],
+        [
+          "and restricted cash",
+          "2,128,601",
+          "",
+          "(1,651,756)"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Cash and restricted cash, beginning of year",
+          "6,707,278",
+          "",
+          "8,359,034"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Cash and restricted cash, end of year",
+          "$ 8,835,879",
+          "",
+          "$ 6,707,278"
+        ],
+        [
+          "",
+          "",
+          "",
+          ""
+        ]
+      ],
+      "statement": "Statements of Cash Flows",
+      "table_hash": "blake3:ca65eb05d901afff7671e4710331ab0b6ee41068314a9259bbdec75075469626",
+      "table_id": "table:0005"
+    }
+  ]
+}

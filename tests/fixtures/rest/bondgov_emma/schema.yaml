@@ -422,16 +422,17 @@ x-twinning:
       method: GET
       path: /api/v1/investor-documents/bgv-emma-p11968060-p11501443/text/
       status: 200
-      body:
-        schema: { name: bondgov.investor_documents.text, version: twin.emma.v1 }
-        document: { document_id: bgv-emma-p11968060-p11501443, source_file: P11968060-P11501443-.pdf }
-        extraction_status: available
-        cache_status: hit
-        ready: { download: true, text: true }
-        counts: { pages: 0, sections: 1, tables: 0 }
-        full_text: "Text extraction placeholder for EMMA sample P11968060 / P11501443."
-        sections: [{ heading: Sample document, text: "PDF bytes are served by the download endpoint." }]
-        tables: []
+      headers:
+        Content-Type: application/json
+        X-BondGov-Request-ID: twin-bondgov-text-p11968060
+        X-BondGov-Cache-Status: hit
+      # Real deterministic parse of P11968060 (Seatac Fuel Facilities LLC audited
+      # financials): 27 pages, 22 tables, 11 financial facts each carrying
+      # page/table/row/column + BLAKE3 table-hash evidence. Generated from
+      # outcomes/emma/demo/seatac_component_demo.py — NOT a placeholder. Path is
+      # relative to the twinning repo root (the serve CWD), matching the download
+      # stubs' ../outcomes/... convention.
+      body-file: tests/fixtures/rest/bondgov_emma/text_p11968060.json
     - id: download_p11968060
       method: GET
       path: /api/v1/investor-documents/bgv-emma-p11968060-p11501443/download/
