@@ -129,9 +129,14 @@ fn stale_sweep_terminates_recorded_twinning_child_and_removes_dead_server_direct
         fake.display()
     );
     let started = temp.path().join("fake_started");
+    let shutdown_marker = temp.path().join("shutdown_complete");
+    let late_report = dead.join("tw_abcdef/report.json");
     let child = Command::new(fake)
-        .env("FAKE_TWINNING_MODE", "never_listen")
+        .env("FAKE_TWINNING_MODE", "delayed_shutdown")
         .env("FAKE_TWINNING_STARTED_FILE", &started)
+        .env("FAKE_TWINNING_SHUTDOWN_MARKER", &shutdown_marker)
+        .env("FAKE_TWINNING_SHUTDOWN_WRITE_PATH", &late_report)
+        .env("FAKE_TWINNING_SHUTDOWN_DELAY_MS", "150")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -148,8 +153,6 @@ fn stale_sweep_terminates_recorded_twinning_child_and_removes_dead_server_direct
     );
     fs::write(dead.join("tw_abcdef/child.pid"), format!("{child_pid}\n")).unwrap();
     let report = sweep_stale(temp.path(), std::process::id()).unwrap();
-    assert!(report.server_dirs_removed.contains(&dead));
-    assert!(!dead.exists());
     assert!(current.exists());
     assert_eq!(vec![child_pid], report.child_pids_signaled);
     let exited = poll_until(
@@ -159,4 +162,16 @@ fn stale_sweep_terminates_recorded_twinning_child_and_removes_dead_server_direct
         || guard.child_mut().try_wait().ok().flatten(),
     );
     assert!(exited.success());
+    assert!(
+        shutdown_marker.is_file(),
+        "child completed its delayed shutdown"
+    );
+    assert!(
+        report.server_dirs_removed.contains(&dead),
+        "dead server directory is included in sweep results"
+    );
+    assert!(
+        !dead.exists(),
+        "late child writes cannot recreate swept state"
+    );
 }

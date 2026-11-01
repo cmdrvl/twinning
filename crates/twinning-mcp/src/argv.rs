@@ -41,6 +41,25 @@ impl TwinArgv {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SeedContractArgv {
+    pub schema: PathBuf,
+    pub output: PathBuf,
+}
+
+impl SeedContractArgv {
+    pub fn build(&self) -> Vec<OsString> {
+        vec![
+            OsString::from("postgres"),
+            OsString::from("--schema"),
+            self.schema.as_os_str().to_owned(),
+            OsString::from("--export-seed-contract"),
+            self.output.as_os_str().to_owned(),
+            OsString::from("--json"),
+        ]
+    }
+}
+
 fn push_optional(args: &mut Vec<OsString>, flag: &str, path: Option<&Path>) {
     if let Some(path) = path {
         args.push(OsString::from(flag));
@@ -50,7 +69,7 @@ fn push_optional(args: &mut Vec<OsString>, flag: &str, path: Option<&Path>) {
 
 #[cfg(test)]
 mod tests {
-    use super::TwinArgv;
+    use super::{SeedContractArgv, TwinArgv};
     use std::path::PathBuf;
 
     #[test]
@@ -79,5 +98,34 @@ mod tests {
                 .any(|arg| arg.as_ref() == "--materialize-source-url")
         );
         assert!(!strings.iter().any(|arg| arg.as_ref() == "0.0.0.0"));
+    }
+
+    #[test]
+    fn seed_contract_argv_uses_only_the_fixed_export_command() {
+        let args = SeedContractArgv {
+            schema: PathBuf::from("/work/schema.sql"),
+            output: PathBuf::from("/state/contract/seed-contract.jsonl"),
+        }
+        .build();
+        let strings = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            strings.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "postgres",
+                "--schema",
+                "/work/schema.sql",
+                "--export-seed-contract",
+                "/state/contract/seed-contract.jsonl",
+                "--json"
+            ]
+        );
+        assert!(
+            !strings
+                .iter()
+                .any(|arg| arg == "--serve" || arg == "--host")
+        );
     }
 }

@@ -4,7 +4,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Check the twinning binary and the configured work directory.",
+      "description": "Check the twinning binary and the configured work directory for this declared-subset Postgres twin server.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -17,7 +17,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "List the retained Postgres twins managed by this server.",
+      "description": "List retained Postgres twins managed for the declared client subset.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -30,7 +30,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Read the report for a stopped Postgres twin.",
+      "description": "Read the report for a stopped declared-subset Postgres twin.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -50,7 +50,7 @@
       "annotations": {
         "readOnlyHint": false
       },
-      "description": "Create a seed contract from a Postgres schema.",
+      "description": "Create a seed contract for a schema supported by the declared Postgres subset.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -78,7 +78,7 @@
         "idempotentHint": false,
         "readOnlyHint": false
       },
-      "description": "Start a disposable Postgres twin from a schema file.",
+      "description": "Start a disposable Postgres twin for the manifest-backed declared client subset from a schema file.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -93,7 +93,7 @@
             "type": "string"
           },
           "schema_path": {
-            "description": "Path to the schema file.",
+            "description": "Path to a schema within the declared Postgres subset.",
             "type": "string"
           },
           "seed_path": {
@@ -124,7 +124,7 @@
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Stop a managed Postgres twin and return its run summary.",
+      "description": "Stop a managed declared-subset Postgres twin and return its run summary.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

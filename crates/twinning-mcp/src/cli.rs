@@ -82,14 +82,17 @@ pub fn run() -> i32 {
         Err(error) => return report_parse_error(error, &args),
     };
 
-    let _server_options = (cli.workdir, cli.twinning_bin, cli.restricted, cli.max_twins);
-
     match cli.command {
         None if assume_tty() => {
             print_usage();
             EXIT_OK
         }
-        None => match server::serve() {
+        None => match server::serve(server::ServerOptions {
+            workdir: cli.workdir,
+            twinning_bin: cli.twinning_bin,
+            restricted: cli.restricted,
+            max_twins: cli.max_twins,
+        }) {
             Ok(()) => EXIT_OK,
             Err(error) => {
                 eprintln!("error: twinning-mcp stdio failed: {error}");

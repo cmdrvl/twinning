@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::errors::ToolError;
+use chrono::{SecondsFormat, Utc};
 
 pub const DEFAULT_MAX_TWINS: usize = 5;
 pub const MAX_STOPPED_RECORDS: usize = 50;
@@ -37,6 +38,8 @@ pub struct TwinRecord {
     pub child_pid: Option<u32>,
     pub port: u16,
     pub status: TwinStatus,
+    pub started_at: String,
+    pub expires_at: String,
     pub ttl_deadline: Instant,
 }
 
@@ -76,6 +79,9 @@ impl Registry {
         let id = self.unique_id()?;
         self.issued_ids.insert(id.clone());
         let state_dir = state_root.join(&id);
+        let started_at = Utc::now();
+        let expires_at = started_at
+            + chrono::Duration::from_std(ttl).unwrap_or_else(|_| chrono::Duration::zero());
         let record = TwinRecord {
             id,
             report_path: state_dir.join("report.json"),
@@ -86,6 +92,8 @@ impl Registry {
             child_pid: None,
             port,
             status: TwinStatus::Starting,
+            started_at: started_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            expires_at: expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
             ttl_deadline: Instant::now() + ttl,
         };
         self.records.push(record.clone());

@@ -21,38 +21,76 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--describe") {
+        println!(
+            "{{\"version\":\"operator.v0\",\"name\":\"twinning\",\"description\":\"declared-subset Postgres twin test stub\"}}"
+        );
+        return Ok(());
+    }
+    if args.starts_with(&["doctor".into(), "health".into()]) {
+        println!("{{\"version\":\"twinning.v0\",\"status\":\"healthy\",\"outcome\":\"READY\"}}");
+        return Ok(());
+    }
+    if args.starts_with(&["doctor".into(), "capabilities".into()]) {
+        println!(
+            "{{\"version\":\"twinning.v0\",\"commands\":[\"postgres\",\"doctor health\",\"doctor capabilities\"]}}"
+        );
+        return Ok(());
+    }
     let mode = std::env::var("FAKE_TWINNING_MODE").unwrap_or_else(|_| "ok".into());
     let report = value_after(&args, "--report").map(PathBuf::from);
     let trace = value_after(&args, "--query-trace").map(PathBuf::from);
     let contract = value_after(&args, "--export-seed-contract").map(PathBuf::from);
     if mode == "exit_early" {
+        eprintln!("fake exited early");
         std::process::exit(3);
     }
     if mode == "contract_fail" {
         return Err("seed contract export failed".into());
     }
     if mode == "addr_in_use_once" && first_bind_attempt(report.as_deref())? {
-        println!(
-            "{}",
-            json!({
-                "version": "twinning.v0",
-                "outcome": "REFUSAL",
-                "refusal": {
-                    "code": "E_RUNTIME_IO",
-                    "message": "Live runtime failed during `listener_bind`.",
-                    "detail": { "stage": "listener_bind", "error": "127.0.0.1:0: Address already in use" },
-                    "next_command": null
-                }
-            })
-        );
+        print_bind_refusal();
         std::process::exit(2);
     }
-    if mode == "never_listen" {
+    if mode == "always_bind_refuse" {
+        print_bind_refusal();
+        std::process::exit(2);
+    }
+    if let Some(path) = contract.as_deref() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = fs::File::create(path)?;
+        writeln!(
+            output,
+            "{}",
+            json!({"version":"twinning.seed-contract.v0","kind":"target","twin":"postgres","target_kind":"relation","target":"public.stub","fields":[]})
+        )?;
+        return Ok(());
+    }
+    if mode == "never_listen" || mode == "delayed_shutdown" {
         let mut signals = term_signals()?;
         if let Some(started) = std::env::var_os("FAKE_TWINNING_STARTED_FILE") {
             fs::write(started, "ready\n")?;
         }
         signals.forever().next();
+        if mode == "delayed_shutdown" {
+            let delay = std::env::var("FAKE_TWINNING_SHUTDOWN_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(150);
+            std::thread::sleep(Duration::from_millis(delay));
+            if let Some(path) = std::env::var_os("FAKE_TWINNING_SHUTDOWN_WRITE_PATH") {
+                let path = PathBuf::from(path);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(path, "shutdown report\n")?;
+            }
+            if let Some(marker) = std::env::var_os("FAKE_TWINNING_SHUTDOWN_MARKER") {
+                fs::write(marker, "shutdown complete\n")?;
+            }
+        }
         return Ok(());
     }
     if mode == "listen_late" {
@@ -97,21 +135,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &json!({"version":"twinning.query-trace.v0","policy":"redacted","events":[]}),
         )?;
     }
-    if let Some(path) = contract {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut output = fs::File::create(path)?;
-        writeln!(
-            output,
-            "{}",
-            json!({"version":"twinning.seed-contract.v0","tables":[]})
-        )?;
-    }
     if mode == "exit1_with_report" {
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn print_bind_refusal() {
+    println!(
+        "{}",
+        json!({
+            "version": "twinning.v0",
+            "outcome": "REFUSAL",
+            "refusal": {
+                "code": "E_RUNTIME_IO",
+                "message": "Live runtime failed during `listener_bind`.",
+                "detail": { "stage": "listener_bind", "error": "127.0.0.1:0: Address already in use" },
+                "next_command": null
+            }
+        })
+    );
 }
 
 fn first_bind_attempt(report: Option<&Path>) -> Result<bool, Box<dyn std::error::Error>> {

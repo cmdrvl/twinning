@@ -1,0 +1,96 @@
+{
+  "version": "twinning.v0",
+  "outcome": "FAIL",
+  "mode": "interactive",
+  "engine": "postgres",
+  "host": "127.0.0.1",
+  "port": 56454,
+  "wire_protocol": "pgwire",
+  "schema": {
+    "source": "/var/folders/9p/ld53l1d91vlf6dvgh4xgtr_h0000gn/T/twinning-mcp-tests/u12-capture-co_fzv4r/schema.sql",
+    "hash": "sha256:8987384d44ba3f6d005375340b72f730d29cba534ee5868e27e9021c9a3716bb",
+    "table_count": 1,
+    "column_count": 1,
+    "index_count": 0,
+    "constraint_count": 1
+  },
+  "verify_artifact": {
+    "source": "/var/folders/9p/ld53l1d91vlf6dvgh4xgtr_h0000gn/T/twinning-mcp-tests/u12-capture-co_fzv4r/verify.constraint.json",
+    "hash": "sha256:f5974930403fffa012f6aed956533a5ff82c025433b289575894ee6279b1b149",
+    "loaded": 1
+  },
+  "catalog": {
+    "dialect": "postgres",
+    "table_count": 1,
+    "column_count": 1,
+    "index_count": 0,
+    "constraint_count": 1
+  },
+  "storage": {
+    "tournament_mode": "bounded-memory hot working set with per-twin overlay",
+    "replay_mode": "disk-backed, snapshot-backed, or delegated real-database backend",
+    "hot_working_set": "memory",
+    "cold_state": "shared snapshot or pluggable backing store"
+  },
+  "tables": {
+    "public.deals": {
+      "rows": 0,
+      "expected": null,
+      "coverage": null,
+      "columns": 1,
+      "indexes": 0,
+      "constraints": 1
+    }
+  },
+  "constraints": {
+    "not_null_violations": 0,
+    "fk_violations": 0,
+    "check_violations": 0,
+    "unique_violations": 0
+  },
+  "verify": {
+    "bindings": {
+      "public.deals": {
+        "content_hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "input_verification": null,
+        "kind": "relation",
+        "source": "public.deals"
+      }
+    },
+    "constraint_hash": "sha256:f5974930403fffa012f6aed956533a5ff82c025433b289575894ee6279b1b149",
+    "constraint_set_id": "mcp-u12-row-count.v1",
+    "execution_mode": "embedded",
+    "outcome": "FAIL",
+    "policy_signals": {
+      "severity_band": "ERROR_PRESENT"
+    },
+    "refusal": null,
+    "results": [
+      {
+        "affected": [
+          {
+            "binding": "public.deals",
+            "value": 0.0
+          }
+        ],
+        "rule_id": "ONE_DEAL_REQUIRED",
+        "severity": "error",
+        "status": "fail",
+        "violation_count": 1
+      }
+    ],
+    "summary": {
+      "by_severity": {
+        "error": 1,
+        "warn": 0
+      },
+      "failed_rules": 1,
+      "passed_rules": 0,
+      "total_rules": 1
+    },
+    "tool": "verify",
+    "version": "verify.report.v1"
+  },
+  "snapshot": {},
+  "next_step": "Interactive mode finalized committed-state artifacts after shutdown. Inspect the snapshot and embedded verify payload before reusing this twin state."
+}

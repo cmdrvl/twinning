@@ -2,6 +2,7 @@
 
 use std::{
     io::{self, stdin, stdout},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -23,19 +24,52 @@ use twinning_mcp_core::{
     version::negotiate_initialize_protocol,
 };
 
-use crate::{errors::ToolError, tools::tool_list_result};
+use crate::{
+    log::{self, Level},
+    tools::{ToolService, ToolServiceConfig, tool_list_result, tool_names},
+};
 
-pub fn serve() -> io::Result<()> {
+#[derive(Debug, Clone, Default)]
+pub struct ServerOptions {
+    pub workdir: Option<PathBuf>,
+    pub twinning_bin: Option<PathBuf>,
+    pub restricted: bool,
+    pub max_twins: Option<usize>,
+}
+
+pub fn serve(options: ServerOptions) -> io::Result<()> {
     let stopping = Arc::new(AtomicBool::new(false));
     flag::register(SIGINT, Arc::clone(&stopping))?;
     flag::register(SIGTERM, Arc::clone(&stopping))?;
-
-    stdio::serve_until(stdin().lock(), stdout().lock(), dispatch, || {
-        stopping.load(Ordering::Relaxed)
-    })
+    let mut service = ToolService::new(ToolServiceConfig {
+        workdir: options.workdir,
+        twinning_bin: options.twinning_bin,
+        restricted: options.restricted,
+        max_twins: options.max_twins,
+    });
+    log::emit(Level::Info, None, "server_start", &[]);
+    let workdir_fields = service.workdir_log_fields();
+    log::emit(Level::Info, None, "workdir", &workdir_fields);
+    let result = stdio::serve_until(
+        stdin().lock(),
+        stdout().lock(),
+        |request| dispatch_with_service(request, &mut service),
+        || stopping.load(Ordering::Relaxed),
+    );
+    service.shutdown();
+    result
 }
 
+#[cfg(test)]
 pub fn dispatch(request: JsonRpcRequest) -> Option<JsonRpcResponse> {
+    let mut service = ToolService::new(ToolServiceConfig::default());
+    dispatch_with_service(request, &mut service)
+}
+
+fn dispatch_with_service(
+    request: JsonRpcRequest,
+    service: &mut ToolService,
+) -> Option<JsonRpcResponse> {
     if request.id.is_none() && request.method.starts_with("notifications/") {
         return None;
     }
@@ -54,7 +88,7 @@ pub fn dispatch(request: JsonRpcRequest) -> Option<JsonRpcResponse> {
         "initialize" => result_response(id, initialize_result(request.params.as_ref())),
         "notifications/initialized" => return None,
         "tools/list" => result_response(id, tool_list_result()),
-        "tools/call" => tools_call_response(id, request.params.as_ref()),
+        "tools/call" => tools_call_response(id, request.params.as_ref(), service),
         "ping" => result_response(id, json!({})),
         method => error_response(
             id,
@@ -79,11 +113,20 @@ fn initialize_result(params: Option<&Value>) -> Value {
     })
 }
 
-fn tools_call_response(id: Value, params: Option<&Value>) -> JsonRpcResponse {
-    let Some(name) = params
-        .and_then(|params| params.get("name"))
-        .and_then(Value::as_str)
-    else {
+fn tools_call_response(
+    id: Value,
+    params: Option<&Value>,
+    service: &mut ToolService,
+) -> JsonRpcResponse {
+    let Some(params) = params.and_then(Value::as_object) else {
+        return error_response(
+            id,
+            JSONRPC_INVALID_PARAMS,
+            "tools/call params must be an object",
+            None,
+        );
+    };
+    let Some(name) = params.get("name").and_then(Value::as_str) else {
         return error_response(
             id,
             JSONRPC_INVALID_PARAMS,
@@ -91,8 +134,45 @@ fn tools_call_response(id: Value, params: Option<&Value>) -> JsonRpcResponse {
             None,
         );
     };
+    if !tool_names().iter().any(|tool| tool == name) {
+        return error_response(
+            id,
+            JSONRPC_INVALID_PARAMS,
+            format!("unknown tool name: {name}"),
+            None,
+        );
+    }
+    let Some(arguments) = params
+        .get("arguments")
+        .filter(|arguments| arguments.is_object())
+    else {
+        return error_response(
+            id,
+            JSONRPC_INVALID_PARAMS,
+            "tools/call arguments must be an object",
+            None,
+        );
+    };
 
-    let result = ToolError::not_implemented(name).mcp_result();
+    let result = match service.handle(name, arguments) {
+        Ok(body) => {
+            let text =
+                serde_json::to_string(&body).expect("serializing a JSON tool result cannot fail");
+            json!({
+                "content": [{"type":"text","text":text}],
+                "isError": false
+            })
+        }
+        Err(error) => {
+            log::emit(
+                Level::Warn,
+                None,
+                "tool_error",
+                &[("code", error.code.to_owned())],
+            );
+            error.mcp_result()
+        }
+    };
     result_response(id, result)
 }
 
@@ -145,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_call_is_an_error_result_until_m4() {
+    fn tool_validation_failure_is_an_error_result() {
         let response = dispatch(request(
             Some(json!(3)),
             "tools/call",
@@ -159,11 +239,38 @@ mod tests {
                 .as_ref()
                 .and_then(|r| r["isError"].as_bool())
         );
+        let result = response.result.expect("tool result");
+        assert_eq!(Some(true), result["isError"].as_bool());
         assert!(
-            response.result.expect("tool result")["content"][0]["text"]
+            result["content"][0]["text"]
                 .as_str()
                 .expect("error body text")
-                .contains("E_INTERNAL")
+                .contains("E_ARGUMENT_INVALID")
+        );
+    }
+
+    #[test]
+    fn unknown_tool_and_non_object_arguments_are_protocol_errors() {
+        let unknown = dispatch(request(
+            Some(json!(6)),
+            "tools/call",
+            Some(json!({"name":"missing_tool","arguments":{}})),
+        ))
+        .expect("unknown tool response");
+        assert_eq!(
+            Some(twinning_mcp_core::JSONRPC_INVALID_PARAMS),
+            unknown.error.map(|error| error.code)
+        );
+
+        let array = dispatch(request(
+            Some(json!(7)),
+            "tools/call",
+            Some(json!({"name":"twin_list","arguments":[]})),
+        ))
+        .expect("invalid arguments response");
+        assert_eq!(
+            Some(twinning_mcp_core::JSONRPC_INVALID_PARAMS),
+            array.error.map(|error| error.code)
         );
     }
 

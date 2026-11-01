@@ -33,10 +33,11 @@ pub fn poll_until<T>(
     mut observe: impl FnMut() -> Option<T>,
 ) -> T {
     let start = Instant::now();
+    let label = test_label();
     loop {
         if let Some(value) = observe() {
             println!(
-                "poll what={what:?} elapsed_ms={}",
+                "[{label}] poll what={what:?} elapsed_ms={}",
                 start.elapsed().as_millis()
             );
             return value;
@@ -44,12 +45,21 @@ pub fn poll_until<T>(
         let last = format!("not observed after {} ms", start.elapsed().as_millis());
         if Instant::now() >= deadline {
             panic!(
-                "poll timeout what={what:?} elapsed_ms={} last={last}",
+                "[{label}] poll timeout what={what:?} elapsed_ms={} last={last}",
                 start.elapsed().as_millis()
             );
         }
         thread::sleep(interval);
     }
+}
+
+fn test_label() -> String {
+    std::thread::current()
+        .name()
+        .and_then(|name| name.get(..3))
+        .filter(|prefix| prefix.starts_with('s') && prefix[1..].chars().all(|c| c.is_ascii_digit()))
+        .map(str::to_ascii_uppercase)
+        .unwrap_or_else(|| "TEST".into())
 }
 
 pub fn scaled_deadline(timeout: Duration) -> Instant {

@@ -253,7 +253,7 @@ impl Supervisor {
                     return Err(ToolError {
                         code: "E_START_FAILED",
                         message: format!(
-                            "twinning child: exited before readiness with code {}",
+                            "twinning child: exited before readiness with exit code {}",
                             exit_code(status)
                         ),
                         hint: "Read the twin's stdout.json and try again",

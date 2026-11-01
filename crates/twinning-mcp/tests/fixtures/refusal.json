@@ -1,0 +1,13 @@
+{
+  "version": "twinning.v0",
+  "outcome": "REFUSAL",
+  "refusal": {
+    "code": "E_IO_READ",
+    "message": "Failed to read `/var/folders/9p/ld53l1d91vlf6dvgh4xgtr_h0000gn/T/twinning-mcp-tests/u12-capture-co_fzv4r/missing.sql`.",
+    "detail": {
+      "error": "No such file or directory (os error 2)",
+      "path": "/var/folders/9p/ld53l1d91vlf6dvgh4xgtr_h0000gn/T/twinning-mcp-tests/u12-capture-co_fzv4r/missing.sql"
+    },
+    "next_command": null
+  }
+}
