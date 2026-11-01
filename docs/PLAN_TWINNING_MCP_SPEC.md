@@ -1,6 +1,6 @@
 # Twinning MCP Server: Build Spec (v0)
 
-Companion to [PLAN_TWINNING_MCP.md](./PLAN_TWINNING_MCP.md), which holds the rationale, landscape and listing plan. This file holds what an implementing agent needs without making design decisions: scope fences, files, invariants, errors, tool contracts, tests, threats, gates and commands. Beads cite items here by ID (I##, E_*, U##, S##, R##, T##, G##, N##). If this file and the plan disagree, this file wins for implementation and the plan gets corrected.
+Companion to [PLAN_TWINNING_MCP.md](./PLAN_TWINNING_MCP.md), which holds the rationale, landscape and listing plan. This file holds what an implementing agent needs without making design decisions: scope fences, files, invariants, errors, tool contracts, tests, threats, gates and commands. Beads cite items here by ID (D##, I##, E_*, U##, S##, R##, C##, T##, G##, N##). `G1` to `G10` are quality gates (section 9); the go-live approval gates are named `GL-1` to `GL-6` (section 6). If this file and the plan disagree, this file wins for implementation and the plan gets corrected.
 
 Date: 2026-11-01. Status: ready for a one-shot implementation session after Zac's go.
 
@@ -72,7 +72,7 @@ New workspace members (add to root `Cargo.toml` `members`).
 | `src/stale.rs` | Startup sweep of dead servers' state directories and orphan children |
 | `src/report.rs` | Parse `twinning.v0` report, build the stop summary, truncate to 256 KiB |
 | `src/setup.rs` | Client config detection and merge for `setup` |
-| `src/doctor.rs` | Checks shared by `twin_doctor` and `twinning-mcp doctor` |
+| `src/doctor.rs` | Checks shared by `twin_doctor` and `twinning-mcp doctor` (created in M4, reused by M6) |
 | `tests/` | `stub_integration.rs`, `e2e_real.rs`, `setup_configs.rs`, `golden/tools_list.json` |
 | `tests/bin/fake_twinning.rs` | Test-only stub binary with modes `ok`, `exit_early`, `never_listen`, `ignore_sigterm`, `crash_on_stop` (env `FAKE_TWINNING_MODE`) |
 
@@ -142,11 +142,13 @@ Error codes (body `{"error":{"code","message","hint"}}`, `isError: true`):
 | M2 | Add `twinning-mcp-core` and `twinning-mcp` skeleton; JSON-RPC, `initialize`, `tools/list`, golden test | M1 | |
 | M3 | Registry, supervisor, argv, paths, locate, stale sweep, fake-twinning stub | M2 | |
 | M4 | The six tools and error taxonomy, stub integration tests S01 to S15 | M3 | |
-| M5 | Real e2e R01 to R08 (needs M0 done) | M4, M0c | |
-| M6 | `setup` and `doctor` subcommands, config tests | M2 | |
-| M7 | README, `docs/demo/` script, `docs/CLIENT_COMPAT.md` linked, claims audit G8 | M5, M6 | |
+| M5 | Real e2e R01 to R08 (needs M0 done) | M4, M0a, M0b, M0c | |
+| M6 | `setup` and `doctor` subcommands, config tests (`doctor` reuses `doctor.rs` created in M4; runs in parallel with M5) | M4 | |
+| M7 | README, `docs/demo/` script, `docs/CLIENT_COMPAT.md` linked, claims audit G8 | M5, M6, M0d | |
 | M8 | Release workflow assets and checksums, npm launcher files, `server.json` and `mcp-registry-auth` drafts, Homebrew formula bump text (nothing published) | M7 | |
-| G-1..G-6 | Go-live gates, each needs Zac's explicit yes: push and tag, Homebrew formula update, npm publish, registry publish, website well-known file deploy, directory submissions | M8 | One approval per gate |
+| GL-1..GL-6 | Go-live gates, each needs Zac's explicit yes: GL-1 push, version bump and tag (after M8); GL-2 npm publish (after GL-1); GL-3 website well-known file deploy (after M8, independent of GL-1); GL-4 registry publish (after GL-1, GL-2, GL-3); GL-5 repo hygiene and Homebrew formula (after GL-1); GL-6 directory submissions (after GL-4) | M8 | One approval per gate |
+
+File ownership (file locks, bead id as thread, no worktrees): M0a then M0b share `listener.rs` (M0a commits first). M0d and M1 both touch `README.md` on different lines (one lock at a time). M1 owns root `Cargo.toml`, `Cargo.lock` and `release.yml` until it commits; M2 (members) and M8 (`release.yml`) follow it. `docs/CLIENT_COMPAT.md` is created by M0c, appended by M5, linked by M7. M0a, M0b, M0d and M1 can run concurrently apart from those rules; M5 and M6 can run concurrently. Do not push any commit that changes root `Cargo.toml` before GL-1: a push to `main` touching it triggers `release.yml` (fails at the existing-tag check if the version is unchanged, publishes if bumped). GL-1 owns the version bump.
 
 ## 7. Test matrix
 
