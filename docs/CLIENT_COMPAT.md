@@ -46,3 +46,42 @@ Other catalog and reflection queries, join forms, SQL statements, drivers, and
 Postgres protocol behaviors outside the checked-in canaries have not been
 tested here. No compatibility claim is made for them, and this record does not
 assert that every untested shape returns a particular SQLSTATE.
+
+## M5 real MCP end-to-end gate results (2026-11-01)
+
+The R01-R08 tests ran the committed `twinning-mcp` binary over stdio. Each case
+started and stopped its twin through MCP tool calls, passed an explicit real
+`twinning` binary with `--twinning-bin`, and checked the child command line for
+`--host 127.0.0.1`. No fake twin was used for these cases.
+
+The focused command was
+`CARGO_TARGET_DIR=target/pane-a cargo test --locked --offline -p twinning-mcp --test e2e_real -- --nocapture --test-threads=1`.
+It passed R01-R08: 8 passed, 0 failed, 0 ignored; `SKIPPED:` count 0. The run
+used psql 14.24 (Homebrew), psycopg2 2.9.13 (`dt dec pq3 ext lo64`), SQLAlchemy
+2.1.6, and uv 0.13.5 (Homebrew 2026-10-22, x86_64-apple-darwin). R05-R07 each
+ran the M0c `tests/compat/driver_cases.py` using the approved
+`uv run --with psycopg2-binary --with sqlalchemy python <absolute script path>`
+form from a scratch directory under the test artifacts directory.
+
+| Case | Live operation | Observed result |
+| --- | --- | --- |
+| R01 | MCP `twin_start`, listener readiness, non-loopback connection attempt, `twin_stop`, `twin_report` | The real child argv used `--host 127.0.0.1`. psql attempted `192.168.86.29` on the allocated port and exited 2 with `timeout expired`; the twin remained ready, stopped with exit 0, and reported `READY`. |
+| R02 | psql sent `BEGIN` and `ROLLBACK` as separate `-c` commands through the returned connection string | Both commands succeeded without SQLSTATE; stop report was `READY`. |
+| R03 | psql `SELECT version()` with libpq's default SSL mode | Query succeeded and returned `PostgreSQL 16.0 (twinning)`; stop report was `READY`. |
+| R04 | Malformed startup disconnect, successful psql query, `BEGIN` followed by disconnect, then another `BEGIN` and `ROLLBACK` | The final stop report was `READY`; the trace had no SQLSTATE `55P03`. |
+| R05 | Real psycopg2 inserts and primary-key reads from the M0c driver script | Valid insert and reads succeeded. CHECK violation returned `23514`; duplicate primary key returned `23505`. Report: 2 rows, `check_violations=1`, `unique_violations=1`, `fk_violations=0`, `not_null_violations=0`. |
+| R06 | Real SQLAlchemy Core insert and select by primary key from the M0c driver script | Insert and select succeeded. The script's hstore startup probe returned zero rows. Report counters matched R05. |
+| R07 | Full stdio MCP session with real driver cases, `twin_stop`, then `twin_report` | The report showed the CHECK violation (`23514`), `check_violations=1`, `unique_violations=1`, and 2 rows. |
+| R08 | `twin_seed_contract`, filled seed, `twin_start` with the seed, then `twin_stop` | Stop summary showed 1 row in `public.deals` and `outcome=READY`. |
+
+G3 and the full workspace suite were also run from a fresh clone at source
+revision `d6bdf1f` with an initially absent `target/pane-a`. In that clone,
+`cargo build --locked -p twinning`, `cargo fmt --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`, and
+`cargo test --workspace --locked --offline -- --nocapture` all exited 0. The
+workspace suite had `SKIPPED:` count 0.
+
+For G5, the process snapshot before and after the full suite was identical.
+Both `pgrep -fl '[t]winning|fake_[t]winning'` snapshots contained only the
+pre-existing NTM monitor process, PID 51566; `diff -u` exited 0. No process
+started by the suite remained.
