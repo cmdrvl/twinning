@@ -11,6 +11,24 @@ use std::{
 use twinning::protocol::postgres::listener::{PgwireListener, ShutdownHook};
 
 #[test]
+fn m0a_ssl_request_then_startup_is_accepted() {
+    run_encryption_request_then_startup(
+        "M0A-SSL",
+        "cargo test --test pgwire_listener m0a_ssl_request_then_startup_is_accepted -- --exact --nocapture",
+        80_877_103,
+    );
+}
+
+#[test]
+fn m0a_gssenc_request_then_startup_is_accepted() {
+    run_encryption_request_then_startup(
+        "M0A-GSSENC",
+        "cargo test --test pgwire_listener m0a_gssenc_request_then_startup_is_accepted -- --exact --nocapture",
+        80_877_104,
+    );
+}
+
+#[test]
 fn listener_accepts_startup_and_simple_query_round_trip() {
     let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
     let addr = listener.local_addr().expect("listener addr");
@@ -147,6 +165,12 @@ fn decode_error_sqlstate_returns_err_when_field_is_missing() {
 }
 
 fn write_startup_packet(stream: &mut TcpStream, params: &[(&str, &str)]) {
+    let frame = startup_packet_bytes(params);
+    stream.write_all(&frame).expect("write startup");
+    stream.flush().expect("flush startup");
+}
+
+fn startup_packet_bytes(params: &[(&str, &str)]) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&196_608_u32.to_be_bytes());
     for (name, value) in params {
@@ -160,8 +184,164 @@ fn write_startup_packet(stream: &mut TcpStream, params: &[(&str, &str)]) {
     let mut frame = Vec::new();
     frame.extend_from_slice(&((body.len() + 4) as i32).to_be_bytes());
     frame.extend_from_slice(&body);
-    stream.write_all(&frame).expect("write startup");
-    stream.flush().expect("flush startup");
+    frame
+}
+
+fn run_encryption_request_then_startup(label: &str, command_line: &str, request_code: u32) {
+    let listener = PgwireListener::bind("127.0.0.1", 0).expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let port = addr.port();
+    let handle = thread::spawn(move || listener.accept("m0a-encryption-request"));
+
+    let mut client = TcpStream::connect(addr).expect("connect");
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set 2 s read timeout");
+
+    let request = startup_request_frame(request_code);
+    client
+        .write_all(&request)
+        .expect("write encryption request");
+    let mut bytes_sent = request.len();
+    let first_response = read_startup_response(&mut client);
+    let response_tag = first_response
+        .as_ref()
+        .ok()
+        .and_then(|(frame, _)| frame.first())
+        .copied();
+    let mut bytes_received = first_response
+        .as_ref()
+        .map(|(_, byte_count)| *byte_count)
+        .unwrap_or_default();
+
+    let mut startup_write_error = None;
+    let mut startup_result = None;
+    if response_tag == Some(b'N') {
+        let startup = startup_packet_bytes(&[("user", "postgres")]);
+        bytes_sent += startup.len();
+        match client.write_all(&startup) {
+            Ok(()) => {
+                startup_result = Some(read_until_ready(&mut client));
+                if let Some(Ok(frames)) = &startup_result {
+                    bytes_received += frames.iter().map(Vec::len).sum::<usize>();
+                }
+            }
+            Err(error) => startup_write_error = Some(error.kind()),
+        }
+    }
+
+    let startup_is_ready = startup_result.as_ref().is_some_and(|result| {
+        result.as_ref().is_ok_and(|frames| {
+            frames.iter().any(|frame| frame.first() == Some(&b'R'))
+                && frames
+                    .last()
+                    .is_some_and(|frame| frame.first() == Some(&b'Z'))
+        })
+    });
+    if startup_is_ready {
+        write_terminate_message(&mut client);
+        bytes_sent += 5;
+    }
+
+    let response_observation = match &first_response {
+        Ok((frame, _)) if frame.first() == Some(&b'E') => {
+            format!(
+                "tag=0x{:02X} sqlstate={:?}",
+                frame[0],
+                decode_error_sqlstate(frame).ok()
+            )
+        }
+        Ok((frame, _)) => format!("tag=0x{:02X}", frame[0]),
+        Err(error) => format!("error={:?}", error.kind()),
+    };
+    let startup_observation = match &startup_result {
+        Some(Ok(frames)) => format!("frames={},ready={startup_is_ready}", frames.len()),
+        Some(Err(error)) => format!("error={:?}", error.kind()),
+        None => "not-sent".to_owned(),
+    };
+    drop(client);
+    let server_result = handle.join();
+    let server_exit_code = match &server_result {
+        Ok(Ok(())) => 0,
+        _ => 1,
+    };
+    let server_observation = match &server_result {
+        Ok(Ok(())) => "ok".to_owned(),
+        Ok(Err(error)) => format!("error={:?}", error.kind()),
+        Err(_) => "panic".to_owned(),
+    };
+
+    println!(
+        "[{label}] command={command_line:?} port={port} request_hex={} bytes_sent={bytes_sent} first_response={response_observation} startup={startup_observation} bytes_received={bytes_received} server={server_observation} server_exit_code={server_exit_code}",
+        request
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>()
+    );
+
+    assert_eq!(
+        response_tag,
+        Some(b'N'),
+        "{label} encryption request must receive the one-byte N denial"
+    );
+    assert!(
+        startup_write_error.is_none(),
+        "{label} startup write failed: {startup_write_error:?}"
+    );
+    let Some(startup_result) = startup_result else {
+        panic!("{label} startup packet must be sent after N");
+    };
+    let startup_frames = startup_result.unwrap_or_else(|error| {
+        panic!("{label} startup response must reach ReadyForQuery: {error:?}");
+    });
+    assert!(
+        startup_frames
+            .iter()
+            .any(|frame| frame.first() == Some(&b'R')),
+        "{label} startup response must authenticate"
+    );
+    assert_eq!(
+        startup_frames.last().map(|frame| frame.get(5)),
+        Some(Some(&b'I')),
+        "{label} startup response must end with ReadyForQuery"
+    );
+    assert!(
+        matches!(server_result, Ok(Ok(()))),
+        "{label} server connection must exit cleanly"
+    );
+}
+
+fn startup_request_frame(request_code: u32) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(8);
+    frame.extend_from_slice(&8_i32.to_be_bytes());
+    frame.extend_from_slice(&request_code.to_be_bytes());
+    frame
+}
+
+fn read_startup_response(stream: &mut TcpStream) -> std::io::Result<(Vec<u8>, usize)> {
+    let mut tag = [0_u8; 1];
+    stream.read_exact(&mut tag)?;
+    if tag[0] == b'N' {
+        return Ok((tag.to_vec(), tag.len()));
+    }
+
+    let mut length_bytes = [0_u8; 4];
+    stream.read_exact(&mut length_bytes)?;
+    let length = i32::from_be_bytes(length_bytes);
+    if length < 4 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("startup response has invalid length {length}"),
+        ));
+    }
+    let mut body = vec![0_u8; length as usize - 4];
+    stream.read_exact(&mut body)?;
+    let mut frame = Vec::with_capacity(length as usize + 1);
+    frame.push(tag[0]);
+    frame.extend_from_slice(&length_bytes);
+    frame.extend_from_slice(&body);
+    let bytes_read = frame.len();
+    Ok((frame, bytes_read))
 }
 
 fn write_query_message(stream: &mut TcpStream, sql: &str) {

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 pub const PROTOCOL_VERSION_3: u32 = 196_608;
 pub const SSL_REQUEST_CODE: u32 = 80_877_103;
+pub const GSSENC_REQUEST_CODE: u32 = 80_877_104;
 pub const CANCEL_REQUEST_CODE: u32 = 80_877_102;
 pub const DECLARED_BACKEND_PROCESS_ID: i32 = 1;
 pub const DECLARED_BACKEND_SECRET_KEY: i32 = 1;
@@ -9,6 +10,7 @@ pub const DECLARED_BACKEND_SECRET_KEY: i32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupPacket {
     SslRequest,
+    GssEncRequest,
     CancelRequest { process_id: i32, secret_key: i32 },
     Startup(StartupMessage),
 }
@@ -21,6 +23,7 @@ pub struct StartupMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupOutcome {
+    /// Encryption was declined; the client should continue with cleartext startup.
     SslDenied,
     Authenticated(AuthenticatedStartup),
 }
@@ -129,13 +132,21 @@ pub fn parse_startup_packet(frame: &[u8]) -> Result<StartupPacket, StartupRefusa
 
     let code = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]);
     match code {
-        SSL_REQUEST_CODE => {
+        SSL_REQUEST_CODE | GSSENC_REQUEST_CODE => {
             if frame.len() != 8 {
                 return Err(StartupRefusal::invalid_startup_packet(
-                    "SSLRequest packet must be exactly 8 bytes",
+                    if code == SSL_REQUEST_CODE {
+                        "SSLRequest packet must be exactly 8 bytes"
+                    } else {
+                        "GSSENCRequest packet must be exactly 8 bytes"
+                    },
                 ));
             }
-            Ok(StartupPacket::SslRequest)
+            Ok(if code == SSL_REQUEST_CODE {
+                StartupPacket::SslRequest
+            } else {
+                StartupPacket::GssEncRequest
+            })
         }
         CANCEL_REQUEST_CODE => {
             if frame.len() != 16 {
@@ -158,7 +169,7 @@ pub fn parse_startup_packet(frame: &[u8]) -> Result<StartupPacket, StartupRefusa
 
 pub fn negotiate_startup(packet: StartupPacket) -> Result<StartupOutcome, StartupRefusal> {
     match packet {
-        StartupPacket::SslRequest => Ok(StartupOutcome::SslDenied),
+        StartupPacket::SslRequest | StartupPacket::GssEncRequest => Ok(StartupOutcome::SslDenied),
         StartupPacket::CancelRequest { .. } => Err(StartupRefusal::unsupported_startup_request(
             "cancel_request",
         )),
@@ -284,7 +295,7 @@ fn parse_startup_params(bytes: &[u8]) -> Result<BTreeMap<String, String>, Startu
     }
 
     let mut params = BTreeMap::new();
-    for pair in segments.chunks_exact(2) {
+    for pair in segments.as_chunks::<2>().0.iter() {
         let key = &pair[0];
         let value = &pair[1];
         if key.is_empty() {
@@ -360,8 +371,8 @@ mod tests {
 
     use super::{
         AuthMode, BackendKeyData, DECLARED_BACKEND_PROCESS_ID, DECLARED_BACKEND_SECRET_KEY,
-        PROTOCOL_VERSION_3, ParameterStatus, SSL_REQUEST_CODE, StartupMessage, StartupOutcome,
-        StartupPacket, declared_backend_key_data, declared_parameter_statuses,
+        GSSENC_REQUEST_CODE, PROTOCOL_VERSION_3, ParameterStatus, SSL_REQUEST_CODE, StartupMessage,
+        StartupOutcome, StartupPacket, declared_backend_key_data, declared_parameter_statuses,
         encode_startup_response, negotiate_startup, parse_startup_packet,
     };
 
@@ -422,6 +433,17 @@ mod tests {
         assert_eq!(packet, StartupPacket::SslRequest);
 
         let outcome = negotiate_startup(packet).expect("ssl negotiation");
+        assert_eq!(outcome, StartupOutcome::SslDenied);
+        assert_eq!(encode_startup_response(&Ok(outcome)), vec![vec![b'N']]);
+    }
+
+    #[test]
+    fn gssenc_request_is_denied_without_fatal_refusal() {
+        let packet = parse_startup_packet(&raw_frame(GSSENC_REQUEST_CODE, &[]))
+            .expect("parse GSSENCRequest");
+        assert_eq!(packet, StartupPacket::GssEncRequest);
+
+        let outcome = negotiate_startup(packet).expect("GSS encryption negotiation");
         assert_eq!(outcome, StartupOutcome::SslDenied);
         assert_eq!(encode_startup_response(&Ok(outcome)), vec![vec![b'N']]);
     }
@@ -554,9 +576,9 @@ mod tests {
     fn expect_startup_packet(packet: StartupPacket) -> Result<StartupMessage, &'static str> {
         match packet {
             StartupPacket::Startup(startup) => Ok(startup),
-            StartupPacket::SslRequest | StartupPacket::CancelRequest { .. } => {
-                Err("expected startup packet")
-            }
+            StartupPacket::SslRequest
+            | StartupPacket::GssEncRequest
+            | StartupPacket::CancelRequest { .. } => Err("expected startup packet"),
         }
     }
 

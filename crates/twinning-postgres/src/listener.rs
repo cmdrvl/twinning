@@ -280,39 +280,44 @@ fn serve_connection_with_shutdown(
     live_state: Option<SharedPgwireState>,
 ) -> io::Result<()> {
     let session_id = session_id.into();
-    let startup_packet = match read_startup_packet(stream, shutdown) {
-        Ok(packet) => packet,
-        Err(error) => {
-            let frames = encode_startup_response(&Err(startup_error_refusal(&error)));
-            write_frames(stream, &frames)?;
-            return Err(error);
-        }
-    };
+    // libpq may probe GSS and SSL before sending its v3 StartupMessage.
+    let outcome = loop {
+        let startup_packet = match read_startup_packet(stream, shutdown) {
+            Ok(packet) => packet,
+            Err(error) => {
+                let frames = encode_startup_response(&Err(startup_error_refusal(&error)));
+                write_frames(stream, &frames)?;
+                return Err(error);
+            }
+        };
 
-    let startup = match parse_startup_packet(&startup_packet) {
-        Ok(packet) => packet,
-        Err(refusal) => {
-            let error = io::Error::new(io::ErrorKind::InvalidData, refusal.message.clone());
-            let frames = encode_startup_response(&Err(refusal));
-            write_frames(stream, &frames)?;
-            return Err(error);
-        }
-    };
+        let startup = match parse_startup_packet(&startup_packet) {
+            Ok(packet) => packet,
+            Err(refusal) => {
+                let error = io::Error::new(io::ErrorKind::InvalidData, refusal.message.clone());
+                let frames = encode_startup_response(&Err(refusal));
+                write_frames(stream, &frames)?;
+                return Err(error);
+            }
+        };
 
-    let outcome = match negotiate_startup(startup) {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            let io_error = io::Error::new(io::ErrorKind::InvalidData, error.message.clone());
-            let frames = encode_startup_response(&Err(error));
-            write_frames(stream, &frames)?;
-            return Err(io_error);
+        match negotiate_startup(startup) {
+            Ok(StartupOutcome::SslDenied) => {
+                let frames = encode_startup_response(&Ok(StartupOutcome::SslDenied));
+                write_frames(stream, &frames)?;
+            }
+            Ok(outcome) => break outcome,
+            Err(error) => {
+                let io_error = io::Error::new(io::ErrorKind::InvalidData, error.message.clone());
+                let frames = encode_startup_response(&Err(error));
+                write_frames(stream, &frames)?;
+                return Err(io_error);
+            }
         }
     };
 
     let mut startup_frames = encode_startup_response(&Ok(outcome.clone()));
-    if matches!(outcome, StartupOutcome::Authenticated(_)) {
-        startup_frames.push(ready_for_query_frame(Default::default()));
-    }
+    startup_frames.push(ready_for_query_frame(Default::default()));
     write_frames(stream, &startup_frames)?;
 
     let mut session = SessionLoop::new();
