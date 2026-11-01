@@ -147,6 +147,37 @@ fn tools_call_response(
         );
     };
 
+    if let Err(validation) = validate_tool_arguments(&tool.input_schema, params) {
+        let (code, message) = if validation.kind == "unsupported_schema" {
+            (
+                JSONRPC_SERVER_ERROR,
+                format!(
+                    "tool {name} input schema is unsupported at {}: {}",
+                    validation.path, validation.detail
+                ),
+            )
+        } else {
+            (
+                JSONRPC_INVALID_PARAMS,
+                format!(
+                    "tool {name} arguments invalid at {}: {}",
+                    validation.path, validation.detail
+                ),
+            )
+        };
+        return error_response(
+            id,
+            code,
+            message,
+            Some(json!({
+                "kind": validation.kind,
+                "tool": name,
+                "path": validation.path,
+                "detail": validation.detail
+            })),
+        );
+    }
+
     if classify_tool_executability(tool) == ToolExecutability::UnsupportedShape {
         return error_response(
             id,
@@ -319,6 +350,375 @@ fn error_response(
             message: message.into(),
             data,
         }),
+    }
+}
+
+struct InputSchemaError {
+    kind: &'static str,
+    path: String,
+    detail: String,
+}
+
+fn validate_tool_arguments(
+    schema: &JsonValue,
+    params: Option<&JsonValue>,
+) -> Result<(), InputSchemaError> {
+    let empty_arguments = JsonValue::Object(JsonMap::new());
+    let arguments = params
+        .and_then(|params| params.get("arguments"))
+        .unwrap_or(&empty_arguments);
+    validate_json_schema(schema, arguments, "$")
+}
+
+fn validate_json_schema(
+    schema: &JsonValue,
+    value: &JsonValue,
+    path: &str,
+) -> Result<(), InputSchemaError> {
+    if let Some(schema_is_true) = schema.as_bool() {
+        return if schema_is_true {
+            Ok(())
+        } else {
+            Err(schema_validation_error(
+                path,
+                "value is rejected by the input schema",
+            ))
+        };
+    }
+    let Some(schema) = schema.as_object() else {
+        return Err(unsupported_schema_error(
+            path,
+            "input schema must be an object or boolean",
+        ));
+    };
+
+    const UNSUPPORTED_ASSERTIONS: &[&str] = &[
+        "$ref",
+        "$dynamicRef",
+        "$recursiveRef",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "not",
+        "pattern",
+        "format",
+        "patternProperties",
+        "propertyNames",
+        "dependencies",
+        "dependentRequired",
+        "dependentSchemas",
+        "contains",
+        "minContains",
+        "maxContains",
+        "additionalItems",
+        "prefixItems",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "multipleOf",
+        "if",
+        "then",
+        "else",
+        "contentEncoding",
+        "contentMediaType",
+        "contentSchema",
+    ];
+    if let Some(keyword) = UNSUPPORTED_ASSERTIONS
+        .iter()
+        .find(|keyword| schema.contains_key(**keyword))
+    {
+        return Err(unsupported_schema_error(
+            path,
+            format!("input schema keyword {keyword} is unsupported"),
+        ));
+    }
+
+    if let Some(schema_type) = schema.get("type") {
+        let allowed_types = match schema_type {
+            JsonValue::String(schema_type) => vec![schema_type.as_str()],
+            JsonValue::Array(schema_types) => schema_types
+                .iter()
+                .map(|schema_type| {
+                    schema_type.as_str().ok_or_else(|| {
+                        unsupported_schema_error(path, "type array must contain only strings")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => {
+                return Err(unsupported_schema_error(
+                    path,
+                    "type must be a string or array",
+                ));
+            }
+        };
+        if allowed_types.is_empty()
+            || allowed_types
+                .iter()
+                .any(|schema_type| !is_supported_json_type(schema_type))
+        {
+            return Err(unsupported_schema_error(
+                path,
+                "input schema has an empty or unknown type",
+            ));
+        }
+        if !allowed_types
+            .iter()
+            .any(|schema_type| json_value_matches_type(value, schema_type))
+        {
+            return Err(schema_validation_error(
+                path,
+                format!(
+                    "expected {}, received {}",
+                    allowed_types.join(" or "),
+                    json_value_type_name(value)
+                ),
+            ));
+        }
+    }
+
+    if let Some(constraint) = schema.get("const")
+        && constraint != value
+    {
+        return Err(schema_validation_error(path, "value does not match const"));
+    }
+    if let Some(values) = schema.get("enum") {
+        let Some(values) = values.as_array() else {
+            return Err(unsupported_schema_error(path, "enum must be an array"));
+        };
+        if !values.contains(value) {
+            return Err(schema_validation_error(path, "value is not in enum"));
+        }
+    }
+
+    if let Some(object) = value.as_object() {
+        if let Some(required) = schema.get("required") {
+            let Some(required) = required.as_array() else {
+                return Err(unsupported_schema_error(path, "required must be an array"));
+            };
+            for property in required {
+                let Some(property) = property.as_str() else {
+                    return Err(unsupported_schema_error(
+                        path,
+                        "required must contain only strings",
+                    ));
+                };
+                if !object.contains_key(property) {
+                    return Err(schema_validation_error(
+                        &schema_field_path(path, property),
+                        "required property is missing",
+                    ));
+                }
+            }
+        }
+
+        if let Some(minimum) = schema_integer_keyword(schema, "minProperties", path)?
+            && object.len() < minimum
+        {
+            return Err(schema_validation_error(
+                path,
+                format!(
+                    "expected at least {minimum} properties, received {}",
+                    object.len()
+                ),
+            ));
+        }
+        if let Some(maximum) = schema_integer_keyword(schema, "maxProperties", path)?
+            && object.len() > maximum
+        {
+            return Err(schema_validation_error(
+                path,
+                format!(
+                    "expected at most {maximum} properties, received {}",
+                    object.len()
+                ),
+            ));
+        }
+
+        let properties =
+            match schema.get("properties") {
+                None => None,
+                Some(properties) => Some(properties.as_object().ok_or_else(|| {
+                    unsupported_schema_error(path, "properties must be an object")
+                })?),
+            };
+        for (property, property_value) in object {
+            let property_path = schema_field_path(path, property);
+            if let Some(property_schema) =
+                properties.and_then(|properties| properties.get(property))
+            {
+                validate_json_schema(property_schema, property_value, &property_path)?;
+            } else if let Some(additional_schema) = schema.get("additionalProperties") {
+                validate_json_schema(additional_schema, property_value, &property_path)?;
+            }
+        }
+    }
+
+    if let Some(items) = value.as_array() {
+        if let Some(minimum) = schema_integer_keyword(schema, "minItems", path)?
+            && items.len() < minimum
+        {
+            return Err(schema_validation_error(
+                path,
+                format!(
+                    "expected at least {minimum} items, received {}",
+                    items.len()
+                ),
+            ));
+        }
+        if let Some(maximum) = schema_integer_keyword(schema, "maxItems", path)?
+            && items.len() > maximum
+        {
+            return Err(schema_validation_error(
+                path,
+                format!("expected at most {maximum} items, received {}", items.len()),
+            ));
+        }
+        if schema.get("uniqueItems") == Some(&JsonValue::Bool(true)) {
+            for index in 0..items.len() {
+                if items[..index].contains(&items[index]) {
+                    return Err(schema_validation_error(
+                        &format!("{path}[{index}]"),
+                        "array item is not unique",
+                    ));
+                }
+            }
+        }
+        if let Some(item_schema) = schema.get("items") {
+            for (index, item) in items.iter().enumerate() {
+                validate_json_schema(item_schema, item, &format!("{path}[{index}]"))?;
+            }
+        }
+    }
+
+    if let Some(string) = value.as_str() {
+        if let Some(minimum) = schema_integer_keyword(schema, "minLength", path)?
+            && string.chars().count() < minimum
+        {
+            return Err(schema_validation_error(
+                path,
+                format!("expected at least {minimum} characters"),
+            ));
+        }
+        if let Some(maximum) = schema_integer_keyword(schema, "maxLength", path)?
+            && string.chars().count() > maximum
+        {
+            return Err(schema_validation_error(
+                path,
+                format!("expected at most {maximum} characters"),
+            ));
+        }
+    }
+
+    if let Some(number) = value.as_f64() {
+        for keyword in ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"] {
+            let Some(limit) = schema.get(keyword) else {
+                continue;
+            };
+            let Some(limit) = limit.as_f64() else {
+                return Err(unsupported_schema_error(
+                    path,
+                    format!("{keyword} must be a number"),
+                ));
+            };
+            let violates = match keyword {
+                "minimum" => number < limit,
+                "maximum" => number > limit,
+                "exclusiveMinimum" => number <= limit,
+                "exclusiveMaximum" => number >= limit,
+                _ => false,
+            };
+            if violates {
+                return Err(schema_validation_error(
+                    path,
+                    format!("number violates {keyword} {limit}"),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn schema_integer_keyword(
+    schema: &serde_json::Map<String, JsonValue>,
+    keyword: &str,
+    path: &str,
+) -> Result<Option<usize>, InputSchemaError> {
+    let Some(value) = schema.get(keyword) else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_u64().and_then(|value| usize::try_from(value).ok()) else {
+        return Err(unsupported_schema_error(
+            path,
+            format!("{keyword} must be a non-negative integer"),
+        ));
+    };
+    Ok(Some(value))
+}
+
+fn schema_field_path(path: &str, field: &str) -> String {
+    if !field.is_empty()
+        && field
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        format!("{path}.{field}")
+    } else {
+        format!(
+            "{path}[{}]",
+            serde_json::to_string(field).expect("string JSON serialization")
+        )
+    }
+}
+
+fn json_value_matches_type(value: &JsonValue, expected: &str) -> bool {
+    match expected {
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "string" => value.is_string(),
+        "integer" => {
+            value.as_i64().is_some()
+                || value.as_u64().is_some()
+                || value.as_f64().is_some_and(|number| number.fract() == 0.0)
+        }
+        "number" => value.is_number(),
+        "boolean" => value.is_boolean(),
+        "null" => value.is_null(),
+        _ => false,
+    }
+}
+
+fn is_supported_json_type(expected: &str) -> bool {
+    matches!(
+        expected,
+        "object" | "array" | "string" | "integer" | "number" | "boolean" | "null"
+    )
+}
+
+fn json_value_type_name(value: &JsonValue) -> &'static str {
+    match value {
+        JsonValue::Null => "null",
+        JsonValue::Bool(_) => "boolean",
+        JsonValue::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        JsonValue::Number(_) => "number",
+        JsonValue::String(_) => "string",
+        JsonValue::Array(_) => "array",
+        JsonValue::Object(_) => "object",
+    }
+}
+
+fn schema_validation_error(path: &str, detail: impl Into<String>) -> InputSchemaError {
+    InputSchemaError {
+        kind: "schema_validation_failed",
+        path: path.to_owned(),
+        detail: detail.into(),
+    }
+}
+
+fn unsupported_schema_error(path: &str, detail: impl Into<String>) -> InputSchemaError {
+    InputSchemaError {
+        kind: "unsupported_schema",
+        path: path.to_owned(),
+        detail: detail.into(),
     }
 }
 

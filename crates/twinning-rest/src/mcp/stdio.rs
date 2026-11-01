@@ -196,8 +196,72 @@ mod tests {
 
     use crate::mcp::{
         catalog::{McpCatalog, McpCatalogSource, McpServerInfo, McpTool},
+        report::McpSessionLog,
         stdio::handle_jsonrpc_line,
     };
+
+    #[test]
+    fn tools_call_schema_failures_are_typed_and_count_as_refusals() {
+        let mut catalog = catalog();
+        catalog.tools[0].input_schema = json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string" }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        });
+
+        let valid = handle_jsonrpc_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": { "name": "lookup", "arguments": { "id": "valid" } }
+            })
+            .to_string(),
+            &catalog,
+        );
+        let valid_response = valid.response.expect("valid call response");
+        assert!(valid_response.error.is_none());
+        assert_eq!(
+            false,
+            valid_response.result.expect("valid result")["isError"]
+        );
+
+        let invalid_arguments = [
+            (json!({ "id": 123 }), "$.id"),
+            (json!({}), "$.id"),
+            (json!({ "id": "valid", "extra": true }), "$.extra"),
+        ];
+        let mut session_log = McpSessionLog::default();
+        session_log.record(valid.log);
+
+        for (id, (arguments, path)) in invalid_arguments.into_iter().enumerate() {
+            let outcome = handle_jsonrpc_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id + 2,
+                    "method": "tools/call",
+                    "params": { "name": "lookup", "arguments": arguments }
+                })
+                .to_string(),
+                &catalog,
+            );
+            let response = outcome.response.expect("invalid call response");
+            let error = response.error.expect("invalid arguments are refused");
+            assert_eq!(super::super::dispatcher::JSONRPC_INVALID_PARAMS, error.code);
+            assert!(error.message.contains(path), "message must name {path}");
+            let data = error.data.expect("typed schema refusal data");
+            assert_eq!("schema_validation_failed", data["kind"]);
+            assert_eq!(path, data["path"]);
+            assert!(outcome.log.refusal);
+            session_log.record(outcome.log);
+        }
+
+        assert_eq!(4, session_log.summary().request_count);
+        assert_eq!(3, session_log.summary().refusal_count);
+    }
 
     #[test]
     fn stdio_line_dispatches_jsonrpc_and_records_protocol_warning() {
