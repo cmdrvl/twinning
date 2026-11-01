@@ -1,12 +1,24 @@
 # Twinning MCP Server: Build Spec (v0)
 
-Companion to [PLAN_TWINNING_MCP.md](./PLAN_TWINNING_MCP.md), which holds the rationale, landscape and listing plan. This file holds what an implementing agent needs without making design decisions: scope fences, files, invariants, errors, tool contracts, tests, threats, gates and commands. Beads cite items here by ID (D##, I##, E_*, U##, S##, R##, C##, T##, G##, N##). `G1` to `G10` are quality gates (section 9); the go-live approval gates are named `GL-1` to `GL-6` (section 6). If this file and the plan disagree, this file wins for implementation and the plan gets corrected.
+Companion to [PLAN_TWINNING_MCP.md](./PLAN_TWINNING_MCP.md), which holds the rationale, landscape and listing plan. This file holds what an implementing agent needs without making design decisions: scope fences, files, invariants, errors, tool contracts, tests, threats, gates and commands. Beads cite items here by ID (D##, I##, K## tool contracts, E_*, U##, S##, R##, C## setup tests, T##, G##, N##). `G1` to `G10` are quality gates (section 9); the go-live approval gates are named `GL-1` to `GL-6` (section 6). If this file and the plan disagree, this file wins for implementation and the plan gets corrected.
 
 Date: 2026-11-01. Status: ready for a one-shot implementation session after Zac's go.
 
 ## 1. Scope
 
 v0 bar, in one sentence: an MCP client can start a Postgres twin from a DDL file, get a connection string that real drivers use, run statements from the supported subset, stop the twin, and read a report that shows what happened, installed by one binary download and one `setup` command on macOS and Linux.
+
+The v0 bar is met only when each clause below is backed by a named test or recorded gate (this table is the acceptance definition; nothing else counts):
+
+| Clause of the v0 bar | Verified by |
+| --- | --- |
+| Start a Postgres twin from a DDL file | S01 (stub), R01 (real) |
+| Connection string real drivers use | R02, R03, R05, R06 (psql, psycopg2, SQLAlchemy), G4 |
+| Run statements from the supported subset | R05, R06, R07 |
+| Stop the twin | S01, R01, R04 |
+| Report shows what happened | R05, R07 (violation counted in the report), R08 |
+| One binary download plus one `setup` command | C01 to C08, G10 (archive extracts and runs `doctor`) |
+| macOS and Linux | G10 on the host target only; the other targets are proven by the release workflow at GL-1 (not testable before it) and recorded as such |
 
 In scope:
 
@@ -22,6 +34,8 @@ In scope:
 Out of scope for v0 (do not build, do not stub in code):
 
 - REST, MCP and Snowflake twin kinds. `twin_run_once`, `twin_query`, `twin_reset`, `twin_snapshot`, live report of a running twin, Receipts pointer, telemetry, hosted mode, Streamable HTTP transport, Windows, OCI image, Cline/VS Code/Codex `setup` targets, refactoring `twinning-rest` to share the new core crate.
+
+Reasons for the deferrals: other kinds, `twin_reset`, `twin_snapshot` and the live report need twinning-side work (the report is written only at shutdown) and are tracked as the "Later" beads (bd-hkii, bd-vu7f, bd-a6qg, bd-v2ny, bd-61y4, bd-thp3); Windows and OCI add packaging risk without a v0 user; telemetry and hosted mode contradict N03; Cline, VS Code and Codex targets are not verified in v0 and `--print` covers them.
 
 Approval-gated, never done autonomously (each needs Zac's explicit yes in chat): pushing commits, tagging a release, publishing to npm, publishing to the MCP registry, directory submissions, deploying the website well-known file, installing a Python driver environment.
 
@@ -42,6 +56,11 @@ Approval-gated, never done autonomously (each needs Zac's explicit yes in chat):
 | D11 | Tool results are MCP `tools/call` results: `content: [{"type":"text","text":"<compact JSON>"}]`, plus `isError: true` and body `{"error":{"code","message","hint"}}` on failure. Protocol methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`, `ping`. Server name `twinning-mcp`, version from Cargo. |
 | D12 | `twin_start` passes `--query-trace <state>/trace.json` so the stop result can summarize request history. The trace is written only at shutdown (like the report) as `{version: "twinning.query-trace.v0", policy, events: [...]}`; SQL text and bind values are redacted to hashes. `request_count` is `events.len()`. |
 | D13 | Twin id: `tw_` plus 6 lowercase hex characters from `/dev/urandom`-seeded randomness, regenerated on collision. |
+| D14 | `twin_stop` is idempotent: on a twin already `stopped` or `expired` it returns the retained stop summary unchanged and sends no signal. It is never `E_TWIN_NOT_FOUND` unless the record was evicted (D9). |
+| D15 | `twin_start` validates in this order, first failure wins, and nothing is spawned before step 8: (1) argument shape and TTL range, `E_ARGUMENT_INVALID`; (2) `kind`, `E_KIND_UNSUPPORTED`; (3) workdir safety, `E_WORKDIR_UNSAFE`; (4) `--restricted` fields, `E_ARGUMENT_INVALID`; (5) each path: exists (`E_PATH_NOT_FOUND`), inside workdir (`E_PATH_OUTSIDE_WORKDIR`), size (`E_ARGUMENT_INVALID`); (6) `twinning` located, `E_TWINNING_NOT_FOUND`; (7) cap, `E_TWIN_CAP_REACHED`; (8) state directory creatable, else `E_INTERNAL`; then spawn. |
+| D16 | Protocol errors are JSON-RPC errors; tool failures are `isError` results. Malformed JSON: -32700 with `id` null. Batch or non-object request: -32600. Unknown method: -32601. Unknown tool name, or `arguments` not an object: -32602. Notifications get no response. Anything that reaches a tool handler and fails is an `E_*` result, never a JSON-RPC error. |
+| D17 | `twin_doctor` never fails because of what it diagnoses: a missing or non-running `twinning` gives a success body with `twinning_bin: null`, `twinning_version: null`, `health: "unavailable"`; an unsafe workdir is reported in `workdir`. It errors only for D16 protocol problems. |
+| D18 | `twin_seed_contract` writes `seed-contract.jsonl` into a fresh `contract_<6 hex>` directory (mode 0700) under the server state directory, spawns no listener, and does not count against the cap. The sweep removes it with the rest of the server directory. |
 
 ## 3. Module skeleton
 
@@ -77,7 +96,18 @@ New workspace members (add to root `Cargo.toml` `members`).
 | `tests/` | `stub_integration.rs`, `e2e_real.rs`, `setup_configs.rs`, `golden/tools_list.json`, `common/mod.rs` (shared helpers of section 7b, created in M3) |
 | `tests/bin/fake_twinning.rs` | Test-only stub binary with modes `ok`, `exit_early`, `never_listen`, `ignore_sigterm`, `crash_on_stop` (exit 2, no report), `exit1_with_report`, `listen_late` (listens after `FAKE_TWINNING_LISTEN_DELAY_MS`), `addr_in_use_once` (first spawn writes a `listener_bind` REFUSAL to stdout and exits 2; a counter file in the state dir makes the next spawn succeed), `contract_fail` (env `FAKE_TWINNING_MODE`). In `ok` mode it also writes a valid `trace.json` and, for `--export-seed-contract`, a contract file |
 
-Dependency direction: `twinning-mcp` depends on `twinning-mcp-core`; neither depends on `twinning-kernel` or any twin crate. The server talks to twinning only through the binary.
+Dependency direction: `twinning-mcp` depends on `twinning-mcp-core`; neither depends on `twinning-kernel` or any twin crate. The server talks to twinning only through the binary. Allowed dependencies: `serde`, `serde_json`, `clap`, `thiserror`, `signal-hook`, `chrono` (log timestamps; already in the root package), and `libc` or `nix` only if needed for process groups (justify in the commit message). Dev-dependencies: `tempfile` is acceptable.
+
+Existing files that the work modifies (everything else under `crates/` and `src/` is untouched):
+
+| File | Bead | Change |
+| --- | --- | --- |
+| `crates/twinning-postgres/src/startup.rs`, `crates/twinning-postgres/src/listener.rs`, `tests/pgwire_listener.rs` | M0a, M0b | SSL/GSS denial then real startup read; per-connection error isolation and writer-slot release; raw-TCP regression tests |
+| `crates/twinning-kernel/src/report.rs` (line 199 `wire_protocol`), `tests/bootstrap_cli.rs`, `AGENTS.md`, `README.md`, `docs/PLAN_TWINNING.md` | M0d | Stale string and wording only; ask first if a hash covers the field |
+| `Cargo.toml`, `crates/twinning-kernel/Cargo.toml`, `Cargo.lock`, `.github/workflows/{release,ci}.yml`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `README.md` | M1 | git dependencies, workflow simplification, doc wording, and the one clippy baseline fix in `crates/twinning-kernel/src/kernel/coerce.rs` (section 9, G1) |
+| `Cargo.toml` (members), `Cargo.lock` | M2 | Add the two new crates |
+| `.github/workflows/release.yml`, `npm/*`, `server.json`, `mcp-registry-auth` | M8 | Release assets and drafts |
+| `README.md`, `docs/demo/*`, `docs/CLIENT_COMPAT.md` | M7, M0c, M5 | See section 6 ownership |
 
 ## 4. Invariants
 
@@ -113,41 +143,62 @@ Tools (all schemas `additionalProperties: false`):
 
 Error codes (body `{"error":{"code","message","hint"}}`, `isError: true`):
 
-| Code | When | Hint |
+| Code | When | Hint | Raised in |
+| --- | --- | --- | --- |
+| `E_ARGUMENT_INVALID` | Missing or wrong-type argument, unknown field, TTL out of range, file over 5 MiB, `--restricted` violation | Name the field | tools.rs |
+| `E_KIND_UNSUPPORTED` | `kind` is not `postgres` | "Only postgres is available in v0" | tools.rs |
+| `E_TWINNING_NOT_FOUND` | D3 search fails or the binary does not run `--describe` | Install twinning or set `TWINNING_BIN` | locate.rs |
+| `E_WORKDIR_UNSAFE` | D4 | Pass `--workdir` | paths.rs |
+| `E_PATH_NOT_FOUND` | A named file does not exist | | paths.rs |
+| `E_PATH_OUTSIDE_WORKDIR` | I06 | Show the workdir | paths.rs |
+| `E_TWIN_CAP_REACHED` | I02 | Stop a twin | registry.rs |
+| `E_TWIN_NOT_FOUND` | Unknown `twin_id` | | registry.rs |
+| `E_START_FAILED` | Child exited before readiness; include exit code, parsed refusal code if stdout holds a `twinning.v0` refusal, last 2 KiB of stderr | | supervisor.rs |
+| `E_READY_TIMEOUT` | D7; the child is killed first | | supervisor.rs |
+| `E_STOP_TIMEOUT` | D8 | | supervisor.rs |
+| `E_REPORT_NOT_READY` | D9 | Call `twin_stop` | report.rs |
+| `E_REPORT_UNREADABLE` | D8 | | report.rs, supervisor.rs |
+| `E_SEED_CONTRACT_FAILED` | `--export-seed-contract` run failed; include stderr tail | | supervisor.rs |
+| `E_INTERNAL` | Anything else; never include file contents | | any (catch-all) |
+
+JSON-RPC protocol errors (-32700, -32600, -32601, -32602) follow D16 and are raised in `server.rs`; they are not `E_*` codes.
+
+Tool behavior contracts (each is checkable; the tests cite them):
+
+| ID | Contract | Tests |
 | --- | --- | --- |
-| `E_ARGUMENT_INVALID` | Missing or wrong-type argument, unknown field, TTL out of range, file over 5 MiB, `--restricted` violation | Name the field |
-| `E_KIND_UNSUPPORTED` | `kind` is not `postgres` | "Only postgres is available in v0" |
-| `E_TWINNING_NOT_FOUND` | D3 search fails or the binary does not run `--describe` | Install twinning or set `TWINNING_BIN` |
-| `E_WORKDIR_UNSAFE` | D4 | Pass `--workdir` |
-| `E_PATH_NOT_FOUND` | A named file does not exist | |
-| `E_PATH_OUTSIDE_WORKDIR` | I06 | Show the workdir |
-| `E_TWIN_CAP_REACHED` | I02 | Stop a twin |
-| `E_TWIN_NOT_FOUND` | Unknown `twin_id` | |
-| `E_START_FAILED` | Child exited before readiness; include exit code, parsed refusal code if stdout holds a `twinning.v0` refusal, last 2 KiB of stderr | |
-| `E_READY_TIMEOUT` | D7; the child is killed first | |
-| `E_STOP_TIMEOUT` | D8 | |
-| `E_REPORT_NOT_READY` | D9 | Call `twin_stop` |
-| `E_REPORT_UNREADABLE` | D8 | |
-| `E_SEED_CONTRACT_FAILED` | `--export-seed-contract` run failed; include stderr tail | |
-| `E_INTERNAL` | Anything else; never include file contents | |
+| K01 | `twin_start` success returns exactly the fields of section 5, and the connection string only after a successful TCP connect (I12, D10) | S01, S03, U10 |
+| K02 | `twin_start` validates in the D15 order; the first failure wins | U03, U05, S12, S18 |
+| K03 | No validation failure spawns a process | S12, S18, S20 |
+| K04 | `twin_list` returns every retained record in start order; status is `running` until stop, `stopped` after `twin_stop`, `expired` after TTL (I09) | S01, S06 |
+| K05 | `twin_stop` on a running twin signals, waits (D8) and returns the summary; on a `stopped` or `expired` twin it returns the retained summary with no signal (D14) | S01, S06, S21 |
+| K06 | Exit code 0 or 1 with a readable report is a normal stop; anything else is `E_REPORT_UNREADABLE` (D8) | S17, U12 |
+| K07 | `twin_report` works only after stop (D9) and truncates at 256 KiB with `truncated: true` | S10, U13 |
+| K08 | `twin_seed_contract` follows D18 and returns `{contract_path, table_count}`; a failure is `E_SEED_CONTRACT_FAILED` | S19 |
+| K09 | `twin_doctor` follows D17 and works when twinning is missing or the workdir is unsafe | S21, U05 |
+| K10 | Tool failures are `isError` results with the section 5 body; protocol failures are JSON-RPC errors (D16) | U01, S21 |
+| K11 | Shutdown (stdin EOF, SIGTERM, SIGINT) and TTL use the same stop path as `twin_stop` (I03, I09) | S06, S07, S08 |
+| K12 | Unknown or extra argument fields are rejected with the field named | U03 |
 
 ## 6. Sequence
 
-| Step | Work | Depends on | Stop rule |
-| --- | --- | --- | --- |
-| M0a | Fix SSL-denied handshake so default-libpq clients connect; add raw-TCP regression test | none | |
-| M0b | Isolate per-connection errors in the accept loop; regression test | none | |
-| M0c | Real-driver run (psycopg2, SQLAlchemy) and constraint-report check; write `docs/CLIENT_COMPAT.md` | M0a, M0b, driver-env approval | If reports do not capture violations from real drivers, STOP and report to Zac. The differentiator premise fails. |
-| M0d | Stale `wire_protocol` string, `AGENTS.md` and README server-mode wording | none | |
-| M1 | `verify-core` and `verify-engine` as git dependencies pinned to a pushed `cmdrvl/verify` commit; fresh-clone build without the sibling checkout; simplify `release.yml` and `ci.yml` | none | If the pinned commit is not on GitHub or git fetch is denied, STOP and ask |
-| M2 | Add `twinning-mcp-core` and `twinning-mcp` skeleton; JSON-RPC, `initialize`, `tools/list`, golden test | M1 | |
-| M3 | Registry, supervisor, argv, paths, locate, stale sweep, fake-twinning stub | M2 | |
-| M4 | The six tools and error taxonomy, stub integration tests S01 to S20 | M3 | |
-| M5 | Real e2e R01 to R08 (needs M0 done) | M4, M0a, M0b, M0c | |
-| M6 | `setup` and `doctor` subcommands, config tests (`doctor` reuses `doctor.rs` created in M4; runs in parallel with M5) | M4 | |
-| M7 | README, `docs/demo/` script, `docs/CLIENT_COMPAT.md` linked, claims audit G8 | M5, M6, M0d | |
-| M8 | Release workflow assets and checksums, npm launcher files, `server.json` and `mcp-registry-auth` drafts, Homebrew formula bump text (nothing published) | M7 | |
-| GL-1..GL-6 | Go-live gates, each needs Zac's explicit yes: GL-1 push, version bump and tag (after M8); GL-2 npm publish (after GL-1); GL-3 website well-known file deploy (after M8, independent of GL-1); GL-4 registry publish (after GL-1, GL-2, GL-3); GL-5 repo hygiene and Homebrew formula (after GL-1); GL-6 directory submissions (after GL-4) | M8 | One approval per gate |
+| Step | Work | Depends on | Satisfies (done when) | Stop rule |
+| --- | --- | --- | --- | --- |
+| M0a | Fix SSL-denied handshake so default-libpq clients connect; add raw-TCP regression test | none | R03 (by hand until M5); new raw-TCP regression tests fail before the fix and pass after | |
+| M0b | Isolate per-connection errors in the accept loop; regression test | none | R04 (by hand until M5); new regression tests fail before, pass after | |
+| M0c | Real-driver run (psycopg2, SQLAlchemy) and constraint-report check; write `docs/CLIENT_COMPAT.md` | M0a, M0b, driver-env approval | R05, R06, G4 | If reports do not capture violations from real drivers, STOP and report to Zac. The differentiator premise fails. |
+| M0d | Stale `wire_protocol` string, `AGENTS.md` and README server-mode wording | none | G1 (bootstrap_cli test updated) | |
+| M1 | `verify-core` and `verify-engine` as git dependencies pinned to a pushed `cmdrvl/verify` commit; fresh-clone build without the sibling checkout; simplify `release.yml` and `ci.yml` | none | G1, G9 | If the pinned commit is not on GitHub or git fetch is denied, STOP and ask |
+| M2 | Add `twinning-mcp-core` and `twinning-mcp` skeleton; JSON-RPC, `initialize`, `tools/list`, golden test | M1 | U01, U02, S13, G6, I01, I11 | |
+| M3 | Registry, supervisor, argv, paths, locate, stale sweep, fake-twinning stub | M2 | U04 to U11, U15, I02 to I08, I13, I14, D1 to D6, D13 | |
+| M4 | The six tools and error taxonomy, stub integration tests S01 to S21 | M3 | S01 to S21, U03, U12 to U14, I09 to I12, K01 to K12, E_* codes, G2, G5 (stub part), G7 | |
+| M5 | Real e2e R01 to R08 (needs M0 done) | M4, M0a, M0b, M0c | R01 to R08, G3, G5 | |
+| M6 | `setup` and `doctor` subcommands, config tests (`doctor` reuses `doctor.rs` created in M4; runs in parallel with M5) | M4 | C01 to C08, T11 | |
+| M7 | README, `docs/demo/` script, `docs/CLIENT_COMPAT.md` linked, claims audit G8 | M5, M6, M0d | G8, T10, N05, N08 | |
+| M8 | Release workflow assets and checksums, npm launcher files, `server.json` and `mcp-registry-auth` drafts, Homebrew formula bump text (nothing published) | M7 | G10, N08 | |
+| GL-1..GL-6 | Go-live gates, each needs Zac's explicit yes: GL-1 push, version bump and tag (after M8); GL-2 npm publish (after GL-1); GL-3 website well-known file deploy (after M8, independent of GL-1); GL-4 registry publish (after GL-1, GL-2, GL-3); GL-5 repo hygiene and Homebrew formula (after GL-1); GL-6 directory submissions (after GL-4) | M8 | Explicit yes in chat, recorded in the bead | One approval per gate |
+
+Stop points (safe places to leave the tree if time runs out; each needs a committed tree, green G1 for the touched crates and a handoff comment on the epic): after M1 the repo builds standalone; after M4 the server works against the stub and is usable by hand against a built `twinning`; after M5 it is proven with real clients (the minimum for any honest claim); after M7 it is documentable; after M8 it is releasable. Never stop between M0c and its stop-rule decision, and never leave M4 half done with failing S tests uncommitted.
 
 File ownership (file locks, bead id as thread, no worktrees): M0a then M0b share `listener.rs` (M0a commits first). M0d and M1 both touch `README.md` on different lines (one lock at a time). M1 owns root `Cargo.toml`, `Cargo.lock` and `release.yml` until it commits; M2 (members) and M8 (`release.yml`) follow it. `docs/CLIENT_COMPAT.md` is created by M0c, appended by M5, linked by M7. M0a, M0b, M0d and M1 can run concurrently apart from those rules; M5 and M6 can run concurrently. Do not push any commit that changes root `Cargo.toml` before GL-1: a push to `main` touching it triggers `release.yml` (fails at the existing-tag check if the version is unchanged, publishes if bumped). GL-1 owns the version bump.
 
@@ -157,7 +208,7 @@ Unit (`cargo test -p twinning-mcp -p twinning-mcp-core`):
 
 | ID | Case | Expected |
 | --- | --- | --- |
-| U01 | JSON-RPC request and response round trip, batch not supported, unknown method, `ping` | Parse OK; batch gives -32600; unknown method -32601; ping returns `{}` |
+| U01 | JSON-RPC request and response round trip, malformed JSON, batch not supported, unknown method, notification, `ping` (D16) | Parse OK; malformed JSON -32700 with null id; batch -32600; unknown method -32601; notification gets no response; ping returns `{}` |
 | U02 | Protocol negotiation with older, current, unknown client version | Server picks supported version |
 | U03 | Each tool with missing, wrong-type and extra arguments; input file of exactly 5 MiB and of 5 MiB plus 1 byte (I13) | `E_ARGUMENT_INVALID` naming the field; 5 MiB accepted, +1 refused |
 | U04 | Path `../x`, absolute outside, symlink pointing outside, path starting with `-` | `E_PATH_OUTSIDE_WORKDIR` or canonical absolute only |
@@ -197,6 +248,7 @@ Stub integration (`tests/stub_integration.rs`, uses `fake_twinning`):
 | S18 | Pre-spawn errors: bad `--twinning-bin`, missing schema file, schema outside workdir, workdir `/` without flag, state dir unwritable (`TMPDIR` read-only) | `E_TWINNING_NOT_FOUND`, `E_PATH_NOT_FOUND`, `E_PATH_OUTSIDE_WORKDIR`, `E_WORKDIR_UNSAFE`, `E_INTERNAL` with no file contents; no process spawned |
 | S19 | `twin_seed_contract` with `ok`; with `contract_fail` | `{contract_path, table_count}`; `E_SEED_CONTRACT_FAILED` with stderr tail |
 | S20 | Server started with `--restricted`: `twin_start` with `seed_path` | `E_ARGUMENT_INVALID`, no process spawned (I14) |
+| S21 | `twin_stop` twice on one twin, and on an expired twin; `tools/call` with an unknown tool name; `arguments` as an array; `twin_doctor` with a bad `--twinning-bin` and with workdir `/` | Second stop returns the same summary and sends no signal (D14); -32602 for the unknown tool and for non-object arguments (D16); `twin_doctor` succeeds with `twinning_bin: null` and `health: "unavailable"`, and reports the unsafe workdir (D17) |
 
 Real binary (`tests/e2e_real.rs`, needs `twinning` built; psql optional and skipped with a printed notice if absent; driver tests need the approved `uv` environment and are skipped with a loud notice otherwise, never silently passed):
 
@@ -232,6 +284,9 @@ Every item below has an automated test unless marked review. Owners are the bead
 | --- | --- | --- |
 | I01 | S14 | M4 |
 | I02, I04, D13, D9 (cap, ids, eviction) | U08, U09, S05 | M3, M4 |
+| D14, D16, D17, K05, K09, K10 | S21, U01 | M4 |
+| D15, K01 to K04, K06 to K08, K11, K12 | U03, U05, S01, S06, S12, S17, S18, S19, U13 (as listed in section 5) | M3, M4 |
+| D18 | S19 | M4 |
 | I03, T06 | S07, S08, S09 | M4 |
 | I05, N02, T05, N01, T04, T03 | U06, R01 | M3, M5 |
 | I06, T01, T02 | U04, S18 | M3, M4 |
@@ -315,40 +370,54 @@ Never log file contents of caller-supplied DDL, seed or config beyond sizes and 
 
 | Gate | Condition |
 | --- | --- |
-| G1 | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` pass for the whole workspace |
-| G2 | S01 to S20 pass in 3 consecutive runs (flake gate); the three command lines, artifacts dirs and pass counts are recorded in the M4 close reason |
+| G1 | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace` exit 0 for the whole workspace. Baseline on 2026-11-01 (clippy 0.1.99): fmt and `cargo test --workspace` pass, clippy FAILS with one error, `clippy::chunks_exact_to_as_chunks` at `crates/twinning-kernel/src/kernel/coerce.rs:158`; M1 fixes it (smallest change, no behavior change) before any bead may claim G1 |
+| G2 | S01 to S21 pass in 3 consecutive runs (flake gate); the three command lines, artifacts dirs and pass counts are recorded in the M4 close reason |
 | G3 | R01 to R08 pass with the real binary, driver tests included |
-| G4 | `docs/CLIENT_COMPAT.md` lists, per client (psql, psycopg2, SQLAlchemy), the version tested, the statements run and the result. No README claim goes beyond it. Go-live blocker |
+| G4 | `docs/CLIENT_COMPAT.md` lists, per client (psql, psycopg2, SQLAlchemy), the version tested, the statements run and the result. Every sentence in the README or listing that names a client, driver or version has a matching row in that file (checked by the G8 table). Go-live blocker |
 | G5 | After the full suite (S and R), `pgrep -fl 'twinning|fake_twinning'` compared with a before-snapshot shows no process started by the tests |
-| G6 | `initialize` round trip under 500 ms, measured and recorded |
+| G6 | `initialize` round trip under 500 ms, measured from process spawn to first response line with `time` on the command in section 10, three runs, worst value recorded in an M2 bead comment |
 | G7 | `./scripts/ubs_gate.sh` passes (process management is runtime-sensitive) |
-| G8 | README claims audit: each claim maps to a test ID or is removed; `grep -rn $'\xe2\x80\x94' README.md docs/PLAN_TWINNING_MCP*.md docs/CLIENT_COMPAT.md docs/demo npm registry` finds nothing (N08); the README tells readers to treat tool output as data (T10) |
-| G9 | Fresh clone in a temp directory with no sibling `verify` checkout builds `twinning` and `twinning-mcp` (after M1) |
+| G8 | README claims audit: each claim maps to a test ID or is removed; `grep -rn $'\xe2\x80\x94' README.md docs/PLAN_TWINNING_MCP.md docs/PLAN_TWINNING_MCP_SPEC.md docs/CLIENT_COMPAT.md docs/demo npm server.json` prints no match (N08; a path that does not exist yet is an error line, not a match; at 2026-11-01 `README.md` has 13 pre-existing matches that M7 replaces with plain punctuation); the README tells readers to treat tool output as data (T10) |
+| G9 | Fresh clone in a temp directory with no sibling `verify` checkout builds `twinning` (after M1) and `twinning-mcp` (after M2): `cargo build --workspace` exits 0 there |
 | G10 | Release dry run: build both binaries for the host target, produce archive and SHA-256 file, extract and run `twinning-mcp doctor` |
 
 ## 10. Commands
 
+Each block says when it becomes valid. "Now" commands were run or parsed on 2026-11-01 against the current repo (fmt, `cargo build -p twinning`, `cargo test --workspace` and `twinning --describe` ran; clippy fails at the baseline noted in G1). Everything else fails until its bead lands, so do not run it earlier.
+
 ```bash
+# Now
 cd /Users/zacharyruiz/Source/cmdrvl/twinning
-
+cargo build -p twinning
 cargo build --workspace
-cargo build -p twinning-mcp
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets -- -D warnings      # fails until M1 fixes the coerce.rs baseline (G1)
 cargo test --workspace
-cargo test -p twinning-mcp --test stub_integration
-cargo test -p twinning-mcp --test e2e_real -- --nocapture
-cargo test -p twinning-mcp --test setup_configs
 ./scripts/ubs_gate.sh
+./target/debug/twinning --describe             # D3 probe: exits 0, prints operator.v0 JSON
 
-# smoke by hand
-./target/debug/twinning postgres --schema schema.sql --serve --port 54329 --report out/r.json --json
+# Now: smoke by hand (twinning creates the report's parent directory itself; stop with Ctrl-C or SIGTERM)
+./target/debug/twinning postgres --schema tests/fixtures/bootstrap_cli/schema.sql --serve --port 54329 --report out/r.json --json
 PGSSLMODE=disable PGGSSENCMODE=disable psql "postgresql://u@127.0.0.1:54329/db" -c "begin"
 
-# MCP by hand (stdio)
+# After M0a: the same psql line without the two PG* variables must connect (R03 by hand)
+
+# After M2
+cargo build -p twinning-mcp
+cargo test -p twinning-mcp -p twinning-mcp-core
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}' | ./target/debug/twinning-mcp --workdir "$PWD"
 
-# beads
+# After M4 (needs M3's fake_twinning; M3 alone has unit tests only)
+cargo test -p twinning-mcp --test stub_integration -- --nocapture
+
+# After M5
+cargo build -p twinning && cargo test -p twinning-mcp --test e2e_real -- --nocapture
+
+# After M6
+cargo test -p twinning-mcp --test setup_configs
+./target/debug/twinning-mcp doctor
+
+# Beads (now)
 br ready --json
 br update <id> --status in_progress --json
 br close <id> --reason "Completed" --json
@@ -359,17 +428,19 @@ In dcg-guarded sessions, shell redirects to variable paths and `psql -c "$var"` 
 
 ## 11. Non-negotiables
 
-| ID | Rule |
-| --- | --- |
-| N01 | The server never runs a caller-supplied command and never exposes a shell. |
-| N02 | Twins listen on 127.0.0.1 only. |
-| N03 | No telemetry, no outbound network calls. |
-| N04 | Nothing is published, tagged, pushed or installed from the network without Zac's explicit yes in chat. |
-| N05 | The README and listing claim only what `docs/CLIENT_COMPAT.md` and the test matrix show. No "works with psycopg2" without G4. |
-| N06 | Refusals and errors are explicit with codes; no silent fallback to partial behavior. |
-| N07 | A failing test is reported as failing. A skipped test prints why. No test is weakened to pass. |
-| N08 | No em dashes in authored docs or the README. |
-| N09 | A bead is closed only with evidence in the close reason (commands run and their results). A bead whose acceptance depends on something not run, skipped or approval-gated stays open and says why. |
+These are the contract, not aspirations. If any is violated, twinning-mcp is not shippable and the work is not done, whatever else passes. "Verified by" names the check that fails when the rule is broken.
+
+| ID | Rule | Verified by |
+| --- | --- | --- |
+| N01 | The server never runs a caller-supplied command and never exposes a shell. | U06, I07 |
+| N02 | Twins listen on 127.0.0.1 only. | U06, R01 |
+| N03 | No telemetry, no outbound network calls. | U14 |
+| N04 | Nothing is published, tagged, pushed or installed from the network without Zac's explicit yes in chat. | GL beads; close reasons quote the yes |
+| N05 | The README and listing claim only what `docs/CLIENT_COMPAT.md` and the test matrix show. No "works with psycopg2" without G4. | G8 claims table |
+| N06 | Refusals and errors are explicit with codes; no silent fallback to partial behavior. | E_* tests in 7a, S21 |
+| N07 | A failing test is reported as failing. A skipped test prints why. No test is weakened to pass. | `SKIPPED:` rule in 7b; close reasons report the count |
+| N08 | No em dashes in authored docs or the README. | G8 grep |
+| N09 | A bead is closed only with evidence in the close reason (commands run and their results). A bead whose acceptance depends on something not run, skipped or approval-gated stays open and says why. | Epic review of close reasons |
 
 ## 12. Session kickoff prompt (one-shot)
 
