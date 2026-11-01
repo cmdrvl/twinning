@@ -71,7 +71,7 @@ through MCP, inserts rows with the local `psql`, stops the twins, then runs the
 proof tool. Build release binaries first, then run:
 
 ```bash
-cargo build --release --bin twinning --bin twinning-mcp
+cargo build --release -p twinning -p twinning-mcp
 ./docs/demo/migration/run.sh
 ```
 
