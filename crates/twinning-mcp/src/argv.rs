@@ -12,6 +12,8 @@ pub struct TwinArgv {
     pub verify: Option<PathBuf>,
     pub seed: Option<PathBuf>,
     pub restore: Option<PathBuf>,
+    pub snapshot: Option<PathBuf>,
+    pub declaration: Option<PathBuf>,
     pub auth_mode: Option<String>,
     pub server_variables: Vec<(String, String)>,
     pub report: PathBuf,
@@ -33,6 +35,8 @@ impl TwinArgv {
                 push_optional(&mut args, "--verify", self.verify.as_deref());
                 push_optional(&mut args, "--seed", self.seed.as_deref());
                 push_optional(&mut args, "--restore", self.restore.as_deref());
+                push_optional(&mut args, "--snapshot", self.snapshot.as_deref());
+                push_optional(&mut args, "--declaration", self.declaration.as_deref());
                 if self.capture_refused_statements {
                     args.push(OsString::from("--capture-refused-statements"));
                 }
@@ -116,6 +120,8 @@ mod tests {
             verify: Some(PathBuf::from("/work/--materialize-source-url")),
             seed: Some(PathBuf::from("/work/seed with spaces")),
             restore: Some(PathBuf::from("/work/restore")),
+            snapshot: Some(PathBuf::from("/work/output snapshot.twin")),
+            declaration: Some(PathBuf::from("/work/declaration.json")),
             auth_mode: None,
             server_variables: Vec::new(),
             report: PathBuf::from("/state/report.json"),
@@ -131,6 +137,8 @@ mod tests {
         assert!(strings.contains(&"--schema".into()));
         assert!(strings.contains(&"/work/--run;--host=0.0.0.0".into()));
         assert!(strings.contains(&"/work/--materialize-source-url".into()));
+        assert!(strings.contains(&"/work/output snapshot.twin".into()));
+        assert!(strings.contains(&"/work/declaration.json".into()));
         assert!(!strings.iter().any(|arg| arg.as_ref() == "--run"));
         assert!(
             !strings
@@ -153,6 +161,8 @@ mod tests {
             verify: None,
             seed: None,
             restore: None,
+            snapshot: None,
+            declaration: None,
             auth_mode: None,
             server_variables: Vec::new(),
             report: PathBuf::from("/state/report.json"),
@@ -182,6 +192,8 @@ mod tests {
             verify: None,
             seed: None,
             restore: None,
+            snapshot: None,
+            declaration: None,
             auth_mode: Some("bypass".into()),
             server_variables: vec![
                 ("basePath".into(), "v3".into()),

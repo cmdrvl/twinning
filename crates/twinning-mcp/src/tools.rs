@@ -4,9 +4,10 @@ use std::env;
 use std::fs::{self, DirBuilder, File};
 use std::io::Read;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
@@ -15,7 +16,9 @@ use crate::{
     doctor,
     errors::ToolError,
     locate,
-    paths::{Workdir, reject_nonlocal_refs, resolve_input_file, validate_restricted},
+    paths::{
+        Workdir, reject_nonlocal_refs, resolve_input_file, resolve_output_file, validate_restricted,
+    },
     registry::{
         DEFAULT_MAX_TWINS, Registry, TwinKind, TwinRecord, TwinStatus, connection_string,
         parse_ttl_minutes,
@@ -75,6 +78,7 @@ impl ToolService {
         })?;
         match name {
             "twin_start" => self.twin_start(object),
+            "twin_pair_proof" => self.twin_pair_proof(object),
             "twin_list" => self.twin_list(object),
             "twin_stop" => self.twin_stop(object),
             "twin_report" => self.twin_report(object),
@@ -117,6 +121,8 @@ impl ToolService {
                 "verify_path",
                 "seed_path",
                 "restore_path",
+                "snapshot_path",
+                "declaration_path",
                 "auth_mode",
                 "server_variables",
                 "capture_refused_statements",
@@ -143,59 +149,88 @@ impl ToolService {
                 false
             }
         };
-        let (input, verify, seed, restore, auth_mode, server_variables) = match kind {
-            TwinKind::Postgres => {
-                for field in ["spec_path", "auth_mode", "server_variables"] {
-                    reject_wrong_kind_field(arguments, field, "postgres")?;
-                }
-                let schema_raw = required_string(arguments, "schema_path")?;
-                let verify_raw = optional_string(arguments, "verify_path")?;
-                let seed_raw = optional_string(arguments, "seed_path")?;
-                let restore_raw = optional_string(arguments, "restore_path")?;
-                validate_restricted(self.config.restricted, verify_raw, seed_raw, restore_raw)?;
-                (
-                    resolve_argument_file("schema_path", schema_raw, &workdir)?,
-                    verify_raw
-                        .map(|path| resolve_argument_file("verify_path", path, &workdir))
-                        .transpose()?,
-                    seed_raw
-                        .map(|path| resolve_argument_file("seed_path", path, &workdir))
-                        .transpose()?,
-                    restore_raw
-                        .map(|path| resolve_argument_file("restore_path", path, &workdir))
-                        .transpose()?,
-                    None,
-                    Vec::new(),
-                )
-            }
-            TwinKind::Rest => {
-                for field in ["schema_path", "verify_path", "seed_path", "restore_path"] {
-                    reject_wrong_kind_field(arguments, field, "rest")?;
-                }
-                let spec_raw = required_string(arguments, "spec_path")?;
-                let auth_mode = match optional_string(arguments, "auth_mode")? {
-                    None | Some("shape") => "shape".to_owned(),
-                    Some("bypass") => "bypass".to_owned(),
-                    Some(_) => {
-                        return Err(argument_error(
-                            "auth_mode",
-                            "must be shape or bypass for kind rest",
-                        ));
+        let (input, verify, seed, restore, snapshot, declaration, auth_mode, server_variables) =
+            match kind {
+                TwinKind::Postgres => {
+                    for field in ["spec_path", "auth_mode", "server_variables"] {
+                        reject_wrong_kind_field(arguments, field, "postgres")?;
                     }
-                };
-                let server_variables = parse_server_variables(arguments.get("server_variables"))?;
-                let spec_path = resolve_argument_file("spec_path", spec_raw, &workdir)?;
-                reject_nonlocal_refs(&spec_path)?;
-                (
-                    spec_path,
-                    None,
-                    None,
-                    None,
-                    Some(auth_mode),
-                    server_variables,
-                )
-            }
-        };
+                    let schema_raw = required_string(arguments, "schema_path")?;
+                    let verify_raw = optional_string(arguments, "verify_path")?;
+                    let seed_raw = optional_string(arguments, "seed_path")?;
+                    let restore_raw = optional_string(arguments, "restore_path")?;
+                    let snapshot_raw = optional_string(arguments, "snapshot_path")?;
+                    let declaration_raw = optional_string(arguments, "declaration_path")?;
+                    if self.config.restricted
+                        && (snapshot_raw.is_some() || declaration_raw.is_some())
+                    {
+                        let field = if snapshot_raw.is_some() {
+                            "snapshot_path"
+                        } else {
+                            "declaration_path"
+                        };
+                        return Err(argument_error(field, "is unavailable in restricted mode"));
+                    }
+                    validate_restricted(self.config.restricted, verify_raw, seed_raw, restore_raw)?;
+                    (
+                        resolve_argument_file("schema_path", schema_raw, &workdir)?,
+                        verify_raw
+                            .map(|path| resolve_argument_file("verify_path", path, &workdir))
+                            .transpose()?,
+                        seed_raw
+                            .map(|path| resolve_argument_file("seed_path", path, &workdir))
+                            .transpose()?,
+                        restore_raw
+                            .map(|path| resolve_argument_file("restore_path", path, &workdir))
+                            .transpose()?,
+                        snapshot_raw
+                            .map(|path| resolve_argument_output("snapshot_path", path, &workdir))
+                            .transpose()?,
+                        declaration_raw
+                            .map(|path| resolve_argument_file("declaration_path", path, &workdir))
+                            .transpose()?,
+                        None,
+                        Vec::new(),
+                    )
+                }
+                TwinKind::Rest => {
+                    for field in [
+                        "schema_path",
+                        "verify_path",
+                        "seed_path",
+                        "restore_path",
+                        "snapshot_path",
+                        "declaration_path",
+                    ] {
+                        reject_wrong_kind_field(arguments, field, "rest")?;
+                    }
+                    let spec_raw = required_string(arguments, "spec_path")?;
+                    let auth_mode = match optional_string(arguments, "auth_mode")? {
+                        None | Some("shape") => "shape".to_owned(),
+                        Some("bypass") => "bypass".to_owned(),
+                        Some(_) => {
+                            return Err(argument_error(
+                                "auth_mode",
+                                "must be shape or bypass for kind rest",
+                            ));
+                        }
+                    };
+                    let server_variables =
+                        parse_server_variables(arguments.get("server_variables"))?;
+                    let spec_path = resolve_argument_file("spec_path", spec_raw, &workdir)?;
+                    reject_nonlocal_refs(&spec_path)?;
+                    (
+                        spec_path,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(auth_mode),
+                        server_variables,
+                    )
+                }
+            };
         let twinning_bin = self.locate_twinning()?;
         let cap = self.configured_cap()?;
 
@@ -220,6 +255,8 @@ impl ToolService {
                 verify,
                 seed,
                 restore,
+                snapshot: snapshot.clone(),
+                declaration: declaration.clone(),
                 auth_mode,
                 server_variables,
                 capture_refused_statements,
@@ -253,10 +290,73 @@ impl ToolService {
         });
         if kind == TwinKind::Postgres {
             response["connection_string"] = Value::String(connection_string(record.port));
+            if let Some(path) = snapshot {
+                response["snapshot_path"] = Value::String(path.display().to_string());
+            }
+            if let Some(path) = declaration {
+                response["declaration_path"] = Value::String(path.display().to_string());
+            }
         } else {
             response["base_url"] = Value::String(format!("http://127.0.0.1:{}", record.port));
         }
         Ok(response)
+    }
+
+    fn twin_pair_proof(&mut self, arguments: &Map<String, Value>) -> Result<Value, ToolError> {
+        reject_unknown(
+            arguments,
+            &[
+                "left_snapshot_path",
+                "right_snapshot_path",
+                "queries_path",
+                "report_path",
+            ],
+        )?;
+        let workdir = self.safe_workdir()?.path.clone();
+        let left_raw = required_string(arguments, "left_snapshot_path")?;
+        let right_raw = required_string(arguments, "right_snapshot_path")?;
+        let queries_raw = required_string(arguments, "queries_path")?;
+        let left = resolve_argument_file("left_snapshot_path", left_raw, &workdir)?;
+        let right = resolve_argument_file("right_snapshot_path", right_raw, &workdir)?;
+        let queries = resolve_argument_file("queries_path", queries_raw, &workdir)?;
+        let report_path = match optional_string(arguments, "report_path")? {
+            Some(path) => resolve_argument_output("report_path", path, &workdir)?,
+            None => {
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                self.state_root
+                    .join("proofs")
+                    .join(format!("proof-{}-{timestamp}.json", std::process::id()))
+            }
+        };
+        let twinning_bin = self.locate_twinning()?;
+        let timeout = proof_timeout();
+        let output = run_twin_pair_proof(
+            &twinning_bin,
+            &workdir,
+            &left,
+            &right,
+            &queries,
+            &report_path,
+            timeout,
+        )?;
+        let report_bytes = fs::read(&report_path).map_err(|error| {
+            proof_report_error(
+                &report_path,
+                &output.stderr,
+                format!("report unreadable: {error}"),
+            )
+        })?;
+        let proof: Value = serde_json::from_slice(&report_bytes).map_err(|error| {
+            proof_report_error(
+                &report_path,
+                &output.stderr,
+                format!("report JSON invalid: {error}"),
+            )
+        })?;
+        report::twin_pair_proof_response(&proof, &report_path, &output.stderr)
     }
 
     fn twin_list(&self, arguments: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -515,6 +615,20 @@ pub fn tool_definitions() -> Vec<Value> {
             "annotations": { "readOnlyHint": true }
         }),
         json!({
+            "name": "twin_pair_proof",
+            "description": "Compare declared-subset Postgres-to-Postgres committed-state snapshots by replaying point lookups, filtered scans and aggregate counts from the supplied query file. Join cases are reported as skip. Oracle/TNS fidelity is deferred.",
+            "inputSchema": object_schema(
+                json!({
+                    "left_snapshot_path": { "type": "string", "description": "Path to the left committed-state snapshot inside the workdir." },
+                    "right_snapshot_path": { "type": "string", "description": "Path to the right committed-state snapshot inside the workdir." },
+                    "queries_path": { "type": "string", "description": "Path to the proof query file inside the workdir." },
+                    "report_path": { "type": "string", "description": "Optional proof report output path inside the workdir." }
+                }),
+                vec!["left_snapshot_path", "right_snapshot_path", "queries_path"]
+            ),
+            "annotations": { "readOnlyHint": false, "idempotentHint": false }
+        }),
+        json!({
             "name": "twin_report",
             "description": "Read a bounded report for a stopped declared-subset Postgres or spec-based REST twin. Opt-in refused Postgres SQL text appears only here and can contain SQL literals.",
             "inputSchema": object_schema(
@@ -537,7 +651,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "twin_start",
-            "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define. Opt-in refused SQL capture writes text only to the local trace file and twin_report; SQL text can contain literals, and bind values are never captured.",
+            "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define. Optional Postgres declaration_path sets catalog identity. Optional snapshot_path is written only when the twin stops. Opt-in refused SQL capture writes text only to the local trace file and twin_report; SQL text can contain literals, and bind values are never captured.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -547,6 +661,8 @@ pub fn tool_definitions() -> Vec<Value> {
                     "verify_path": { "type": "string", "description": "Optional verify artifact path for Postgres." },
                     "seed_path": { "type": "string", "description": "Optional seed file path for Postgres." },
                     "restore_path": { "type": "string", "description": "Optional snapshot path to restore for Postgres." },
+                    "snapshot_path": { "type": "string", "description": "Optional Postgres snapshot output path. The snapshot appears only after the twin stops." },
+                    "declaration_path": { "type": "string", "description": "Optional Postgres catalog declaration path." },
                     "auth_mode": { "type": "string", "enum": ["shape", "bypass"], "default": "shape", "description": "REST authentication behavior." },
                     "server_variables": { "type": "object", "additionalProperties": { "type": "string" }, "description": "OpenAPI server variables passed as repeated --server-variable options." },
                     "capture_refused_statements": { "type": "boolean", "default": false, "description": "Postgres only. Store refused SQL text in the local trace file and expose bounded samples in twin_report. Text may contain SQL literals; bind values are never captured." },
@@ -556,7 +672,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 "additionalProperties": false,
                 "oneOf": [
                     { "properties": { "kind": { "const": "postgres" } }, "required": ["schema_path"] },
-                    { "properties": { "kind": { "const": "rest" } }, "required": ["spec_path"], "not": { "required": ["capture_refused_statements"] } }
+                    { "properties": { "kind": { "const": "rest" } }, "required": ["spec_path"], "not": { "anyOf": [{ "required": ["capture_refused_statements"] }, { "required": ["snapshot_path"] }, { "required": ["declaration_path"] }] } }
                 ]
             },
             "annotations": { "readOnlyHint": false, "idempotentHint": false }
@@ -706,6 +822,12 @@ fn argument_error(field: &str, detail: &str) -> ToolError {
         "verify_path" => "Set verify_path to a file inside the workdir or omit it",
         "seed_path" => "Set seed_path to a file inside the workdir or omit it",
         "restore_path" => "Set restore_path to a file inside the workdir or omit it",
+        "snapshot_path" => "Set snapshot_path to an output file inside the workdir or omit it",
+        "declaration_path" => "Set declaration_path to a file inside the workdir or omit it",
+        "left_snapshot_path" => "Set left_snapshot_path to a snapshot inside the workdir",
+        "right_snapshot_path" => "Set right_snapshot_path to a snapshot inside the workdir",
+        "queries_path" => "Set queries_path to a proof query file inside the workdir",
+        "report_path" => "Set report_path to an output file inside the workdir or omit it",
         "auth_mode" => "Set auth_mode to shape or bypass for kind rest",
         "server_variables" => "Set server_variables to an object of NAME to string values",
         "capture_refused_statements" => {
@@ -736,10 +858,185 @@ fn resolve_argument_file(
             "verify_path" => "Check verify_path relative to the workdir",
             "seed_path" => "Check seed_path relative to the workdir",
             "restore_path" => "Check restore_path relative to the workdir",
+            "declaration_path" => "Check declaration_path relative to the workdir",
+            "left_snapshot_path" => "Check left_snapshot_path relative to the workdir",
+            "right_snapshot_path" => "Check right_snapshot_path relative to the workdir",
+            "queries_path" => "Check queries_path relative to the workdir",
             _ => "Check the named path relative to the workdir",
         };
         error
     })
+}
+
+fn resolve_argument_output(
+    field: &'static str,
+    path: &str,
+    workdir: &Path,
+) -> Result<PathBuf, ToolError> {
+    resolve_output_file(path, workdir).map_err(|mut error| {
+        error.message = format!("{field}: {}", error.message);
+        error.hint = match field {
+            "snapshot_path" => "Set snapshot_path to a file inside the workdir",
+            "report_path" => "Set report_path to a file inside the workdir",
+            _ => "Set the named output path to a file inside the workdir",
+        };
+        error
+    })
+}
+
+struct ProofOutput {
+    stderr: String,
+}
+
+fn proof_timeout() -> Duration {
+    env::var("TWINNING_MCP_PROOF_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_secs(60))
+}
+
+fn run_twin_pair_proof(
+    binary: &Path,
+    workdir: &Path,
+    left: &Path,
+    right: &Path,
+    queries: &Path,
+    report_path: &Path,
+    timeout: Duration,
+) -> Result<ProofOutput, ToolError> {
+    let mut command = Command::new(binary);
+    command
+        .arg("--json")
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("--left")
+        .arg(left)
+        .arg("--right")
+        .arg(right)
+        .arg("--queries")
+        .arg(queries)
+        .arg("--report")
+        .arg(report_path)
+        .current_dir(workdir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    let mut child = command.spawn().map_err(|error| ToolError {
+        code: "E_INTERNAL",
+        message: format!("twin-pair proof could not start: {error}; stderr_tail=<empty>"),
+        hint: "Check the twinning binary and run twinning-mcp doctor",
+    })?;
+    let stderr = child.stderr.take().expect("proof stderr is piped");
+    let stderr_reader = std::thread::spawn(move || read_stream_tail(stderr));
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => {
+                // SAFETY: the child started a fresh process group owned by this tool call.
+                let _ = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
+                let _ = child.wait();
+                let stderr = stderr_reader
+                    .join()
+                    .unwrap_or_else(|_| "<unavailable>".into());
+                return Err(ToolError {
+                    code: "E_INTERNAL",
+                    message: format!(
+                        "twin-pair proof timed out after {} ms; stderr_tail={}",
+                        timeout.as_millis(),
+                        stderr_tail_text(&stderr)
+                    ),
+                    hint: "Reduce the proof query set or raise TWINNING_MCP_PROOF_TIMEOUT_MS",
+                });
+            }
+            Err(error) => {
+                // SAFETY: the child started a fresh process group owned by this tool call.
+                let _ = unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
+                let _ = child.wait();
+                let stderr = stderr_reader
+                    .join()
+                    .unwrap_or_else(|_| "<unavailable>".into());
+                return Err(ToolError {
+                    code: "E_INTERNAL",
+                    message: format!(
+                        "twin-pair proof wait failed: {error}; stderr_tail={}",
+                        stderr_tail_text(&stderr)
+                    ),
+                    hint: "Check the twinning binary and run twinning-mcp doctor",
+                });
+            }
+        }
+    };
+    let stderr = stderr_reader
+        .join()
+        .unwrap_or_else(|_| "<unavailable>".into());
+    if !status.success() {
+        return Err(ToolError {
+            code: "E_INTERNAL",
+            message: format!(
+                "twin-pair proof exited with {}; stderr_tail={}",
+                status
+                    .code()
+                    .map_or_else(|| "signal".into(), |code| code.to_string()),
+                stderr_tail_text(&stderr)
+            ),
+            hint: "Check the proof inputs and run twinning-mcp doctor",
+        });
+    }
+    Ok(ProofOutput { stderr })
+}
+
+fn read_stream_tail(mut reader: impl Read) -> String {
+    const LIMIT: usize = 4096;
+    let mut retained = Vec::with_capacity(LIMIT);
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(length) => {
+                retained.extend_from_slice(&buffer[..length]);
+                if retained.len() > LIMIT {
+                    retained.drain(..retained.len() - LIMIT);
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(&retained).into_owned()
+}
+
+fn stderr_tail_text(stderr: &str) -> String {
+    let sanitized = stderr
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    if sanitized.trim().is_empty() {
+        "<empty>".into()
+    } else {
+        sanitized
+    }
+}
+
+fn proof_report_error(path: &Path, stderr: &str, detail: String) -> ToolError {
+    ToolError {
+        code: "E_REPORT_UNREADABLE",
+        message: format!(
+            "twin-pair proof report unreadable at {}: {detail}; stderr_tail={}",
+            path.display(),
+            stderr_tail_text(stderr)
+        ),
+        hint: "Check the proof report and run twinning-mcp doctor",
+    }
 }
 
 fn kind_unsupported(kind: &str) -> ToolError {

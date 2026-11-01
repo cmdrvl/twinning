@@ -1,0 +1,53 @@
+{
+  "proof_id": "migration-demo:declared-subset-v0",
+  "proof_version": "twinning.twin-pair-proof.v0",
+  "replay_manifest_version": "twinning.twin-pair-replay-manifest.v0",
+  "queries": [
+    {
+      "id": "deal_lookup",
+      "table": "public.deals",
+      "shape": "point_lookup",
+      "projection": ["deal_id", "deal_name", "amount"],
+      "lookup_column": "deal_id",
+      "lookup_value": {"text": "deal-002"}
+    },
+    {
+      "id": "outside_subset_lookup",
+      "table": "public.audit_log",
+      "shape": "point_lookup",
+      "projection": ["id"],
+      "lookup_column": "id",
+      "lookup_value": {"text": "audit-001"}
+    },
+    {
+      "id": "tenant_b_filtered_scan",
+      "table": "public.deals",
+      "shape": "filtered_scan",
+      "projection": ["deal_id", "deal_name", "amount"],
+      "lookup_column": "tenant_id",
+      "lookup_value": {"text": "tenant-b"},
+      "limit": 5
+    },
+    {
+      "id": "tenant_b_deal_count",
+      "table": "public.deals",
+      "shape": "aggregate_count",
+      "projection": [],
+      "lookup_column": "tenant_id",
+      "lookup_value": {"text": "tenant-b"},
+      "count_column": "deal_id",
+      "aggregate_alias": "deal_count"
+    },
+    {
+      "id": "join_shape_deferred",
+      "table": "public.deals",
+      "shape": "join",
+      "projection": ["deal_id"],
+      "lookup_column": "tenant_id",
+      "lookup_value": {"text": "tenant-b"},
+      "policy": "skip",
+      "reason_code": "join_replay_deferred",
+      "reason": "join replay is outside the declared subset"
+    }
+  ]
+}

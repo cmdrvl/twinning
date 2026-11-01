@@ -158,6 +158,66 @@ pub fn full_rest_report(report: &Value, report_path: &Path) -> Value {
     rest_summary(report, report_path, None)
 }
 
+pub fn twin_pair_proof_response(
+    proof: &Value,
+    report_path: &Path,
+    stderr_tail: &str,
+) -> Result<Value, ToolError> {
+    let invalid = |detail: &str| ToolError {
+        code: "E_REPORT_UNREADABLE",
+        message: format!(
+            "twin-pair proof report invalid at {}: {detail}; stderr_tail={}",
+            report_path.display(),
+            if stderr_tail.is_empty() {
+                "<empty>"
+            } else {
+                stderr_tail
+            }
+        ),
+        hint: "Check the twin-pair proof inputs and run twinning-mcp doctor",
+    };
+    if proof["version"] != "twinning.twin-pair-proof.v0" {
+        return Err(invalid("unsupported version"));
+    }
+    if !matches!(proof["outcome"].as_str(), Some("PASS" | "FAIL")) {
+        return Err(invalid("outcome must be PASS or FAIL"));
+    }
+    let Some(cases) = proof["cases"].as_array() else {
+        return Err(invalid("cases must be an array"));
+    };
+    for case in cases {
+        if !case["case_id"].is_string()
+            || !matches!(case["verdict"].as_str(), Some("pass" | "fail" | "skip"))
+            || case.get("mismatches").is_some_and(|mismatches| {
+                !mismatches
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(Value::is_string))
+            })
+        {
+            return Err(invalid("case has an unsupported shape"));
+        }
+    }
+    let truncated = cases.len() > 200;
+    let response_cases = cases
+        .iter()
+        .take(200)
+        .map(|case| {
+            let mismatches = case.get("mismatches").cloned().unwrap_or_else(|| json!([]));
+            json!({
+                "case_id": case["case_id"],
+                "verdict": case["verdict"],
+                "mismatches": mismatches
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "outcome": proof["outcome"],
+        "cases": response_cases,
+        "report_path": report_path,
+        "truncated": truncated
+    }))
+}
+
 fn rest_summary(report: &Value, report_path: &Path, stopped: Option<&StopResult>) -> Value {
     let session = &report["session"];
     let (endpoints_exercised, exercised_truncated) = capped_array(&session["endpoints_exercised"]);

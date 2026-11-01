@@ -274,6 +274,24 @@ fn test_tempdir() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
+fn proof_inputs(workdir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let left = workdir.join("left.snapshot");
+    let right = workdir.join("right.snapshot");
+    let queries = workdir.join("queries.json");
+    fs::write(&left, "left snapshot").unwrap();
+    fs::write(&right, "right snapshot").unwrap();
+    fs::write(&queries, "{}\n").unwrap();
+    (left, right, queries)
+}
+
+fn proof_args(left: &Path, right: &Path, queries: &Path) -> Value {
+    json!({
+        "left_snapshot_path":left,
+        "right_snapshot_path":right,
+        "queries_path":queries
+    })
+}
+
 fn poll_until<T>(
     deadline: std::time::Instant,
     interval: Duration,
@@ -1783,4 +1801,258 @@ fn rs10_doctor_lists_supported_kinds_and_seed_contract_refuses_rest() {
             .contains("postgres")
     );
     assert!(server.finish("RS10").status.success());
+}
+
+#[test]
+fn pp01_twin_start_passes_snapshot_and_declaration_and_writes_snapshot_on_stop() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let declaration = workdir.join("declaration.json");
+    let snapshot = fs::canonicalize(&workdir)
+        .unwrap()
+        .join("committed.snapshot");
+    let argv_path = workdir.join("argv.json");
+    fs::write(&declaration, "{}\n").unwrap();
+    let declaration = fs::canonicalize(&declaration).unwrap();
+    let mut server = TestServer::new(
+        &temp,
+        LaunchOptions {
+            workdir: Some(workdir.clone()),
+            env: vec![(
+                "FAKE_TWINNING_ARGV_PATH".into(),
+                argv_path.display().to_string(),
+            )],
+            ..LaunchOptions::default()
+        },
+    );
+    let mut arguments = start_args(&workdir);
+    arguments["snapshot_path"] = json!(snapshot);
+    arguments["declaration_path"] = json!(declaration);
+    let started = successful_tool(&server.call_tool("twin_start", arguments));
+    assert_eq!(snapshot.display().to_string(), started["snapshot_path"]);
+    assert_eq!(
+        declaration.display().to_string(),
+        started["declaration_path"]
+    );
+    assert!(!snapshot.exists(), "snapshot appears only after twin_stop");
+    let argv: Vec<String> = serde_json::from_slice(&fs::read(&argv_path).unwrap()).unwrap();
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair == ["--snapshot", snapshot.to_str().unwrap()])
+    );
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair == ["--declaration", declaration.to_str().unwrap()])
+    );
+    successful_tool(&server.call_tool("twin_stop", json!({"twin_id":started["twin_id"]})));
+    assert!(
+        snapshot.is_file(),
+        "twin_stop must materialize the requested snapshot"
+    );
+    assert!(server.finish("PP01").status.success());
+}
+
+#[test]
+fn pp02_twin_pair_proof_returns_validated_happy_report() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let (left, right, queries) = proof_inputs(&workdir);
+    let report = fs::canonicalize(&workdir).unwrap().join("proof.json");
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "proof_pass"));
+    let mut arguments = proof_args(&left, &right, &queries);
+    arguments["report_path"] = json!(report);
+    let result = successful_tool(&server.call_tool("twin_pair_proof", arguments));
+    assert_eq!("PASS", result["outcome"]);
+    assert_eq!("stub_case_0", result["cases"][0]["case_id"]);
+    assert_eq!("pass", result["cases"][0]["verdict"]);
+    assert_eq!(json!([]), result["cases"][0]["mismatches"]);
+    assert_eq!(report.display().to_string(), result["report_path"]);
+    assert!(report.is_file());
+    assert!(server.finish("PP02").status.success());
+}
+
+#[test]
+fn pp03_twin_pair_proof_preserves_fail_outcome_when_child_exit_is_zero() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let (left, right, queries) = proof_inputs(&workdir);
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "proof_fail"));
+    let result =
+        successful_tool(&server.call_tool("twin_pair_proof", proof_args(&left, &right, &queries)));
+    assert_eq!("FAIL", result["outcome"]);
+    assert_eq!("fail", result["cases"][0]["verdict"]);
+    assert_eq!(json!(["result_hash"]), result["cases"][0]["mismatches"]);
+    assert!(server.finish("PP03").status.success());
+}
+
+#[test]
+fn pp04_twin_pair_proof_rejects_paths_outside_workdir() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let (_left, right, queries) = proof_inputs(&workdir);
+    let outside = temp.path().join("outside.snapshot");
+    fs::write(&outside, "outside").unwrap();
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "proof_pass"));
+    let error = failed_tool(
+        &server.call_tool("twin_pair_proof", proof_args(&outside, &right, &queries)),
+        "E_PATH_OUTSIDE_WORKDIR",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("left_snapshot_path")
+    );
+    let error = failed_tool(
+        &server.call_tool("twin_pair_proof", proof_args(&right, &outside, &queries)),
+        "E_PATH_OUTSIDE_WORKDIR",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("right_snapshot_path")
+    );
+    let error = failed_tool(
+        &server.call_tool("twin_pair_proof", proof_args(&right, &right, &outside)),
+        "E_PATH_OUTSIDE_WORKDIR",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("queries_path")
+    );
+    let outside_output = temp.path().join("outside-proof.json");
+    let mut report_arguments = proof_args(&right, &right, &queries);
+    report_arguments["report_path"] = json!(outside_output);
+    let error = failed_tool(
+        &server.call_tool("twin_pair_proof", report_arguments),
+        "E_PATH_OUTSIDE_WORKDIR",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("report_path")
+    );
+    assert!(server.finish("PP04").status.success());
+}
+
+#[test]
+fn pp05_twin_pair_proof_caps_cases_and_marks_truncation() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let (left, right, queries) = proof_inputs(&workdir);
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "proof_many"));
+    let result =
+        successful_tool(&server.call_tool("twin_pair_proof", proof_args(&left, &right, &queries)));
+    assert_eq!(200, result["cases"].as_array().unwrap().len());
+    assert_eq!(true, result["truncated"]);
+    assert!(server.finish("PP05").status.success());
+}
+
+#[test]
+fn pp06_twin_pair_proof_times_out_and_reports_stderr_tail() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let (left, right, queries) = proof_inputs(&workdir);
+    let mut server = TestServer::new(
+        &temp,
+        LaunchOptions {
+            workdir: Some(workdir.clone()),
+            fake_mode: Some("proof_sleep"),
+            env: vec![("TWINNING_MCP_PROOF_TIMEOUT_MS".into(), "50".into())],
+            ..LaunchOptions::default()
+        },
+    );
+    let error = failed_tool(
+        &server.call_tool("twin_pair_proof", proof_args(&left, &right, &queries)),
+        "E_INTERNAL",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("stderr_tail")
+    );
+    assert!(server.finish("PP06").status.success());
+}
+
+#[test]
+fn pp07_twin_pair_proof_rejects_missing_snapshot() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let missing = workdir.join("missing.snapshot");
+    let right = workdir.join("right.snapshot");
+    let queries = workdir.join("queries.json");
+    fs::write(&right, "right").unwrap();
+    fs::write(&queries, "{}\n").unwrap();
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "proof_pass"));
+    let error = failed_tool(
+        &server.call_tool("twin_pair_proof", proof_args(&missing, &right, &queries)),
+        "E_PATH_NOT_FOUND",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("left_snapshot_path")
+    );
+    assert!(server.finish("PP07").status.success());
+}
+
+#[test]
+fn pp08_twin_pair_proof_rejects_bad_report_and_nonzero_child_with_stderr_tail() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(
+        temp.path(),
+        "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+    );
+    let (left, right, queries) = proof_inputs(&workdir);
+    let mut bad_report = TestServer::new(&temp, default_launch(&workdir, "proof_bad_version"));
+    let error = failed_tool(
+        &bad_report.call_tool("twin_pair_proof", proof_args(&left, &right, &queries)),
+        "E_REPORT_UNREADABLE",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("version")
+    );
+    assert!(bad_report.finish("PP08-bad-report").status.success());
+    let mut nonzero = TestServer::new(&temp, default_launch(&workdir, "proof_nonzero"));
+    let error = failed_tool(
+        &nonzero.call_tool("twin_pair_proof", proof_args(&left, &right, &queries)),
+        "E_INTERNAL",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("stub proof failure tail")
+    );
+    assert!(nonzero.finish("PP08-nonzero").status.success());
 }

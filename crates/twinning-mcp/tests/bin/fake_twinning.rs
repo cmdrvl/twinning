@@ -39,8 +39,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let mode = std::env::var("FAKE_TWINNING_MODE").unwrap_or_else(|_| "ok".into());
+    if std::env::var_os("FAKE_TWINNING_ARGV_PATH").is_some() {
+        let path = PathBuf::from(std::env::var_os("FAKE_TWINNING_ARGV_PATH").unwrap());
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, serde_json::to_vec(&args)?)?;
+    }
+    if args.starts_with(&["--json".into(), "proof".into(), "twin-pair".into()]) {
+        return fake_twin_pair_proof(&args, &mode);
+    }
     let report = value_after(&args, "--report").map(PathBuf::from);
     let trace = value_after(&args, "--query-trace").map(PathBuf::from);
+    let snapshot = value_after(&args, "--snapshot").map(PathBuf::from);
     let contract = value_after(&args, "--export-seed-contract").map(PathBuf::from);
     if mode == "exit_early" {
         eprintln!("fake exited early");
@@ -124,6 +135,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("fake crash on stop");
         std::process::exit(2);
     }
+    if let Some(path) = snapshot {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, b"fake snapshot for argv plumbing test")?;
+    }
     if let Some(path) = report {
         if is_rest {
             let value = fake_rest_report(value_after(&args, "--spec").unwrap_or_default());
@@ -150,6 +167,43 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if mode == "exit1_with_report" {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+fn fake_twin_pair_proof(args: &[String], mode: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if mode == "proof_sleep" {
+        std::thread::sleep(Duration::from_secs(5));
+    }
+    if mode == "proof_nonzero" {
+        eprintln!("stub proof failure tail");
+        std::process::exit(7);
+    }
+    let report = value_after(args, "--report").map(PathBuf::from);
+    let count = if mode == "proof_many" { 201 } else { 1 };
+    let verdict = if mode == "proof_fail" { "fail" } else { "pass" };
+    let cases = (0..count)
+        .map(|index| {
+            json!({
+                "case_id": format!("stub_case_{index}"),
+                "verdict": verdict,
+                "mismatches": if verdict == "fail" { vec!["result_hash".to_owned()] } else { Vec::<String>::new() }
+            })
+        })
+        .collect::<Vec<_>>();
+    let value = json!({
+        "version": if mode == "proof_bad_version" { "twinning.unknown.v0" } else { "twinning.twin-pair-proof.v0" },
+        "proof_id": "stub-proof",
+        "outcome": if verdict == "fail" { "FAIL" } else { "PASS" },
+        "endpoints": [],
+        "cases": cases
+    });
+    if let Some(path) = report {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, serde_json::to_vec(&value)?)?;
+    }
+    println!("{}", serde_json::to_string(&value)?);
     Ok(())
 }
 

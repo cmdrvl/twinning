@@ -90,6 +90,62 @@ pub fn resolve_input_file(path: &str, workdir: &Path) -> Result<PathBuf, ToolErr
     Ok(canonical)
 }
 
+pub fn resolve_output_file(path: &str, workdir: &Path) -> Result<PathBuf, ToolError> {
+    let requested = Path::new(path);
+    let absolute = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        workdir.join(requested)
+    };
+    let Some(file_name) = absolute.file_name() else {
+        return Err(argument_error("path", "must name a file"));
+    };
+    if file_name == "." || file_name == ".." {
+        return Err(argument_error("path", "must name a file"));
+    }
+    let parent = absolute.parent().unwrap_or(workdir);
+    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            ToolError {
+                code: "E_PATH_NOT_FOUND",
+                message: format!("path: {path}: parent directory does not exist"),
+                hint: "Create the parent directory inside the workdir and try again",
+            }
+        } else {
+            path_error(path, error)
+        }
+    })?;
+    let root = fs::canonicalize(workdir).map_err(|error| path_error("workdir", error))?;
+    let candidate = canonical_parent.join(file_name);
+    if !candidate.starts_with(&root) {
+        return Err(ToolError {
+            code: "E_PATH_OUTSIDE_WORKDIR",
+            message: format!("path: {path}: resolves outside the workdir"),
+            hint: "Write the output file inside the workdir",
+        });
+    }
+    match fs::symlink_metadata(&candidate) {
+        Ok(_) => {
+            let canonical =
+                fs::canonicalize(&candidate).map_err(|error| path_error(path, error))?;
+            if !canonical.starts_with(&root) {
+                return Err(ToolError {
+                    code: "E_PATH_OUTSIDE_WORKDIR",
+                    message: format!("path: {path}: resolves outside the workdir"),
+                    hint: "Write the output file inside the workdir",
+                });
+            }
+            if !canonical.is_file() {
+                return Err(argument_error("path", "must name a regular file"));
+            }
+            return Ok(canonical);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(path_error(path, error)),
+    }
+    Ok(candidate)
+}
+
 pub fn reject_nonlocal_refs(spec_path: &Path) -> Result<(), ToolError> {
     let bytes = fs::read(spec_path).map_err(|_| ToolError {
         code: "E_ARGUMENT_INVALID",
@@ -296,7 +352,7 @@ fn path_error(path: &str, error: std::io::Error) -> ToolError {
 mod tests {
     use super::{
         MAX_INPUT_BYTES, Workdir, reject_nonlocal_refs, resolve_input, resolve_input_file,
-        validate_restricted,
+        resolve_output_file, validate_restricted,
     };
     use std::fs;
     use std::path::Path;
@@ -331,6 +387,33 @@ mod tests {
             root.join("-schema.sql").canonicalize().unwrap(),
             resolve_input_file("-schema.sql", &root).unwrap()
         );
+    }
+
+    #[test]
+    fn output_paths_are_confined_and_allow_a_missing_leaf() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("work");
+        let outside = temp.path().join("outside.json");
+        fs::create_dir(&root).unwrap();
+        fs::write(&outside, "outside").unwrap();
+        assert_eq!(
+            root.canonicalize().unwrap().join("proof.json"),
+            resolve_output_file("proof.json", &root).unwrap()
+        );
+        assert_eq!(
+            "E_PATH_OUTSIDE_WORKDIR",
+            resolve_output_file("../outside.json", &root)
+                .unwrap_err()
+                .code
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, root.join("escape.json")).unwrap();
+            assert_eq!(
+                "E_PATH_OUTSIDE_WORKDIR",
+                resolve_output_file("escape.json", &root).unwrap_err().code
+            );
+        }
     }
 
     #[test]

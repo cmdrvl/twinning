@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const MCP_BIN: &str = env!("CARGO_BIN_EXE_twinning-mcp");
+const MIGRATION_DEMO_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/demo/migration");
 const SCHEMA: &str = "CREATE TABLE public.deals (\n    deal_id TEXT PRIMARY KEY,\n    deal_name TEXT NOT NULL,\n    amount NUMERIC CHECK (amount >= 0)\n);\n";
 const MCP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 const CHILD_TIMEOUT: Duration = Duration::from_secs(120);
@@ -611,6 +612,7 @@ impl McpSession {
         assert!(names.contains(&"twin_start"));
         assert!(names.contains(&"twin_stop"));
         assert!(names.contains(&"twin_report"));
+        assert!(names.contains(&"twin_pair_proof"));
         event(
             &self.artifacts,
             test_id,
@@ -718,12 +720,30 @@ impl McpSession {
         schema: &Path,
         seed: Option<&Path>,
     ) -> StartedTwin {
+        self.start_twin_with_options(test_id, workdir, schema, seed, None, None)
+    }
+
+    fn start_twin_with_options(
+        &mut self,
+        test_id: &str,
+        workdir: &Path,
+        schema: &Path,
+        seed: Option<&Path>,
+        snapshot: Option<&Path>,
+        declaration: Option<&Path>,
+    ) -> StartedTwin {
         let mut arguments = json!({
             "kind":"postgres",
             "schema_path":schema.display().to_string()
         });
         if let Some(seed) = seed {
             arguments["seed_path"] = json!(seed.display().to_string());
+        }
+        if let Some(snapshot) = snapshot {
+            arguments["snapshot_path"] = json!(snapshot.display().to_string());
+        }
+        if let Some(declaration) = declaration {
+            arguments["declaration_path"] = json!(declaration.display().to_string());
         }
         let started = self.tool(test_id, "twin_start", arguments);
         let twin_id = started["twin_id"]
@@ -1646,4 +1666,362 @@ fn assert_server_stderr_format(stderr: &str) {
             );
         }
     }
+}
+
+#[test]
+fn pr01_identical_live_twins_prove_all_non_skip_cases() {
+    let context = TestContext::new();
+    let Some(psql) = context.psql.as_deref() else {
+        common::skipped(
+            "PR01",
+            "psql executable was not found in PATH or TWINNING_PSQL_BIN",
+            &context.artifacts,
+        );
+        return;
+    };
+    context.record_psql_version("PR01", psql);
+    let mut session = context.session("PR01");
+    let (workdir, schema, declaration, queries) =
+        prepare_migration_case(&context.artifacts, "PR01");
+    let left_path = workdir.join("left.snapshot");
+    let right_path = workdir.join("right.snapshot");
+    let left = session.start_twin_with_options(
+        "PR01",
+        &workdir,
+        &schema,
+        None,
+        Some(&left_path),
+        Some(&declaration),
+    );
+    let right = session.start_twin_with_options(
+        "PR01",
+        &workdir,
+        &schema,
+        None,
+        Some(&right_path),
+        Some(&declaration),
+    );
+    let sql = migration_seed_sql();
+    run_migration_sql(&context, "PR01", psql, &left.connection_string, &sql);
+    run_migration_sql(&context, "PR01", psql, &right.connection_string, &sql);
+    assert_stop_ready(&session.stop_twin("PR01", &left.twin_id), "PR01-left");
+    assert_stop_ready(&session.stop_twin("PR01", &right.twin_id), "PR01-right");
+    assert!(left_path.is_file(), "twin_stop wrote left snapshot");
+    assert!(right_path.is_file(), "twin_stop wrote right snapshot");
+    let proof = session.tool(
+        "PR01",
+        "twin_pair_proof",
+        json!({
+            "left_snapshot_path":left_path,
+            "right_snapshot_path":right_path,
+            "queries_path":queries
+        }),
+    );
+    assert_eq!("PASS", proof["outcome"]);
+    assert_eq!(4, cases_with_verdict(&proof, "pass"));
+    assert_eq!(1, cases_with_verdict(&proof, "skip"));
+    assert_eq!("skip", proof_case(&proof, "join_shape_deferred")["verdict"]);
+    record_proof_result(&context.artifacts, "PR01", &proof);
+    session.finish();
+}
+
+#[test]
+fn pr02_one_divergent_psql_row_fails_exactly_the_reading_cases() {
+    let context = TestContext::new();
+    let Some(psql) = context.psql.as_deref() else {
+        common::skipped(
+            "PR02",
+            "psql executable was not found in PATH or TWINNING_PSQL_BIN",
+            &context.artifacts,
+        );
+        return;
+    };
+    context.record_psql_version("PR02", psql);
+    let mut session = context.session("PR02");
+    let (workdir, schema, declaration, queries) =
+        prepare_migration_case(&context.artifacts, "PR02");
+    let left_path = workdir.join("left.snapshot");
+    let right_path = workdir.join("right.snapshot");
+    let left = session.start_twin_with_options(
+        "PR02",
+        &workdir,
+        &schema,
+        None,
+        Some(&left_path),
+        Some(&declaration),
+    );
+    let right = session.start_twin_with_options(
+        "PR02",
+        &workdir,
+        &schema,
+        None,
+        Some(&right_path),
+        Some(&declaration),
+    );
+    run_migration_sql(
+        &context,
+        "PR02",
+        psql,
+        &left.connection_string,
+        &migration_seed_sql(),
+    );
+    let mut diverged = migration_seed_sql();
+    diverged[2] = "INSERT INTO public.deals (deal_id, tenant_id, deal_name, amount) VALUES ('deal-002', 'tenant-b', 'Beta migrated', 120)".to_owned();
+    run_migration_sql(&context, "PR02", psql, &right.connection_string, &diverged);
+    assert_stop_ready(&session.stop_twin("PR02", &left.twin_id), "PR02-left");
+    assert_stop_ready(&session.stop_twin("PR02", &right.twin_id), "PR02-right");
+    let proof = session.tool(
+        "PR02",
+        "twin_pair_proof",
+        json!({
+            "left_snapshot_path":left_path,
+            "right_snapshot_path":right_path,
+            "queries_path":queries
+        }),
+    );
+    assert_eq!("FAIL", proof["outcome"]);
+    let failing_ids = proof["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["verdict"] == "fail")
+        .map(|case| case["case_id"].as_str().unwrap().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        std::collections::BTreeSet::from([
+            "deal_lookup".to_owned(),
+            "tenant_b_filtered_scan".to_owned()
+        ]),
+        failing_ids
+    );
+    assert_eq!("pass", proof_case(&proof, "tenant_b_deal_count")["verdict"]);
+    assert_eq!(
+        "pass",
+        proof_case(&proof, "outside_subset_lookup")["verdict"]
+    );
+    assert_eq!("skip", proof_case(&proof, "join_shape_deferred")["verdict"]);
+    record_proof_result(&context.artifacts, "PR02", &proof);
+    session.finish();
+}
+
+#[test]
+fn pr03_out_of_subset_refusal_has_real_snapshot_parity() {
+    let context = TestContext::new();
+    let Some(psql) = context.psql.as_deref() else {
+        common::skipped(
+            "PR03",
+            "psql executable was not found in PATH or TWINNING_PSQL_BIN",
+            &context.artifacts,
+        );
+        return;
+    };
+    context.record_psql_version("PR03", psql);
+    let mut session = context.session("PR03");
+    let (workdir, schema, declaration, _) = prepare_migration_case(&context.artifacts, "PR03");
+    let queries = workdir.join("refusal-query.json");
+    fs::write(&queries, r#"{"queries":[{"id":"outside_subset_lookup","table":"public.audit_log","shape":"point_lookup","projection":["id"],"lookup_column":"id","lookup_value":{"text":"audit-001"}}]}"#)
+        .expect("write outside-subset proof query");
+    let left_path = workdir.join("left.snapshot");
+    let right_path = workdir.join("right.snapshot");
+    let left = session.start_twin_with_options(
+        "PR03",
+        &workdir,
+        &schema,
+        None,
+        Some(&left_path),
+        Some(&declaration),
+    );
+    let right = session.start_twin_with_options(
+        "PR03",
+        &workdir,
+        &schema,
+        None,
+        Some(&right_path),
+        Some(&declaration),
+    );
+    let sql = migration_seed_sql();
+    run_migration_sql(&context, "PR03", psql, &left.connection_string, &sql);
+    run_migration_sql(&context, "PR03", psql, &right.connection_string, &sql);
+    assert_stop_ready(&session.stop_twin("PR03", &left.twin_id), "PR03-left");
+    assert_stop_ready(&session.stop_twin("PR03", &right.twin_id), "PR03-right");
+    let proof = session.tool(
+        "PR03",
+        "twin_pair_proof",
+        json!({
+            "left_snapshot_path":left_path,
+            "right_snapshot_path":right_path,
+            "queries_path":queries
+        }),
+    );
+    assert_eq!("PASS", proof["outcome"]);
+    let case = proof_case(&proof, "outside_subset_lookup");
+    assert_eq!("pass", case["verdict"]);
+    let report_path = PathBuf::from(
+        proof["report_path"]
+            .as_str()
+            .expect("proof response report path"),
+    );
+    let full_report: Value =
+        serde_json::from_slice(&fs::read(&report_path).expect("proof report file is readable"))
+            .expect("full proof report parses");
+    let full_case = proof_case(&full_report, "outside_subset_lookup");
+    assert_eq!("42P01", full_case["left"]["result"]["sqlstate"]);
+    assert_eq!(
+        full_case["left"]["result"]["sqlstate"],
+        full_case["right"]["result"]["sqlstate"]
+    );
+    record_proof_result(&context.artifacts, "PR03", &proof);
+    session.finish();
+}
+
+#[test]
+fn pr04_join_case_is_reported_as_skip() {
+    let context = TestContext::new();
+    let Some(psql) = context.psql.as_deref() else {
+        common::skipped(
+            "PR04",
+            "psql executable was not found in PATH or TWINNING_PSQL_BIN",
+            &context.artifacts,
+        );
+        return;
+    };
+    context.record_psql_version("PR04", psql);
+    let mut session = context.session("PR04");
+    let (workdir, schema, declaration, _) = prepare_migration_case(&context.artifacts, "PR04");
+    let queries = workdir.join("join-query.json");
+    fs::write(&queries, r#"{"queries":[{"id":"join_shape_deferred","table":"public.deals","shape":"join","projection":["deal_id"],"lookup_column":"tenant_id","lookup_value":{"text":"tenant-b"},"policy":"skip","reason_code":"join_replay_deferred","reason":"join is outside the declared subset"}]}"#)
+        .expect("write join skip query");
+    let left_path = workdir.join("left.snapshot");
+    let right_path = workdir.join("right.snapshot");
+    let left = session.start_twin_with_options(
+        "PR04",
+        &workdir,
+        &schema,
+        None,
+        Some(&left_path),
+        Some(&declaration),
+    );
+    let right = session.start_twin_with_options(
+        "PR04",
+        &workdir,
+        &schema,
+        None,
+        Some(&right_path),
+        Some(&declaration),
+    );
+    let sql = migration_seed_sql();
+    run_migration_sql(&context, "PR04", psql, &left.connection_string, &sql);
+    run_migration_sql(&context, "PR04", psql, &right.connection_string, &sql);
+    assert_stop_ready(&session.stop_twin("PR04", &left.twin_id), "PR04-left");
+    assert_stop_ready(&session.stop_twin("PR04", &right.twin_id), "PR04-right");
+    let proof = session.tool(
+        "PR04",
+        "twin_pair_proof",
+        json!({
+            "left_snapshot_path":left_path,
+            "right_snapshot_path":right_path,
+            "queries_path":queries
+        }),
+    );
+    assert_eq!("PASS", proof["outcome"]);
+    assert_eq!("skip", proof_case(&proof, "join_shape_deferred")["verdict"]);
+    record_proof_result(&context.artifacts, "PR04", &proof);
+    session.finish();
+}
+
+fn prepare_migration_case(artifacts: &Path, test_id: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let workdir = prepare_case(artifacts, test_id);
+    let demo = Path::new(MIGRATION_DEMO_DIR);
+    let schema = workdir.join("schema.sql");
+    let declaration = workdir.join("declaration.json");
+    let queries = workdir.join("queries.json");
+    fs::copy(demo.join("schema.sql"), &schema).expect("copy migration schema");
+    fs::copy(demo.join("declaration.json"), &declaration).expect("copy migration declaration");
+    fs::copy(demo.join("queries.json"), &queries).expect("copy migration queries");
+    (workdir, schema, declaration, queries)
+}
+
+fn migration_seed_sql() -> Vec<String> {
+    vec![
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-a', 'Tenant A')".to_owned(),
+        "INSERT INTO public.tenants (tenant_id, tenant_name) VALUES ('tenant-b', 'Tenant B')".to_owned(),
+        "INSERT INTO public.deals (deal_id, tenant_id, deal_name, amount) VALUES ('deal-002', 'tenant-b', 'Beta', 120)".to_owned(),
+        "INSERT INTO public.deals (deal_id, tenant_id, deal_name, amount) VALUES ('deal-001', 'tenant-a', 'Alpha', 100)".to_owned(),
+    ]
+}
+
+fn run_migration_sql(
+    context: &TestContext,
+    test_id: &str,
+    psql: &Path,
+    connection_string: &str,
+    statements: &[String],
+) {
+    let mut command = Command::new(psql);
+    command.arg(connection_string);
+    for statement in statements {
+        command.args(["--command", statement]);
+    }
+    let sql_text = statements.join("; ");
+    let result = run_command(
+        command,
+        &context.artifacts,
+        test_id,
+        "migration_psql_seed",
+        Duration::from_secs(30),
+    );
+    assert_success(&result, "migration proof psql seed");
+    event(
+        &context.artifacts,
+        test_id,
+        "real_psql_seed",
+        &[
+            ("sql", sql_text),
+            ("exit_code", result.status.code().unwrap_or(-1).to_string()),
+            ("stdout_tail", tail(&result.stdout, 2048)),
+            ("stderr_tail", tail(&result.stderr, 2048)),
+        ],
+    );
+}
+
+fn proof_case<'a>(proof: &'a Value, case_id: &str) -> &'a Value {
+    proof["cases"]
+        .as_array()
+        .expect("proof cases array")
+        .iter()
+        .find(|case| case["case_id"] == case_id)
+        .unwrap_or_else(|| panic!("proof case {case_id} missing: {}", proof["cases"]))
+}
+
+fn cases_with_verdict(proof: &Value, verdict: &str) -> usize {
+    proof["cases"]
+        .as_array()
+        .expect("proof cases array")
+        .iter()
+        .filter(|case| case["verdict"] == verdict)
+        .count()
+}
+
+fn record_proof_result(artifacts: &Path, test_id: &str, proof: &Value) {
+    let cases = proof["cases"].as_array().expect("proof cases array");
+    event(
+        artifacts,
+        test_id,
+        "twin_pair_proof_result",
+        &[
+            (
+                "outcome",
+                proof["outcome"].as_str().unwrap_or("<missing>").to_owned(),
+            ),
+            ("case_count", cases.len().to_string()),
+            ("case_verdicts", serde_json::to_string(cases).unwrap()),
+            (
+                "report_path",
+                proof["report_path"]
+                    .as_str()
+                    .unwrap_or("<missing>")
+                    .to_owned(),
+            ),
+        ],
+    );
 }
