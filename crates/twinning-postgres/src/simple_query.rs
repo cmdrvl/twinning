@@ -1,9 +1,11 @@
 use crate::{
+    backend::Backend,
     ir::{
         Operation, RefusalOp, RefusalScope, UNDEFINED_TABLE_CODE, UNDEFINED_TABLE_SQLSTATE,
         normalize_mutation_sql, normalize_read_sql, normalize_session_sql,
     },
-    result::{AckResult, KernelResult, RefusalResult, ResultTag},
+    kernel::{mutation::execute_mutation, read::execute_read},
+    result::{AckResult, KernelResult, ReadResult, RefusalResult, ResultTag},
 };
 use twinning_kernel::catalog::Catalog;
 
@@ -52,6 +54,89 @@ pub fn dispatch_simple_query_result_with_catalog(
             unreachable!("simple-query dispatch normalizes only session SQL in this lane")
         }
     }
+}
+
+pub(crate) struct LiveSimpleQueryResult {
+    pub(crate) result: KernelResult,
+    pub(crate) returning_columns: Vec<String>,
+}
+
+pub(crate) fn dispatch_simple_query_with_backend<B: Backend>(
+    session_id: &str,
+    sql: &str,
+    catalog: &Catalog,
+    backend: &mut B,
+) -> LiveSimpleQueryResult {
+    if let Some(metadata_result) = metadata_query_result(sql, Some(catalog)) {
+        return LiveSimpleQueryResult {
+            result: metadata_result,
+            returning_columns: Vec::new(),
+        };
+    }
+
+    if is_hstore_catalog_probe(sql) {
+        return LiveSimpleQueryResult {
+            result: KernelResult::Read(ReadResult {
+                columns: vec![String::from("oid"), String::from("typarray")],
+                rows: Vec::new(),
+            }),
+            returning_columns: Vec::new(),
+        };
+    }
+
+    let operation = match simple_statement_kind(sql) {
+        Some(SimpleStatementKind::Read) => Some(normalize_read_sql(catalog, session_id, sql)),
+        Some(SimpleStatementKind::Mutation) => {
+            Some(normalize_mutation_sql(catalog, session_id, sql))
+        }
+        None => None,
+    };
+
+    if let Some(operation) = operation {
+        let (result, returning_columns) = match operation {
+            Operation::Read(read) => (execute_read(catalog, backend, &read), Vec::new()),
+            Operation::Mutation(mutation) => {
+                let returning_columns = mutation.returning.clone();
+                (
+                    execute_mutation(catalog, backend, &mutation),
+                    returning_columns,
+                )
+            }
+            Operation::Refusal(refusal) => (
+                KernelResult::Refusal(refusal_into_result(refusal)),
+                Vec::new(),
+            ),
+            Operation::Session(_) | Operation::Prepare(_) => {
+                unreachable!("read and mutation normalization returns no session operations")
+            }
+        };
+        return LiveSimpleQueryResult {
+            result,
+            returning_columns,
+        };
+    }
+
+    LiveSimpleQueryResult {
+        result: dispatch_simple_query_result_with_catalog(session_id, sql, Some(catalog)),
+        returning_columns: Vec::new(),
+    }
+}
+
+pub(crate) fn simple_query_is_mutation(sql: &str) -> bool {
+    matches!(
+        simple_statement_kind(sql),
+        Some(SimpleStatementKind::Mutation)
+    )
+}
+
+fn is_hstore_catalog_probe(sql: &str) -> bool {
+    let normalized = sql
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    normalized
+        == "select t.oid, typarray from pg_type t join pg_namespace ns on typnamespace = ns.oid where typname = 'hstore';"
 }
 
 fn declared_subset_relation_refusal(

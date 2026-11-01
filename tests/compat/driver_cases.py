@@ -198,7 +198,6 @@ def main() -> int:
             rows,
             expected_sqlstate=None,
             connection_mode="D10",
-            error_detail=getattr(error.orig, "pgerror", str(error)).strip(),
         )
         if rows != [["sqlalchemy-valid-1", "Beta"]]:
             failures.append(f"sqlalchemy_core_select_by_pk: unexpected rows {rows!r}")

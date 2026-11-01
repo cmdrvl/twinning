@@ -5,7 +5,9 @@ use crate::{
     config::TwinConfig,
     kernel::storage::TableStorage,
     refusal::RefusalResult,
-    report::{RunReport, SchemaReport, SnapshotReport, TwinReport, TwinReportSeed},
+    report::{
+        ConstraintCounters, RunReport, SchemaReport, SnapshotReport, TwinReport, TwinReportSeed,
+    },
     snapshot::{self, TwinSnapshot},
     verify_bridge::{bind_committed_relations, execute_embedded_verify},
 };
@@ -31,6 +33,7 @@ pub struct FinalArtifactEmitter {
     report_path: Option<PathBuf>,
     snapshot_path: Option<PathBuf>,
     mode: Option<String>,
+    constraint_counters: Option<ConstraintCounters>,
     emitted: Option<FinalizedArtifacts>,
 }
 
@@ -59,6 +62,7 @@ impl FinalArtifactEmitter {
             report_path,
             snapshot_path,
             mode: None,
+            constraint_counters: None,
             emitted: None,
         }
     }
@@ -66,6 +70,12 @@ impl FinalArtifactEmitter {
     #[cfg(feature = "postgres")]
     pub fn with_mode(mut self, mode: impl Into<String>) -> Self {
         self.mode = Some(mode.into());
+        self
+    }
+
+    #[cfg(feature = "postgres")]
+    pub fn with_constraint_counters(mut self, counters: ConstraintCounters) -> Self {
+        self.constraint_counters = Some(counters);
         self
     }
 
@@ -108,6 +118,9 @@ impl FinalArtifactEmitter {
                 warnings: state.warnings.clone(),
             });
             apply_table_rows(&mut report, &frozen_snapshot.table_rows);
+            if let Some(constraint_counters) = &self.constraint_counters {
+                report.constraints = constraint_counters.clone();
+            }
 
             if let Some(report_path) = &self.report_path {
                 write_json(report_path, &report)?;

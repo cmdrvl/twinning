@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-use crate::kernel::storage::TableStorage;
+use crate::kernel::{constraints::ConstraintError, storage::TableStorage};
 
 pub trait Backend {
     fn base_table(&self, table_name: &str) -> Option<&TableStorage>;
@@ -12,6 +12,8 @@ pub trait Backend {
     fn write_overlay_table(&mut self, table: TableStorage) -> Result<(), BackendError>;
 
     fn clear_overlay(&mut self);
+
+    fn record_constraint_violation(&self, _error: &ConstraintError) {}
 
     fn visible_table(&self, table_name: &str) -> Option<&TableStorage> {
         self.overlay_table(table_name)

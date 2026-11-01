@@ -8,8 +8,8 @@ compatibility claim.
 | Client | Version tested | Statements exercised | Observed result | Final report |
 | --- | --- | --- | --- | --- |
 | `psql` | 14.24 | `BEGIN`, `ROLLBACK` using two `-c` arguments and libpq's default SSL mode (M0b, commit `f9d536a`) | Both statements succeeded; no SQLSTATE was returned. | Server exited cleanly after SIGTERM and emitted an `outcome=READY` report. |
-| psycopg2 | 2.9.13 (`dt dec pq3 ext lo64`) | Parameterized valid insert, CHECK-violating insert, duplicate primary-key insert, SELECT by primary key using D10; SELECT by primary key once more with default libpq SSL mode | Every case returned SQLSTATE `0A000` (`unsupported_statement`). The query trace marks the requests as `simple_query`; expected `23514` and `23505` were not observed. | `check_violations=0`, `unique_violations=0`, and `public.deals.rows=0`. The trace contains seven `0A000` results and no `23514` or `23505`. |
-| SQLAlchemy Core | 2.1.6 | Core insert and SELECT by primary key using D10 through the psycopg2 dialect | The dialect's startup `hstore` catalog probe was refused with `0A000`; the requested insert and SELECT did not succeed. | Same final report: `check_violations=0`, `unique_violations=0`, `public.deals.rows=0`. |
+| psycopg2 | 2.9.13 (`dt dec pq3 ext lo64`) | Parameterized valid insert, CHECK-violating insert, duplicate primary-key insert, SELECT by primary key using D10; SELECT by primary key once more with default libpq SSL mode | M0e rerun: valid insert and both SELECTs succeeded; CHECK violation returned `23514`; duplicate primary key returned `23505`. | `check_violations=1`, `unique_violations=1`, and `public.deals.rows=2`. |
+| SQLAlchemy Core | 2.1.6 | Startup `hstore` catalog probe, Core insert and SELECT by primary key using D10 through the psycopg2 dialect | M0e rerun: startup probe succeeded with zero rows; Core insert and SELECT succeeded. | Same final report: `check_violations=1`, `unique_violations=1`, `public.deals.rows=2`. |
 
 M0c used uv 0.13.5 with the approved invocation
 `uv run --with psycopg2-binary --with sqlalchemy python <absolute script path>`

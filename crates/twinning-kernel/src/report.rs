@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,7 +12,9 @@ use verify_core::{
     REPORT_VERSION as VERIFY_REPORT_VERSION, TOOL_NAME as VERIFY_TOOL_NAME, report::VerifyReport,
 };
 
-use crate::{catalog::Catalog, declaration::CatalogDeclarationIdentity};
+use crate::{
+    catalog::Catalog, declaration::CatalogDeclarationIdentity, kernel::constraints::ConstraintError,
+};
 
 pub const REPORT_VERSION: &str = "twinning.v0";
 const VERIFY_CONSTRAINT_VERSION: &str = "verify.constraint.v1";
@@ -114,12 +120,45 @@ pub struct TableReport {
     pub constraints: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConstraintCounters {
     pub not_null_violations: u64,
     pub fk_violations: u64,
     pub check_violations: u64,
     pub unique_violations: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct ConstraintCounterBank {
+    not_null_violations: AtomicU64,
+    fk_violations: AtomicU64,
+    check_violations: AtomicU64,
+    unique_violations: AtomicU64,
+}
+
+impl ConstraintCounterBank {
+    pub fn record(&self, error: &ConstraintError) {
+        let counter = match error {
+            ConstraintError::NotNullViolation { .. } => &self.not_null_violations,
+            ConstraintError::ForeignKeyViolation { .. } => &self.fk_violations,
+            ConstraintError::CheckViolation { .. } => &self.check_violations,
+            ConstraintError::UniqueViolation { .. } => &self.unique_violations,
+            ConstraintError::RowArity { .. }
+            | ConstraintError::UnknownColumn { .. }
+            | ConstraintError::UnknownRelatedTable { .. }
+            | ConstraintError::UnsupportedCheckExpression { .. } => return,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> ConstraintCounters {
+        ConstraintCounters {
+            not_null_violations: self.not_null_violations.load(Ordering::Relaxed),
+            fk_violations: self.fk_violations.load(Ordering::Relaxed),
+            check_violations: self.check_violations.load(Ordering::Relaxed),
+            unique_violations: self.unique_violations.load(Ordering::Relaxed),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,12 +255,7 @@ impl TwinReport {
             },
             source_materialization: seed.source_materialization,
             tables,
-            constraints: ConstraintCounters {
-                not_null_violations: 0,
-                fk_violations: 0,
-                check_violations: 0,
-                unique_violations: 0,
-            },
+            constraints: ConstraintCounters::default(),
             verify: seed.verify,
             snapshot: seed.snapshot,
             run: seed.run,

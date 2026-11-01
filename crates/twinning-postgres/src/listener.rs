@@ -17,6 +17,7 @@ use crate::{
     result::{AckResult, KernelResult, RefusalResult, ResultTag},
 };
 use twinning_kernel::catalog::Catalog;
+use twinning_kernel::report::{ConstraintCounterBank, ConstraintCounters};
 
 #[cfg(unix)]
 use signal_hook::{
@@ -29,7 +30,10 @@ use super::{
     extended_parse::{BindRequest, ExtendedParseState, ParseRequest},
     frames::{ResultFrameMetadata, unsupported_live_shape_result},
     session::{SessionLoop, TransactionStatus, failed_transaction_result, ready_for_query_frame},
-    simple_query::{dispatch_simple_query_result, dispatch_simple_query_result_with_catalog},
+    simple_query::{
+        dispatch_simple_query_result, dispatch_simple_query_result_with_catalog,
+        dispatch_simple_query_with_backend, simple_query_is_mutation,
+    },
     startup::{StartupOutcome, encode_startup_response, negotiate_startup, parse_startup_packet},
     writer_gate::WRITER_CONTENTION_SQLSTATE,
 };
@@ -111,6 +115,7 @@ impl ShutdownHook {
 pub struct SharedPgwireState {
     catalog: Catalog,
     overlays: Arc<Mutex<SessionOverlayManager>>,
+    constraint_counters: Arc<ConstraintCounterBank>,
     query_trace: Option<SharedQueryTrace>,
 }
 
@@ -119,6 +124,7 @@ impl SharedPgwireState {
         Self {
             catalog,
             overlays: Arc::new(Mutex::new(SessionOverlayManager::new(backend))),
+            constraint_counters: Arc::new(ConstraintCounterBank::default()),
             query_trace: None,
         }
     }
@@ -154,6 +160,10 @@ impl SharedPgwireState {
                     })
             })
             .collect()
+    }
+
+    pub fn constraint_counters(&self) -> ConstraintCounters {
+        self.constraint_counters.snapshot()
     }
 
     fn lock_overlays(&self) -> io::Result<MutexGuard<'_, SessionOverlayManager>> {
@@ -347,19 +357,57 @@ fn serve_connection_with_shutdown(
             }
             FrontendMessage::Query(sql) => {
                 let transaction_status = session.transaction_status();
-                let result = match live_state.as_ref() {
-                    Some(state) => dispatch_simple_query_result_with_catalog(
-                        session_id.as_str(),
-                        &sql,
-                        Some(&state.catalog),
-                    ),
-                    None => dispatch_simple_query_result(session_id.as_str(), &sql),
-                };
-                let result = if matches!(transaction_status, TransactionStatus::FailedTransaction) {
-                    failed_transaction_simple_query_result(result)
-                } else {
-                    result
-                };
+                let mut returning_columns = Vec::new();
+                let mut result =
+                    if matches!(transaction_status, TransactionStatus::FailedTransaction) {
+                        match live_state.as_ref() {
+                            Some(state) => dispatch_simple_query_result_with_catalog(
+                                session_id.as_str(),
+                                &sql,
+                                Some(&state.catalog),
+                            ),
+                            None => dispatch_simple_query_result(session_id.as_str(), &sql),
+                        }
+                    } else if let Some(state) = live_state.as_mut() {
+                        let autocommit_write =
+                            matches!(transaction_status, TransactionStatus::Idle)
+                                && simple_query_is_mutation(&sql);
+                        if autocommit_write
+                            && let Some(result) =
+                                begin_autocommit_write(Some(state), session_id.as_str())?
+                        {
+                            result
+                        } else {
+                            let dispatched = {
+                                let overlays = state.lock_overlays()?;
+                                let mut backend = SessionScopedBackend {
+                                    session_id: session_id.as_str(),
+                                    overlays,
+                                    constraint_counters: Arc::clone(&state.constraint_counters),
+                                };
+                                dispatch_simple_query_with_backend(
+                                    session_id.as_str(),
+                                    &sql,
+                                    &state.catalog,
+                                    &mut backend,
+                                )
+                            };
+                            returning_columns = dispatched.returning_columns;
+                            if autocommit_write {
+                                finish_autocommit_write_result(
+                                    Some(state),
+                                    session_id.as_str(),
+                                    matches!(&dispatched.result, KernelResult::Mutation(_)),
+                                )?;
+                            }
+                            dispatched.result
+                        }
+                    } else {
+                        dispatch_simple_query_result(session_id.as_str(), &sql)
+                    };
+                if matches!(transaction_status, TransactionStatus::FailedTransaction) {
+                    result = failed_transaction_simple_query_result(result);
+                }
                 abort_live_write_if_transaction_failed(
                     live_state.as_ref(),
                     session_id.as_str(),
@@ -372,7 +420,13 @@ fn serve_connection_with_shutdown(
                     transaction_status,
                     result,
                 )?;
-                let cycle = session.process_result(&result, ResultFrameMetadata::default());
+                let cycle = session.process_result(
+                    &result,
+                    ResultFrameMetadata {
+                        returning_columns: (!returning_columns.is_empty())
+                            .then_some(returning_columns.as_slice()),
+                    },
+                );
                 record_simple_query_trace(
                     live_state.as_ref(),
                     session_id.as_str(),
@@ -455,6 +509,7 @@ fn serve_connection_with_shutdown(
                             let mut backend = SessionScopedBackend {
                                 session_id: session_id.as_str(),
                                 overlays,
+                                constraint_counters: Arc::clone(&state.constraint_counters),
                             };
                             let frames = execute_state.process_execute(
                                 &state.catalog,
@@ -623,6 +678,7 @@ fn transaction_status_token(status: TransactionStatus) -> String {
 struct SessionScopedBackend<'a> {
     session_id: &'a str,
     overlays: MutexGuard<'a, SessionOverlayManager>,
+    constraint_counters: Arc<ConstraintCounterBank>,
 }
 
 struct SessionCleanupGuard {
@@ -661,6 +717,10 @@ impl Backend for SessionScopedBackend<'_> {
 
     fn clear_overlay(&mut self) {
         let _ = self.overlays.rollback(self.session_id);
+    }
+
+    fn record_constraint_violation(&self, error: &crate::kernel::constraints::ConstraintError) {
+        self.constraint_counters.record(error);
     }
 }
 
@@ -747,11 +807,23 @@ fn finish_autocommit_write(
     session_id: &str,
     execute_state: &ExtendedExecuteState,
 ) -> io::Result<()> {
+    finish_autocommit_write_result(
+        live_state,
+        session_id,
+        execute_state.pending_result_is_successful_mutation(),
+    )
+}
+
+fn finish_autocommit_write_result(
+    live_state: Option<&SharedPgwireState>,
+    session_id: &str,
+    successful_mutation: bool,
+) -> io::Result<()> {
     let Some(live_state) = live_state else {
         return Ok(());
     };
     let mut overlays = live_state.lock_overlays()?;
-    if execute_state.pending_result_is_successful_mutation() {
+    if successful_mutation {
         overlays.commit(session_id).map_err(|error| {
             io::Error::other(format!("failed to commit autocommit write: {error}"))
         })?;

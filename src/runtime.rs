@@ -223,7 +223,8 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
         bound_port,
         config.report_path.clone(),
         config.snapshot_path.clone(),
-    );
+    )
+    .with_constraint_counters(final_live_state.constraint_counters());
     let finalized = emitter.emit_once(state, Some(committed_tables), Some(run.clone()))?;
     let verify_failed = verify_failed(finalized.report.verify.as_ref());
 
@@ -294,7 +295,8 @@ fn execute_serve_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalRes
         config.report_path.clone(),
         config.snapshot_path.clone(),
     )
-    .with_mode("interactive");
+    .with_mode("interactive")
+    .with_constraint_counters(final_live_state.constraint_counters());
     let finalized = emitter.emit_once(state, Some(committed_tables), None)?;
     let verify_failed = verify_failed(finalized.report.verify.as_ref());
 

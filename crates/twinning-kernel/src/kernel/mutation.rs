@@ -118,7 +118,7 @@ fn execute_insert_inner<B: Backend>(
                     backend.visible_table(table_name)
                 }
             })
-            .map_err(refusal_from_constraint_error)?;
+            .map_err(|error| refusal_from_recorded_constraint_error(backend, error))?;
             validate_referencing_rows(catalog, backend, table, &candidate_table)?;
             visible_table = candidate_table;
             if !mutation.returning.is_empty() {
@@ -136,7 +136,7 @@ fn execute_insert_inner<B: Backend>(
                     backend.visible_table(table_name)
                 }
             })
-            .map_err(refusal_from_constraint_error)?;
+            .map_err(|error| refusal_from_recorded_constraint_error(backend, error))?;
             visible_table
                 .insert_row(full_row.clone())
                 .map_err(refusal_from_storage_error)?;
@@ -484,7 +484,7 @@ fn build_candidate_table<B: Backend>(
                 backend.visible_table(table_name)
             }
         })
-        .map_err(refusal_from_constraint_error)?;
+        .map_err(|error| refusal_from_recorded_constraint_error(backend, error))?;
         candidate
             .insert_row(row.clone())
             .map_err(refusal_from_storage_error)?;
@@ -531,7 +531,8 @@ fn validate_referencing_rows<B: Backend>(
                     &foreign_key.referred_columns,
                     &lookup_values,
                 )? {
-                    return Err(refusal_from_constraint_error(
+                    return Err(refusal_from_recorded_constraint_error(
+                        backend,
                         ConstraintError::ForeignKeyViolation {
                             table: table.name.clone(),
                             columns: foreign_key.columns.clone(),
@@ -1121,6 +1122,14 @@ fn refusal_from_constraint_error(error: ConstraintError) -> RefusalResult {
     }
 }
 
+fn refusal_from_recorded_constraint_error<B: Backend>(
+    backend: &B,
+    error: ConstraintError,
+) -> RefusalResult {
+    backend.record_constraint_violation(&error);
+    refusal_from_constraint_error(error)
+}
+
 fn refusal_from_storage_error(error: TableStorageError) -> RefusalResult {
     match error {
         TableStorageError::DuplicatePrimaryKey { table, columns } => refusal(
@@ -1261,6 +1270,138 @@ fn refusal<const N: usize>(
         message,
         sqlstate: sqlstate.to_owned(),
         detail: BTreeMap::from(detail),
+    }
+}
+
+#[cfg(test)]
+mod constraint_counter_tests {
+    use crate::{
+        backend::{Backend, BackendError, BaseSnapshotBackend},
+        catalog::parse_postgres_schema,
+        ir::{Operation, normalize_mutation_sql},
+        kernel::{constraints::ConstraintError, storage::TableStorage, value::KernelValue},
+        report::{ConstraintCounterBank, ConstraintCounters},
+        result::KernelResult,
+    };
+
+    use super::execute_mutation;
+
+    struct CountingBackend {
+        storage: BaseSnapshotBackend,
+        counters: ConstraintCounterBank,
+    }
+
+    impl CountingBackend {
+        fn new(tables: impl IntoIterator<Item = TableStorage>) -> Result<Self, BackendError> {
+            Ok(Self {
+                storage: BaseSnapshotBackend::new(tables)?,
+                counters: ConstraintCounterBank::default(),
+            })
+        }
+
+        fn constraint_counters(&self) -> ConstraintCounters {
+            self.counters.snapshot()
+        }
+    }
+
+    impl Backend for CountingBackend {
+        fn base_table(&self, table_name: &str) -> Option<&TableStorage> {
+            self.storage.base_table(table_name)
+        }
+
+        fn overlay_table(&self, table_name: &str) -> Option<&TableStorage> {
+            self.storage.overlay_table(table_name)
+        }
+
+        fn write_overlay_table(&mut self, table: TableStorage) -> Result<(), BackendError> {
+            self.storage.write_overlay_table(table)
+        }
+
+        fn clear_overlay(&mut self) {
+            self.storage.clear_overlay();
+        }
+
+        fn record_constraint_violation(&self, error: &ConstraintError) {
+            self.counters.record(error);
+        }
+    }
+
+    #[test]
+    fn mutation_constraint_errors_increment_each_report_counter_once() {
+        let catalog = parse_postgres_schema(
+            "CREATE TABLE public.sponsors (sponsor_id TEXT PRIMARY KEY);\
+             CREATE TABLE public.deals (\
+               deal_id TEXT PRIMARY KEY,\
+               deal_name TEXT NOT NULL,\
+               sponsor_id TEXT REFERENCES public.sponsors (sponsor_id),\
+               code TEXT UNIQUE,\
+               amount INTEGER CHECK (amount >= 0)\
+             );",
+        )
+        .expect("constraint counter schema should parse");
+        let mut sponsors = TableStorage::new(
+            catalog
+                .table("public.sponsors")
+                .expect("sponsors catalog table"),
+        )
+        .expect("sponsors storage should build");
+        sponsors
+            .insert_row(vec![KernelValue::Text(String::from("sponsor-1"))])
+            .expect("seed sponsor row");
+        let mut deals =
+            TableStorage::new(catalog.table("public.deals").expect("deals catalog table"))
+                .expect("deals storage should build");
+        deals
+            .insert_row(vec![
+                KernelValue::Text(String::from("deal-1")),
+                KernelValue::Text(String::from("Seed")),
+                KernelValue::Text(String::from("sponsor-1")),
+                KernelValue::Text(String::from("existing-code")),
+                KernelValue::Integer(0),
+            ])
+            .expect("seed deal row");
+        let mut backend = CountingBackend::new([sponsors, deals]).expect("build test backend");
+
+        for (sql, expected_sqlstate) in [
+            (
+                "INSERT INTO public.deals (deal_id, sponsor_id, code, amount) VALUES ('null-name', 'sponsor-1', 'code-null-name', 1)",
+                "23502",
+            ),
+            (
+                "INSERT INTO public.deals (deal_id, deal_name, sponsor_id, code, amount) VALUES ('missing-fk', 'Missing Sponsor', 'missing-sponsor', 'code-fk', 1)",
+                "23503",
+            ),
+            (
+                "INSERT INTO public.deals (deal_id, deal_name, sponsor_id, code, amount) VALUES ('bad-check', 'Negative', 'sponsor-1', 'code-check', -1)",
+                "23514",
+            ),
+            (
+                "INSERT INTO public.deals (deal_id, deal_name, sponsor_id, code, amount) VALUES ('deal-1', 'Duplicate', 'sponsor-1', 'code-unique', 1)",
+                "23505",
+            ),
+        ] {
+            let mutation = match normalize_mutation_sql(&catalog, "constraint-counter-test", sql) {
+                Operation::Mutation(mutation) => mutation,
+                other => panic!("expected mutation operation, found {other:?}"),
+            };
+            let result = execute_mutation(&catalog, &mut backend, &mutation);
+            match result {
+                KernelResult::Refusal(refusal) => {
+                    assert_eq!(refusal.sqlstate, expected_sqlstate, "sql={sql}");
+                }
+                other => panic!("expected constraint refusal for {sql}, found {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            backend.constraint_counters(),
+            ConstraintCounters {
+                not_null_violations: 1,
+                fk_violations: 1,
+                check_violations: 1,
+                unique_violations: 1,
+            }
+        );
     }
 }
 
