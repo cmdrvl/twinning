@@ -44,10 +44,10 @@ before closing a bead.
 
 ## Environment
 
-The expected working directory is the repository root. Current builds expect a
-sibling `verify/` checkout for the local path dependencies in `Cargo.toml`.
-The supported product lane is Postgres only: bootstrap artifacts plus the live
-`run_once` shell for canary-defined SQL shapes.
+The expected working directory is the repository root. Cargo fetches the pinned
+`cmdrvl/verify` Git revision for `verify-core` and `verify-engine`; no sibling
+checkout is required. The supported product lane is Postgres only: bootstrap
+artifacts plus the live `run_once` shell for canary-defined SQL shapes.
 
 ## Session Caveats
 

@@ -44,10 +44,10 @@ commands above plus CI in [.github/workflows/ci.yml](./.github/workflows/ci.yml)
 
 ## Environment
 
-Current source builds expect a sibling `verify/` checkout because
-`Cargo.toml` uses local path dependencies for `verify-core` and
-`verify-engine`. The active implementation is Postgres-first: bootstrap plus
-the live `run_once` shell for the proven canary subset.
+Cargo pins `verify-core` and `verify-engine` to a `cmdrvl/verify` Git revision,
+so a sibling checkout is not required. The active implementation is
+Postgres-first: bootstrap plus the live `run_once` shell for the proven canary
+subset.
 
 ## Session Caveats
 

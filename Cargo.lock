@@ -1638,6 +1638,7 @@ dependencies = [
 [[package]]
 name = "verify-core"
 version = "0.5.1"
+source = "git+https://github.com/cmdrvl/verify?rev=65faec1c4e7d305cf05c09f8228a71a11b3c4dc6#65faec1c4e7d305cf05c09f8228a71a11b3c4dc6"
 dependencies = [
  "serde",
  "serde_json",
@@ -1646,6 +1647,7 @@ dependencies = [
 [[package]]
 name = "verify-engine"
 version = "0.5.1"
+source = "git+https://github.com/cmdrvl/verify?rev=65faec1c4e7d305cf05c09f8228a71a11b3c4dc6#65faec1c4e7d305cf05c09f8228a71a11b3c4dc6"
 dependencies = [
  "serde_json",
  "verify-core",

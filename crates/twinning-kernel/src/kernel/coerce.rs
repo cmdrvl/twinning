@@ -155,7 +155,9 @@ fn parse_bytea_hex(text: &str) -> Option<Vec<u8>> {
     }
 
     hex.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             std::str::from_utf8(pair)
                 .ok()

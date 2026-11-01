@@ -41,9 +41,10 @@ release smoke checks.
 
 ## Environment
 
-The crate is a Rust binary and library with local path dependencies on a
-sibling `verify/` checkout. `rch` may not be installed on every machine; direct
-`cargo` commands are valid. The current runtime surface is still narrow:
+The crate is a Rust binary and library. Cargo fetches the pinned
+`cmdrvl/verify` Git revision for `verify-core` and `verify-engine`, so no
+sibling checkout is required. `rch` may not be installed on every machine;
+direct `cargo` commands are valid. The current runtime surface is still narrow:
 Postgres bootstrap plus one-child `run_once`, not a long-lived general database
 server.
 

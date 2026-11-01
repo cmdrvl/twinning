@@ -583,14 +583,13 @@ Until the first tagged release is cut, use the source build below.
 
 ```bash
 git clone https://github.com/cmdrvl/twinning.git
-git clone https://github.com/cmdrvl/verify.git
 cd twinning
 cargo build --release
 # Binary at target/release/twinning
 ```
 
-Current source builds expect a sibling `verify/` checkout because `twinning`
-links against `verify-core` and `verify-engine` via path dependencies.
+Cargo fetches the pinned `cmdrvl/verify` Git revision for `verify-core` and
+`verify-engine`; a sibling checkout is not required.
 
 ---
 
