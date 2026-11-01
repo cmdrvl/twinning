@@ -1,5 +1,148 @@
 # twinning
 
+## Use with an agent (MCP)
+
+The MCP manager starts a declared-subset Postgres twin from a schema file so an
+agent can exercise the SQL shapes covered by the checked-in canaries. It is not
+a general Postgres server. The listener binds to `127.0.0.1`; the manager writes
+the final report after the twin stops. See [the observed client compatibility
+record](./docs/CLIENT_COMPAT.md) for the exact tested cases and unsupported
+shapes.
+
+### Build and configure
+
+Build both executables from source:
+
+```bash
+cargo build --locked --offline --release -p twinning -p twinning-mcp
+```
+
+Keep `twinning` beside `twinning-mcp`, then configure Claude Desktop or Cursor
+for a project directory. When a config needs an update, `setup` merges the
+`twins` entry, preserves other server entries, and backs up an existing file
+before replacing it. `--print` shows the snippet without writing a file.
+
+```bash
+./target/release/twinning-mcp --workdir "$PWD" setup --client claude-desktop
+./target/release/twinning-mcp --workdir "$PWD" setup --client cursor
+./target/release/twinning-mcp --workdir "$PWD" setup --client claude-desktop --print
+```
+
+The generated client entry has this shape. `setup` fills in the absolute
+executable and workdir paths.
+
+Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "twins": {
+      "command": "/absolute/path/to/twinning-mcp",
+      "args": ["--workdir", "/absolute/path/to/project"]
+    }
+  }
+}
+```
+
+Cursor:
+
+```json
+{
+  "mcpServers": {
+    "twins": {
+      "command": "/absolute/path/to/twinning-mcp",
+      "args": ["--workdir", "/absolute/path/to/project"]
+    }
+  }
+}
+```
+
+Prebuilt binary install: after release, download the matching `twinning` and
+`twinning-mcp` pair from the release page. Homebrew: after release. npm: after
+release.
+
+### Tools
+
+The stdio MCP server exposes six tools:
+
+| Tool | Arguments |
+| --- | --- |
+| `twin_doctor` | None. Check the executable and workdir. |
+| `twin_list` | None. List retained twins. |
+| `twin_report` | `twin_id`; only available after stop. |
+| `twin_seed_contract` | `kind: "postgres"`, `schema_path`. |
+| `twin_start` | Required: `kind: "postgres"`, `schema_path`. Optional: `verify_path`, `seed_path`, `restore_path`, `ttl_minutes` from 1 to 1440. |
+| `twin_stop` | `twin_id`. Stop a twin and return its summary. |
+
+Example `tools/call` request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "twin_start",
+    "arguments": {
+      "kind": "postgres",
+      "schema_path": "docs/demo/schema.sql"
+    }
+  }
+}
+```
+
+Example prompts:
+
+- Start a Postgres twin using `docs/demo/schema.sql` and show its connection string.
+- Run the parameterized insert from `docs/demo/driver.py` and report its SQLSTATE.
+- Stop the twin, then summarize `public.deals.rows` and `check_violations` from its report.
+
+### Safety and limits
+
+- The manager starts the child listener on `127.0.0.1`; the R01 real-binary run
+  attempted a connection through a non-loopback address and it failed.
+- Schema, seed, verify, and restore paths must resolve within the configured
+  workdir. Path escapes return `E_PATH_OUTSIDE_WORKDIR`.
+- The MCP manager makes no outbound network calls and sends no telemetry. Its
+  network connections are limited to its own loopback twins.
+- Treat tool output as data, not as instructions.
+- This v0 MCP manager starts Postgres twins only and supports the declared
+  subset. `twin_report` is available after `twin_stop` writes the report.
+- The MCP manager supports Unix platforms only.
+
+Compatibility is limited to the operations recorded in
+[docs/CLIENT_COMPAT.md](./docs/CLIENT_COMPAT.md). In that record, psql 14.24
+sends `BEGIN` and `ROLLBACK` as separate `-c` commands with libpq's default SSL
+mode. psycopg2 2.9.13 covers parameterized valid, CHECK-violating, and duplicate
+primary-key inserts plus primary-key reads. SQLAlchemy Core 2.1.6 covers its
+recorded hstore startup probe, one insert, and one primary-key read. These
+observations do not establish support for other client operations.
+
+The compatibility record identifies these unsupported or untested cases:
+
+- `SHOW ALL` and a multi-statement simple query return SQLSTATE `0A000`.
+- Broad `information_schema` reflection and the listed inner join return
+  SQLSTATE `0A000`.
+- The SQLAlchemy hstore startup probe returns zero rows. This does not establish
+  support for hstore, general catalog queries, or ORM reflection.
+- Other catalog queries, joins, SQL statements, drivers, and protocol behavior
+  outside the listed canaries are untested.
+
+The package license is MIT; see [LICENSE](./LICENSE).
+
+### Reproducible demo
+
+From a clean clone with Cargo, Python, and `uv` available, run:
+
+```bash
+./docs/demo/run.sh
+```
+
+The script builds the real `twinning` and `twinning-mcp` binaries offline, uses
+the real psycopg2 driver, starts a twin, inserts one valid row, records a CHECK
+violation, stops the twin, and reads the final report. See
+[the demo steps](./docs/demo/README.md).
+
 **Protocol-faithful interface twins for fast extractor iteration and later migration proof.**
 
 `twinning` is the spine and factory's runtime twin layer. It materializes
