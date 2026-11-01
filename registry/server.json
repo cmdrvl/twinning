@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.cmdrvl/twinning",
+  "title": "Postgres twins",
+  "description": "twins for Postgres only in v0, limited to the declared client subset.",
+  "version": "0.7.0",
+  "repository": {
+    "url": "https://github.com/cmdrvl/twinning",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@cmdrvl/twinning-mcp",
+      "version": "0.7.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

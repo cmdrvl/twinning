@@ -1,0 +1,19 @@
+{
+  "name": "@cmdrvl/twinning-mcp",
+  "version": "0.7.0",
+  "description": "Downloads and launches a Postgres twin server for the declared v0 client subset.",
+  "license": "MIT",
+  "mcpName": "com.cmdrvl/twinning",
+  "bin": {
+    "twinning-mcp": "bin/twinning-mcp.js"
+  },
+  "files": [
+    "bin/twinning-mcp.js"
+  ],
+  "scripts": {
+    "test": "sh test.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

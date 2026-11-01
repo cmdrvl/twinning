@@ -1,0 +1,15 @@
+# MCP Registry domain proof
+
+The draft server name com.cmdrvl/twinning uses domain ownership proof for
+cmdrvl.com. The registry requires a public proof file at:
+
+https://cmdrvl.com/.well-known/mcp-registry-auth
+
+The file is served over HTTPS with a successful status and no redirect. The
+maintainer generates the key pair with the MCP Registry tooling. Keep the
+private key with the maintainer and outside this repository. Only the public
+proof record is deployed during the separately approved GL-3 step.
+
+This repository contains no key material and does not deploy the proof file.
+Before GL-3, check the registry instructions for the current proof format and
+the website's static .well-known path.
