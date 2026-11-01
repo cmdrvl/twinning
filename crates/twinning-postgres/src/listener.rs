@@ -280,6 +280,10 @@ fn serve_connection_with_shutdown(
     live_state: Option<SharedPgwireState>,
 ) -> io::Result<()> {
     let session_id = session_id.into();
+    let _session_cleanup = SessionCleanupGuard {
+        session_id: session_id.clone(),
+        live_state: live_state.clone(),
+    };
     // libpq may probe GSS and SSL before sending its v3 StartupMessage.
     let outcome = loop {
         let startup_packet = match read_startup_packet(stream, shutdown) {
@@ -621,6 +625,25 @@ struct SessionScopedBackend<'a> {
     overlays: MutexGuard<'a, SessionOverlayManager>,
 }
 
+struct SessionCleanupGuard {
+    session_id: String,
+    live_state: Option<SharedPgwireState>,
+}
+
+impl Drop for SessionCleanupGuard {
+    fn drop(&mut self) {
+        let Some(live_state) = &self.live_state else {
+            return;
+        };
+        let Ok(mut overlays) = live_state.lock_overlays() else {
+            return;
+        };
+        if overlays.writer_session_id() == Some(self.session_id.as_str()) {
+            let _ = overlays.rollback(&self.session_id);
+        }
+    }
+}
+
 impl Backend for SessionScopedBackend<'_> {
     fn base_table(&self, table_name: &str) -> Option<&TableStorage> {
         self.overlays.visible_table(self.session_id, table_name)
@@ -874,28 +897,19 @@ fn accept_until_shutdown_loop(
 }
 
 fn join_connection_threads(handles: Vec<thread::JoinHandle<io::Result<()>>>) -> io::Result<()> {
-    let mut first_error = None;
-
     for handle in handles {
         match handle.join() {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+                eprintln!("WARN - connection_error error_kind={:?}", error.kind());
             }
             Err(_) => {
-                if first_error.is_none() {
-                    first_error = Some(io::Error::other("pgwire connection thread panicked"));
-                }
+                eprintln!("WARN - connection_thread_panic");
             }
         }
     }
 
-    match first_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    Ok(())
 }
 
 fn serve_connection_until_shutdown_with_state(
