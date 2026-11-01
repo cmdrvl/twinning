@@ -13,6 +13,8 @@ categories = ["command-line-utilities"]
 [workspace]
 members = [
   "crates/twinning-kernel",
+  "crates/twinning-mcp-core",
+  "crates/twinning-mcp",
   "crates/twinning-postgres",
   "crates/twinning-rest",
   "crates/twinning-snowflake",

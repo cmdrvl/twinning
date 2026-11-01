@@ -1,0 +1,144 @@
+{
+  "tools": [
+    {
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "description": "Check the twinning binary and the configured work directory.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "twin_doctor"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "description": "List the retained Postgres twins managed by this server.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "twin_list"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "description": "Read the report for a stopped Postgres twin.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "twin_id": {
+            "description": "Twin id returned by twin_start.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "twin_id"
+        ],
+        "type": "object"
+      },
+      "name": "twin_report"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "description": "Create a seed contract from a Postgres schema.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "postgres"
+            ],
+            "type": "string"
+          },
+          "schema_path": {
+            "description": "Path to the schema file.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "schema_path"
+        ],
+        "type": "object"
+      },
+      "name": "twin_seed_contract"
+    },
+    {
+      "annotations": {
+        "idempotentHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Start a disposable Postgres twin from a schema file.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "postgres"
+            ],
+            "type": "string"
+          },
+          "restore_path": {
+            "description": "Optional snapshot path to restore.",
+            "type": "string"
+          },
+          "schema_path": {
+            "description": "Path to the schema file.",
+            "type": "string"
+          },
+          "seed_path": {
+            "description": "Optional seed file path.",
+            "type": "string"
+          },
+          "ttl_minutes": {
+            "default": 60,
+            "maximum": 1440,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "verify_path": {
+            "description": "Optional verify artifact path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "schema_path"
+        ],
+        "type": "object"
+      },
+      "name": "twin_start"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Stop a managed Postgres twin and return its run summary.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "twin_id": {
+            "description": "Twin id returned by twin_start.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "twin_id"
+        ],
+        "type": "object"
+      },
+      "name": "twin_stop"
+    }
+  ]
+}

@@ -1500,6 +1500,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "twinning-mcp"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "tempfile",
+ "thiserror",
+ "twinning-mcp-core",
+]
+
+[[package]]
+name = "twinning-mcp-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "twinning-postgres"
 version = "0.6.0"
 dependencies = [
