@@ -85,3 +85,48 @@ For G5, the process snapshot before and after the full suite was identical.
 Both `pgrep -fl '[t]winning|fake_[t]winning'` snapshots contained only the
 pre-existing NTM monitor process, PID 51566; `diff -u` exited 0. No process
 started by the suite remained.
+
+## REST real-client gate results (2026-11-01)
+
+The RR01-RR08 tests started `twinning-mcp` and its real `twinning rest` child
+through MCP tool calls, copied the checked-in OpenFIGI response-stub fixture
+into each temporary workdir, and used curl for live HTTP requests. The tested
+curl was `8.7.1` on `x86_64-apple-darwin24.0`, using SecureTransport and
+LibreSSL `3.3.6`.
+
+| Case | Request or boundary | Observed result |
+| --- | --- | --- |
+| RR01 | `POST /v3/mapping` with `X-OPENFIGI-APIKEY` and `[ {"idType":"ID_CUSIP","idValue":"037833100"} ]` | HTTP 200; response contained FIGI `BBG000B9XRY4` and ticker `AAPL`. |
+| RR02 | Same POST without the API key | HTTP 401; response code `unauthorized`. |
+| RR03 | Same POST with an object body instead of an array | HTTP 422; code `schema_validation_failed`, path `$`. |
+| RR04 | `GET /v3/no-such-route` | HTTP 404; response code `not_found`. |
+| RR05 | The four HTTP calls above, then `twin_stop` and `twin_report` | Report outcome `PASS`, `request_count=4`, `auth_refusal=1`, `schema_validation_refusal=1`, `response_stub=1`, `unmatched=1`; refusals were `unauthorized=1`, `schema_validation_failed=1`, `not_found=1`. `endpoints_exercised` contained `POST /v3/mapping`; `endpoints_not_exercised` was empty. |
+| RR06 | Curl to the allocated port using host address `192.168.86.29` while the child argv bound `127.0.0.1` | Curl exited 28 after a connection timeout. The twin then stopped with exit 0 and request count 0. |
+| RR07 | A spec containing a remote `$ref` to a local TCP sentinel | MCP returned `E_ARGUMENT_INVALID` before starting a child; the sentinel received no connection. |
+| RR08 | Shutdown of active REST twins by MCP SIGTERM and stdin EOF | Both children exited, both reports had outcome `PASS`, and the before/after filtered process snapshots were empty. |
+
+The focused command
+`CARGO_TARGET_DIR=target/pane-a cargo test --offline -p twinning-mcp --test e2e_rest -- --nocapture --test-threads=1`
+passed all eight cases with 0 failures and 0 ignored tests. No case printed
+`SKIPPED:`. The demo in `docs/demo/rest/run.sh` repeated the four HTTP calls
+with release binaries and produced a `PASS` report with four requests and the
+same outcome and refusal counts.
+
+This records a declared-subset REST twin run against one checked-in response
+stub. It does not establish compatibility with the OpenFIGI service or other
+specifications.
+
+## Not supported / not tested
+
+- Chaos or fault-injection behavior was not exercised.
+- Authentication behavior beyond the scheme declared by this fixture was not
+  tested. The observed missing-key request returned HTTP 401.
+- Specifications other than
+  `tests/fixtures/rest/openfigi_v2_v3/response-stub-schema.yaml` were not
+  tested.
+- Request bodies beyond the fixture schema were not tested. The observed
+  object body was rejected with HTTP 422 at path `$`.
+- Remote references are refused with `E_ARGUMENT_INVALID` before a child starts
+  or a fetch is attempted.
+- Routes and response behavior beyond the four requests listed above were not
+  tested.
