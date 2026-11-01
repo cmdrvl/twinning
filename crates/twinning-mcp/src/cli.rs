@@ -4,6 +4,7 @@ use std::{
     env,
     ffi::OsString,
     io::{self, IsTerminal, Write},
+    path::Path,
     path::PathBuf,
 };
 
@@ -14,7 +15,7 @@ use clap::{
 use serde_json::{Value, json};
 use twinning_mcp_core::SUPPORTED_MCP_PROTOCOL_VERSIONS;
 
-use crate::{errors::ERROR_CODES, server, tools::tool_names};
+use crate::{doctor, errors::ERROR_CODES, paths::Workdir, server, setup, tools::tool_names};
 
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_USER_ERROR: i32 = 1;
@@ -53,10 +54,14 @@ struct Cli {
 enum Commands {
     /// Configure a supported MCP client.
     Setup {
+        #[arg(long, value_name = "CLIENT")]
+        client: Option<String>,
         #[arg(long)]
         json: bool,
         #[arg(long)]
         dry_run: bool,
+        #[arg(long)]
+        print: bool,
     },
     /// Check the twinning binary and work directory.
     Doctor {
@@ -105,19 +110,283 @@ pub fn run() -> i32 {
             EXIT_OK
         }
         Some(Commands::Setup {
-            json: _,
-            dry_run: _,
-        }) => {
-            eprintln!("error: setup is not yet implemented");
-            eprintln!("next: twinning-mcp setup");
-            EXIT_USER_ERROR
-        }
-        Some(Commands::Doctor { json: _ }) => {
-            eprintln!("error: doctor is not yet implemented");
+            client,
+            json,
+            dry_run,
+            print,
+        }) => run_setup(
+            client.as_deref(),
+            cli.workdir.as_deref(),
+            json,
+            dry_run,
+            print,
+        ),
+        Some(Commands::Doctor { json }) => run_doctor(
+            cli.workdir.as_deref(),
+            cli.twinning_bin.as_deref(),
+            cli.restricted,
+            cli.max_twins.unwrap_or(5),
+            json,
+        ),
+    }
+}
+
+fn run_setup(
+    client: Option<&str>,
+    workdir: Option<&Path>,
+    json_output: bool,
+    dry_run: bool,
+    print: bool,
+) -> i32 {
+    let launch_dir = match env::current_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("error: setup: cannot read launch directory: {error}");
             eprintln!("next: twinning-mcp doctor");
-            EXIT_USER_ERROR
+            return EXIT_ENVIRONMENT_ERROR;
+        }
+    };
+    let home = env::var_os("HOME").map(PathBuf::from);
+    let executable = match env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("error: setup: cannot locate the running executable: {error}");
+            eprintln!("next: twinning-mcp doctor");
+            return EXIT_ENVIRONMENT_ERROR;
+        }
+    };
+    let result = match setup::configure(
+        client,
+        workdir,
+        &launch_dir,
+        home.as_deref(),
+        &executable,
+        dry_run,
+        print,
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("error: {}", error.message);
+            eprintln!("next: {}", error.next);
+            return match error.kind {
+                setup::FailureKind::User => EXIT_USER_ERROR,
+                setup::FailureKind::Safety => EXIT_SAFETY_BLOCK,
+                setup::FailureKind::Environment => EXIT_ENVIRONMENT_ERROR,
+            };
+        }
+    };
+
+    if json_output {
+        if let Some(diff) = &result.diff {
+            eprint!("{diff}");
+        }
+        let output = json!({
+            "client": result.client,
+            "config_path": result.config_path,
+            "action": result.action,
+            "backup_path": result.backup_path,
+            "restart_required": result.restart_required
+        });
+        println!("{output}");
+        return EXIT_OK;
+    }
+    if result.action == "no_change" {
+        println!("no change");
+        return EXIT_OK;
+    }
+    if result.action == "printed" {
+        match serde_json::to_string_pretty(&result.snippet) {
+            Ok(snippet) => println!("{snippet}"),
+            Err(error) => {
+                eprintln!("error: setup: could not render config snippet: {error}");
+                eprintln!("next: twinning-mcp doctor");
+                return EXIT_ENVIRONMENT_ERROR;
+            }
+        }
+        return EXIT_OK;
+    }
+    if let Some(diff) = result.diff {
+        print!("{diff}");
+    }
+    println!("action: {}", result.action);
+    println!("client: {}", setup::client_name(&result.client));
+    if let Some(path) = &result.config_path {
+        println!("config_path: {}", path.display());
+    }
+    match &result.backup_path {
+        Some(path) => println!("backup_path: {}", path.display()),
+        None => println!("backup_path: none"),
+    }
+    println!("restart_required: {}", result.restart_required);
+    if result.restart_required {
+        println!(
+            "Restart {} to load the server.",
+            setup::client_name(&result.client)
+        );
+    } else if result.action == "dry_run" {
+        println!("No file was written.");
+    }
+    EXIT_OK
+}
+
+fn run_doctor(
+    explicit_workdir: Option<&Path>,
+    explicit_bin: Option<&Path>,
+    restricted: bool,
+    cap: usize,
+    json_output: bool,
+) -> i32 {
+    let launch_dir = match env::current_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("error: doctor: cannot read launch directory: {error}");
+            eprintln!("next: twinning-mcp doctor --workdir <existing-directory>");
+            return EXIT_ENVIRONMENT_ERROR;
+        }
+    };
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"));
+    let env_workdir = env::var_os("TWINNING_MCP_WORKDIR").map(PathBuf::from);
+    let workdir = Workdir::resolve(explicit_workdir, env_workdir.as_deref(), &launch_dir, &home);
+    let env_bin = env::var_os("TWINNING_BIN").map(PathBuf::from);
+    let explicit_binary_missing = explicit_bin.is_some_and(|path| !path.exists());
+    let diagnostic = if explicit_binary_missing {
+        let workdir_status = match &workdir {
+            Ok(workdir) => json!({
+                "path": workdir.path,
+                "safe": !workdir.unsafe_default,
+                "explicit": workdir.explicit
+            }),
+            Err(error) => json!({
+                "path": Value::Null,
+                "safe": false,
+                "error": error.code
+            }),
+        };
+        json!({
+            "twinning_bin": Value::Null,
+            "twinning_version": Value::Null,
+            "health": "unavailable",
+            "capabilities": [],
+            "workdir": workdir_status,
+            "cap": cap,
+            "restricted": restricted
+        })
+    } else {
+        doctor::diagnose(explicit_bin, env_bin.as_deref(), &workdir, cap, restricted)
+    };
+    let binary = diagnostic["twinning_bin"].as_str();
+    let health_status = diagnostic["health"]["status"].as_str();
+    let health_ok = health_status == Some("healthy");
+    let workdir_safe = diagnostic["workdir"]["safe"].as_bool() == Some(true);
+    let binary_ok = binary.is_some();
+    let workdir_detail = diagnostic["workdir"]["path"]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| diagnostic["workdir"]["error"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| "workdir unavailable".to_owned());
+    let binary_detail = binary
+        .map(str::to_owned)
+        .unwrap_or_else(|| "twinning executable unavailable".to_owned());
+    let health_detail = if let Some(status) = health_status {
+        format!(
+            "{status} ({})",
+            diagnostic["health"]["outcome"]
+                .as_str()
+                .unwrap_or("unknown")
+        )
+    } else {
+        diagnostic["health"]
+            .as_str()
+            .unwrap_or("unavailable")
+            .to_owned()
+    };
+    let checks = json!([
+        {
+            "name": "twinning_binary",
+            "ok": binary_ok,
+            "detail": binary_detail,
+            "next": "set TWINNING_BIN or pass --twinning-bin <path>"
+        },
+        {
+            "name": "health",
+            "ok": health_ok,
+            "detail": health_detail,
+            "next": "twinning doctor health --json"
+        },
+        {
+            "name": "workdir",
+            "ok": workdir_safe,
+            "detail": workdir_detail,
+            "next": "twinning-mcp doctor --workdir <safe-directory>"
+        }
+    ]);
+    let mut report = diagnostic.as_object().cloned().unwrap_or_default();
+    report.insert("checks".into(), checks.clone());
+    let report = Value::Object(report);
+    let exit_code = if !workdir_safe {
+        EXIT_SAFETY_BLOCK
+    } else if !binary_ok {
+        if !explicit_binary_missing && selected_binary_exists(explicit_bin, env_bin.as_deref()) {
+            EXIT_UPSTREAM_FAILURE
+        } else {
+            EXIT_ENVIRONMENT_ERROR
+        }
+    } else if !health_ok {
+        EXIT_UPSTREAM_FAILURE
+    } else {
+        EXIT_OK
+    };
+
+    if json_output {
+        println!("{report}");
+    } else {
+        println!("twinning-mcp doctor");
+        for check in checks.as_array().expect("checks is always an array") {
+            let status = if check["ok"] == true { "ok" } else { "failed" };
+            println!(
+                "{}: {} ({})",
+                check["name"].as_str().unwrap_or("check"),
+                status,
+                check["detail"].as_str().unwrap_or("unknown")
+            );
         }
     }
+    if exit_code != EXIT_OK {
+        let (message, next) = match exit_code {
+            EXIT_SAFETY_BLOCK => (
+                "doctor: workdir is unsafe or could not be resolved",
+                "twinning-mcp doctor --workdir <safe-directory>",
+            ),
+            EXIT_ENVIRONMENT_ERROR => (
+                "doctor: twinning executable is missing or not running",
+                "set TWINNING_BIN or pass --twinning-bin <path>",
+            ),
+            _ => (
+                "doctor: twinning health or capability probe failed",
+                "twinning doctor health --json",
+            ),
+        };
+        eprintln!("error: {message}");
+        eprintln!("next: {next}");
+    }
+    exit_code
+}
+
+fn selected_binary_exists(explicit: Option<&Path>, env_bin: Option<&Path>) -> bool {
+    let selected_exists = [explicit, env_bin].into_iter().flatten().any(Path::is_file);
+    if selected_exists {
+        return true;
+    }
+    let sibling_exists = env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(Path::to_path_buf))
+        .is_some_and(|parent| parent.join("twinning").is_file());
+    let path_exists = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).any(|entry| entry.join("twinning").is_file()))
+        .unwrap_or(false);
+    sibling_exists || path_exists
 }
 
 fn assume_tty() -> bool {

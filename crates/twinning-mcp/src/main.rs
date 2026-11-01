@@ -7,6 +7,7 @@ use twinning_mcp::{argv, locate, log, paths, registry, stale, supervisor};
 mod doctor;
 mod report;
 mod server;
+mod setup;
 mod tools;
 
 fn main() {
