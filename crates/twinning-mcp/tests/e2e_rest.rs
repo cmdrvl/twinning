@@ -1177,21 +1177,21 @@ impl Drop for McpSession {
             }
         }
         self.stdin.take();
-        if let Some(reader) = self.stdout_reader.take() {
-            if let Ok(stdout) = reader.join() {
-                let _ = fs::write(self.session_root.join("stdout.json"), stdout);
-            }
+        if let Some(reader) = self.stdout_reader.take()
+            && let Ok(stdout) = reader.join()
+        {
+            let _ = fs::write(self.session_root.join("stdout.json"), stdout);
         }
-        if let Some(reader) = self.stderr_reader.take() {
-            if let Ok(stderr) = reader.join() {
-                let _ = fs::write(self.session_root.join("stderr.log"), &stderr);
-                event(
-                    &self.artifacts,
-                    &self.test_id,
-                    "failure_server_stderr_tail",
-                    &[("stderr_tail", tail(&stderr, 2048))],
-                );
-            }
+        if let Some(reader) = self.stderr_reader.take()
+            && let Ok(stderr) = reader.join()
+        {
+            let _ = fs::write(self.session_root.join("stderr.log"), &stderr);
+            event(
+                &self.artifacts,
+                &self.test_id,
+                "failure_server_stderr_tail",
+                &[("stderr_tail", tail(&stderr, 2048))],
+            );
         }
         for twin in &self.twins {
             let path = self.twin_path(&twin.twin_id);
