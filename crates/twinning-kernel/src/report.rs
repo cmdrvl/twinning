@@ -196,7 +196,7 @@ impl TwinReport {
             engine: seed.engine.to_owned(),
             host: seed.host.to_owned(),
             port: seed.port,
-            wire_protocol: "planned.pgwire".to_owned(),
+            wire_protocol: "pgwire".to_owned(),
             schema: seed.schema,
             catalog_declaration: seed.catalog_declaration,
             verify_artifact: seed.verify_artifact,
@@ -465,7 +465,7 @@ mod tests {
             engine: "postgres".to_owned(),
             host: "127.0.0.1".to_owned(),
             port: 5432,
-            wire_protocol: "planned.pgwire".to_owned(),
+            wire_protocol: "pgwire".to_owned(),
             schema: SchemaReport {
                 source: "schema.sql".to_owned(),
                 hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -532,7 +532,7 @@ mod tests {
             engine: "postgres".to_owned(),
             host: "127.0.0.1".to_owned(),
             port: 5432,
-            wire_protocol: "planned.pgwire".to_owned(),
+            wire_protocol: "pgwire".to_owned(),
             schema: SchemaReport {
                 source: "schema.sql".to_owned(),
                 hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -664,7 +664,7 @@ mod tests {
             engine: "postgres".to_owned(),
             host: "127.0.0.1".to_owned(),
             port: 5432,
-            wire_protocol: "planned.pgwire".to_owned(),
+            wire_protocol: "pgwire".to_owned(),
             schema: SchemaReport {
                 source: "schema.sql".to_owned(),
                 hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -766,7 +766,7 @@ mod tests {
             engine: "postgres".to_owned(),
             host: "127.0.0.1".to_owned(),
             port: 5432,
-            wire_protocol: "planned.pgwire".to_owned(),
+            wire_protocol: "pgwire".to_owned(),
             schema: SchemaReport {
                 source: "schema.sql".to_owned(),
                 hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -835,7 +835,7 @@ mod tests {
             engine: "postgres".to_owned(),
             host: "127.0.0.1".to_owned(),
             port: 5432,
-            wire_protocol: "planned.pgwire".to_owned(),
+            wire_protocol: "pgwire".to_owned(),
             schema: SchemaReport {
                 source: "schema.sql".to_owned(),
                 hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

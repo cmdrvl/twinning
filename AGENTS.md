@@ -45,8 +45,8 @@ What `twinning` does not own:
 
 ## Current Repository State
 
-The current repo is **Phase 0 bootstrap plus a live `run_once` shell for the
-proven Postgres subset**.
+The current repo is **Phase 0 bootstrap plus live `run_once` and `--serve`
+shells for the proven Postgres subset**.
 
 Implemented now:
 
@@ -56,16 +56,17 @@ Implemented now:
 - verify-artifact loading and hashing
 - live `run_once` orchestration for one child command against the configured
   Postgres listener
+- standalone `--serve` mode for interactive pgwire access to the proven subset
 - committed-state run reports and snapshots for the proven subset
 - embedded verify execution over `run_once` committed state
 - explicit refusal behavior for unsupported runtime paths
 
 Not implemented yet:
 
-- long-lived standalone pgwire server mode
+- general-purpose pgwire compatibility beyond the canary-defined subset
 - broad SQL execution beyond the canary-defined subset
 - replay/proof backends and shared base snapshot economics
-- multi-client live orchestration beyond the current one-child `run_once` shell
+- multi-writer live orchestration; v0 follows the single-writer model
 - twin-pair migration proof
 
 Key references:
@@ -78,7 +79,7 @@ Key references:
 
 Implication for new work:
 
-- do not pretend a long-lived general twin exists when only `run_once` is proven
+- do not imply `--serve` covers Postgres shapes outside the canary-defined subset
 - do not widen scope beyond the canary-defined Postgres subset
 - do not start non-SQL or second-engine work before the Postgres tournament wedge is real
 
@@ -234,12 +235,13 @@ Do not:
 
 ### 2. Bootstrap and run_once honesty matter
 
-The current repo supports bootstrap plus one-child live `run_once` for the
-proven subset. It is not a long-lived general database server.
+The current repo supports bootstrap, one-child live `run_once`, and standalone
+`--serve` for the proven Postgres subset. It is not a general-purpose Postgres
+server.
 
 Do not:
 
-- imply standalone live server mode exists
+- imply `--serve` supports SQL or protocol shapes outside the canary-defined subset
 - imply `--run` covers shapes outside the manifest-backed subset
 - fake broad pgwire compatibility
 - ship placeholder execution paths that look like success

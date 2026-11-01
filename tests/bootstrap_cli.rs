@@ -85,7 +85,7 @@ fn bootstrap_cli_writes_expected_json_report() {
     assert_eq!(report_json["engine"], "postgres");
     assert_eq!(report_json["host"], "127.0.0.1");
     assert_eq!(report_json["port"], 5432);
-    assert_eq!(report_json["wire_protocol"], "planned.pgwire");
+    assert_eq!(report_json["wire_protocol"], "pgwire");
     assert_eq!(
         report_json["schema"]["source"],
         schema_path.display().to_string()

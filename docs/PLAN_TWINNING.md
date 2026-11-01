@@ -600,7 +600,7 @@ Required top-level fields:
 | `engine` | `postgres` in v0 |
 | `host` | bind host for the twin boundary |
 | `port` | bind port for the twin boundary |
-| `wire_protocol` | declared wire/runtime contract, e.g. `planned.pgwire` |
+| `wire_protocol` | declared wire/runtime contract, e.g. `pgwire` |
 | `schema` | normalized schema identity and hash |
 | `catalog_declaration` | optional parent catalog subset identity |
 | `catalog` | normalized catalog summary for the loaded schema |
@@ -652,7 +652,7 @@ Example combined report:
   "engine": "postgres",
   "host": "127.0.0.1",
   "port": 5433,
-  "wire_protocol": "planned.pgwire",
+  "wire_protocol": "pgwire",
   "schema": {
     "source": "schemas/cmbs.sql",
     "hash": "sha256:...",

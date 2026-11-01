@@ -159,7 +159,7 @@ next: Bootstrap mode validated the schema assets and deterministic artifact path
   "engine": "postgres",
   "host": "127.0.0.1",
   "port": 5432,
-  "wire_protocol": "planned.pgwire",
+  "wire_protocol": "pgwire",
   "schema": {
     "source": "schema.sql",
     "hash": "sha256:a1b2c3...",
