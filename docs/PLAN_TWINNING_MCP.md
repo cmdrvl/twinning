@@ -3,7 +3,7 @@
 Audience: Cairn. Status: revised draft for Zac's review. Date: 2026-11-01.
 Revises the 2026-11-01 draft. Source checked: github.com/cmdrvl/twinning at HEAD (operator.json 0.6.0, v0.6.0 released 2026-06-25).
 
-Implementation details live in [PLAN_TWINNING_MCP_SPEC.md](./PLAN_TWINNING_MCP_SPEC.md) (files, invariants, errors, tests, gates). Where the two differ, the spec wins, and these amendments apply: process management is synchronous std threads, not tokio; `twin_report` works on stopped twins only (twinning writes its report at shutdown); `setup` ships for Claude Desktop and Cursor plus `--print`, other clients later; the OCI image and Windows are deferred past v0; `twinning-rest` is not refactored in v0. Also superseded by the spec: `twinning-mcp-core` is a copy of the JSON-RPC and version code, not an extraction (D2); `twin_stop` and `twin_start` take no snapshot option and `twin_list` returns the fields in spec section 5; Streamable HTTP is out of v0; README config snippets cover Claude Desktop and Cursor (Cline and the docker install line come with the later `setup` and OCI work); the milestone numbers in section 9 are plan-level, and the work order is spec section 6 (M0a to M8, go-live gates GL-1 to GL-6).
+Implementation details live in [PLAN_TWINNING_MCP_SPEC.md](./PLAN_TWINNING_MCP_SPEC.md) (files, invariants, errors, tests, gates). Where the two differ, the spec wins, and these amendments apply: process management is synchronous std threads, not tokio; `twin_report` works on stopped twins only (twinning writes its report at shutdown); `setup` ships for Claude Desktop and Cursor plus `--print`, other clients later; the OCI image and Windows are deferred past v0; `twinning-rest` is not refactored in v0. Also superseded by the spec: `twinning-mcp-core` is a copy of the JSON-RPC and version code, not an extraction (D2); `twin_stop` and `twin_start` take no snapshot option and `twin_list` returns the fields in spec section 5; Streamable HTTP is out of v0; README config snippets cover Claude Desktop and Cursor (Cline and the docker install line come with the later `setup` and OCI work); the milestone numbers in section 9 are plan-level, and the work order is spec section 6 (M0a to M8, go-live gates GL-1 to GL-6, swarm runbook in section 12). Sections 8, 10 and 11 and the Open questions are listing-plan reference: no bead or test reads them.
 
 This is CMD+RVL's first MCP server to list in public directories. It is separate from the spine (loan tape) local MCP server, which is a later phase.
 
@@ -78,7 +78,7 @@ Deferred (not in v1):
 ## 5. Implementation
 
 - Rust, a new workspace crate and binary in the twinning repo: `crates/twinning-mcp` producing `twinning-mcp`. Same repo because it is a thin controller over the twinning binary (flag and report changes move together), reuses workspace code, and shares one release pipeline. Split out only if its release cadence or contributors diverge.
-- Reuse from `crates/twinning-rest/src/mcp`: `stdio.rs`, `dispatcher.rs` (`JsonRpcRequest`/`Response`/`Error`), `version.rs`. Extract into a small shared crate (`twinning-mcp-core`) so the spine server can reuse it.
+- Reuse from `crates/twinning-rest/src/mcp`: `stdio.rs`, `dispatcher.rs` (`JsonRpcRequest`/`Response`/`Error`), `version.rs`. Copy into a new `twinning-mcp-core` crate (spec D2); extraction from `twinning-rest` for the spine server is a Later bead.
 - Process management with std threads and `signal-hook` (no tokio; spec D1). Default cap of 5 concurrent twins. Clean up children on exit and on crash (children must not survive a killed parent: process group or parent-death handling; sweep stale children at startup).
 - Fix the build gap first: switch `verify-core` and `verify-engine` to git dependencies in both places (root `Cargo.toml` and `twinning-kernel`). Crates.io publishing is optional later. Once fixed, remove the vendoring steps in `release.yml` (two places: the `build-artifacts` and `release` jobs) and the six `cmdrvl/verify` checkouts in `ci.yml`.
 - Packaging: extend the existing `release.yml` and Homebrew formula (`brew install cmdrvl/tap/twinning` already works). Add:
@@ -104,9 +104,9 @@ Deferred (not in v1):
    - Domain proof for the `com.cmdrvl` namespace by DNS TXT (`v=MCPv1; k=ed25519; p=<key>`) or the HTTP file at `https://cmdrvl.com/.well-known/mcp-registry-auth` (served from the website's `static/`; no DNS access needed). Without domain proof, GitHub auth would force `io.github.cmdrvl/twinning`.
    - Check `repository.subfolder` in the schema if the package lives in a subfolder.
 2. Repo discoverability: add topics `mcp` and `mcp-server` (current topics are CLI-flavored); lead the README with a "Use with an agent (MCP)" section.
-3. README sections directories expect: what it is, install (brew, npx, docker), config snippets for Claude Desktop, Cursor and Cline, tool list with args, example prompts, safety, license (MIT), demo GIF.
+3. README sections directories expect: what it is, install (release binary, npx, brew; docker after the OCI image), config snippets for Claude Desktop and Cursor (other clients via `setup --print`), tool list with args, example prompts, safety, license (MIT), demo GIF.
 4. Demo GIF is the v1 loop: start a twin from a DDL file, run a bad insert, read the constraint violation in the report, stop.
-5. Then, as each fits: punkpeye/awesome-mcp-servers (local, public repo with code: qualifies), Docker MCP catalog, Cline marketplace, LobeHub, mcp.so, mcpservers.org. Glama and PulseMCP: PulseMCP is paused and says it will pick up official-registry entries automatically on reopening; Glama has no official submission guide I found, so confirm on their site. Smithery wants a remote Streamable HTTP URL, so a local stdio server may not fit; confirm before spending time.
+5. Then, as each fits: punkpeye/awesome-mcp-servers (local, public repo with code: qualifies), Docker MCP catalog (after the OCI image), Cline marketplace, LobeHub, mcp.so, mcpservers.org. Glama and PulseMCP: PulseMCP is paused and says it will pick up official-registry entries automatically on reopening; Glama has no official submission guide I found, so confirm on their site. Smithery wants a remote Streamable HTTP URL, so a local stdio server may not fit; confirm before spending time.
 6. Add an entry in the planned public `cmdrvl/mcp-servers` catalog repo (docs-only index linking here and to Receipts).
 
 ## 8. Funnel
@@ -115,13 +115,15 @@ None in v1. Revisit an opt-in `next_actions` hint in a later release.
 
 ## 9. Milestones
 
-0. Twinning preflight: fix the SSL-denied handshake with real libpq clients, isolate per-connection errors so one bad client cannot end the server, run real psycopg2 and SQLAlchemy through a throwaway `uv` environment (needs Zac's approval to install) and record the result, fix the stale `wire_protocol` string and AGENTS.md. Go-live is blocked until this passes.
+Plan milestones map to spec steps: 0 = M0a to M0d, 1 = M1, 2 = M2, 3 and 4 = M3 and M4, 5 = M6, 6 = M5 plus manual checks, 7 = M7 and M8, 8 = GL-1 to GL-6.
+
+0. Twinning preflight: fix the SSL-denied handshake with real libpq clients, isolate per-connection errors so one bad client cannot end the server, run real psycopg2 and SQLAlchemy through a throwaway `uv` environment (approved by Zac 2026-11-01; spec section 1) and record the result, fix the stale `wire_protocol` string and AGENTS.md. Go-live is blocked until this passes.
 1. Switch `verify-core` and `verify-engine` to git dependencies (root and `twinning-kernel`); confirm `cargo build` works standalone and simplify `release.yml`.
-2. Extract `twinning-mcp-core` from `twinning-rest`.
+2. Create `twinning-mcp-core` by copying the JSON-RPC and version code (spec D2, bead M2).
 3. Control server skeleton with `twin_start`, `twin_list`, `twin_stop`, `twin_report`.
 4. Add `twin_seed_contract`, `twin_doctor`, TTL expiry. Child cleanup and path restrictions.
 5. `twinning-mcp setup` and `twinning-mcp doctor` (client config writer, dry-run, backup).
-6. Integration tests in Claude Desktop, Cursor and Cline, using `setup` to install. Demo GIF.
+6. Manual checks in Claude Desktop and Cursor, using `setup` to install (maintainer, after M6; Cline later). Demo GIF.
 7. Release: binaries with checksums and provenance, npm launcher with checksum verification, README (OCI later).
 8. `server.json`, `mcpName`, domain proof, then registry and directory submissions (after Zac approves).
 
