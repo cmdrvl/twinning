@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::argv::TwinArgv;
 use crate::errors::ToolError;
 use crate::log::{self, Level};
-use crate::registry::{Registry, TwinRecord, TwinStatus};
+use crate::registry::{Registry, TwinKind, TwinRecord, TwinStatus};
 use crate::stale;
 
 const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -45,9 +45,23 @@ pub struct StartRequest {
     pub ttl: Duration,
 }
 
+#[derive(Debug, Clone)]
+pub struct TwinStartRequest {
+    pub workdir: PathBuf,
+    pub kind: TwinKind,
+    pub input: PathBuf,
+    pub verify: Option<PathBuf>,
+    pub seed: Option<PathBuf>,
+    pub restore: Option<PathBuf>,
+    pub auth_mode: Option<String>,
+    pub server_variables: Vec<(String, String)>,
+    pub ttl: Duration,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StopResult {
     pub twin_id: String,
+    pub kind: TwinKind,
     pub status: TwinStatus,
     pub exit_code: i32,
     pub report_path: PathBuf,
@@ -104,6 +118,20 @@ impl Supervisor {
     }
 
     pub fn start(&self, request: StartRequest) -> Result<TwinRecord, ToolError> {
+        self.start_typed(TwinStartRequest {
+            workdir: request.workdir,
+            kind: TwinKind::Postgres,
+            input: request.schema,
+            verify: request.verify,
+            seed: request.seed,
+            restore: request.restore,
+            auth_mode: None,
+            server_variables: Vec::new(),
+            ttl: request.ttl,
+        })
+    }
+
+    pub fn start_typed(&self, request: TwinStartRequest) -> Result<TwinRecord, ToolError> {
         let _operation = self
             .shared
             .operation
@@ -116,16 +144,19 @@ impl Supervisor {
             .registry
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .reserve(&self.shared.state_root, first_port, ttl)?;
+            .reserve(&self.shared.state_root, first_port, ttl, request.kind)?;
         if let Err(error) = create_private_dir(&record.state_dir) {
             self.mark_failed(&record.id);
             return Err(error);
         }
         let argv = TwinArgv {
-            schema: request.schema,
+            kind: request.kind,
+            input: request.input,
             verify: request.verify,
             seed: request.seed,
             restore: request.restore,
+            auth_mode: request.auth_mode,
+            server_variables: request.server_variables,
             report: record.report_path.clone(),
             trace: record.trace_path.clone(),
             port: first_port,
@@ -518,9 +549,11 @@ fn stop_locked(shared: &Shared, twin_id: &str, expired: bool) -> Result<StopResu
         &record.stderr_path,
         exit_code(status),
         twin_id,
+        record.kind,
     )?;
     let result = StopResult {
         twin_id: twin_id.to_owned(),
+        kind: record.kind,
         status: final_status,
         exit_code: exit_code(status),
         report_path: record.report_path,
@@ -583,6 +616,7 @@ fn read_report(
     stderr_path: &Path,
     exit: i32,
     twin_id: &str,
+    kind: TwinKind,
 ) -> Result<Value, ToolError> {
     if exit != 0 && exit != 1 {
         return Err(report_error(
@@ -598,15 +632,45 @@ fn read_report(
         .map_err(|error| report_error(twin_id, error.to_string(), path, stderr_path))?;
     let report: Value = serde_json::from_slice(&bytes)
         .map_err(|error| report_error(twin_id, error.to_string(), path, stderr_path))?;
-    if report["version"] != "twinning.v0" {
+    let expected_version = match kind {
+        TwinKind::Postgres => "twinning.v0",
+        TwinKind::Rest => "twinning.rest-report.v0",
+    };
+    let outcome = report["outcome"].as_str();
+    let valid_outcome = match kind {
+        TwinKind::Postgres => matches!(outcome, Some("READY" | "VIOLATIONS" | "FAIL")),
+        TwinKind::Rest => matches!(outcome, Some("PASS" | "FAIL" | "VIOLATIONS" | "REFUSAL")),
+    };
+    let session = &report["session"];
+    let valid_rest_session = kind != TwinKind::Rest
+        || (session["request_count"].as_u64().is_some()
+            && session["endpoints_exercised"]
+                .as_array()
+                .is_some_and(|items| items.iter().all(Value::is_string))
+            && session["endpoints_not_exercised"]
+                .as_array()
+                .is_some_and(|items| items.iter().all(Value::is_string))
+            && valid_rest_count_map(session.get("outcomes"), true)
+            && valid_rest_count_map(session.get("response_stubs"), true)
+            && valid_rest_count_map(session.get("constraint_violations"), false)
+            && valid_rest_count_map(session.get("refusals"), false));
+    if report["version"] != expected_version || !valid_outcome || !valid_rest_session {
         return Err(report_error(
             twin_id,
-            "expected a twinning.v0 report".into(),
+            format!("expected a readable {expected_version} report"),
             path,
             stderr_path,
         ));
     }
     Ok(report)
+}
+
+fn valid_rest_count_map(value: Option<&Value>, optional: bool) -> bool {
+    match value {
+        Some(Value::Object(object)) => object.values().all(|count| count.as_u64().is_some()),
+        None => optional,
+        _ => false,
+    }
 }
 
 fn is_address_in_use_refusal(path: &Path) -> bool {
@@ -763,10 +827,12 @@ fn stop_after_shutdown(shared: &Shared, twin_id: &str) -> Option<StopResult> {
         &record.stderr_path,
         exit_code(status),
         twin_id,
+        record.kind,
     )
     .ok()?;
     Some(StopResult {
         twin_id: twin_id.to_owned(),
+        kind: record.kind,
         status: TwinStatus::Stopped,
         exit_code: exit_code(status),
         report_path: record.report_path,

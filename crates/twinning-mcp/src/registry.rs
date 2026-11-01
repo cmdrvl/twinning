@@ -13,6 +13,21 @@ pub const DEFAULT_MAX_TWINS: usize = 5;
 pub const MAX_STOPPED_RECORDS: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TwinKind {
+    Postgres,
+    Rest,
+}
+
+impl TwinKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Postgres => "postgres",
+            Self::Rest => "rest",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TwinStatus {
     Starting,
     Running,
@@ -30,6 +45,7 @@ impl TwinStatus {
 #[derive(Debug, Clone)]
 pub struct TwinRecord {
     pub id: String,
+    pub kind: TwinKind,
     pub state_dir: PathBuf,
     pub report_path: PathBuf,
     pub trace_path: PathBuf,
@@ -68,6 +84,7 @@ impl Registry {
         state_root: &std::path::Path,
         port: u16,
         ttl: Duration,
+        kind: TwinKind,
     ) -> Result<TwinRecord, ToolError> {
         if self.live_count() >= self.max_live {
             return Err(ToolError {
@@ -84,6 +101,7 @@ impl Registry {
             + chrono::Duration::from_std(ttl).unwrap_or_else(|_| chrono::Duration::zero());
         let record = TwinRecord {
             id,
+            kind,
             report_path: state_dir.join("report.json"),
             trace_path: state_dir.join("trace.json"),
             stdout_path: state_dir.join("stdout.json"),
@@ -203,7 +221,9 @@ pub fn connection_string(port: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_STOPPED_RECORDS, Registry, TwinStatus, connection_string, parse_ttl_minutes};
+    use super::{
+        MAX_STOPPED_RECORDS, Registry, TwinKind, TwinStatus, connection_string, parse_ttl_minutes,
+    };
     use serde_json::json;
     use std::time::Duration;
 
@@ -232,7 +252,7 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for _ in 0..10_000 {
             let record = registry
-                .reserve(&root, 5432, Duration::from_secs(60))
+                .reserve(&root, 5432, Duration::from_secs(60), TwinKind::Postgres)
                 .unwrap();
             assert!(record.id.starts_with("tw_"));
             assert_eq!(9, record.id.len());
@@ -255,7 +275,7 @@ mod tests {
         for _ in 0..5 {
             active.push(
                 registry
-                    .reserve(&root, 5432, Duration::from_secs(60))
+                    .reserve(&root, 5432, Duration::from_secs(60), TwinKind::Postgres)
                     .unwrap()
                     .id,
             );
@@ -263,7 +283,7 @@ mod tests {
         assert_eq!(
             "E_TWIN_CAP_REACHED",
             registry
-                .reserve(&root, 5432, Duration::from_secs(60))
+                .reserve(&root, 5432, Duration::from_secs(60), TwinKind::Rest)
                 .unwrap_err()
                 .code
         );
@@ -272,7 +292,7 @@ mod tests {
         }
         for _ in 0..MAX_STOPPED_RECORDS + 7 {
             let id = registry
-                .reserve(&root, 5432, Duration::from_secs(60))
+                .reserve(&root, 5432, Duration::from_secs(60), TwinKind::Postgres)
                 .unwrap()
                 .id;
             registry.get_mut(&id).unwrap().status = TwinStatus::Running;
@@ -284,7 +304,7 @@ mod tests {
             registry
                 .records()
                 .iter()
-                .filter(|r| !r.status.is_live())
+                .filter(|record| !record.status.is_live())
                 .count()
         );
     }

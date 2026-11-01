@@ -21,6 +21,7 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let is_rest = args.first().is_some_and(|arg| arg == "rest");
     if args.first().is_some_and(|arg| arg == "--describe") {
         println!(
             "{{\"version\":\"operator.v0\",\"name\":\"twinning\",\"description\":\"declared-subset Postgres twin test stub\"}}"
@@ -106,6 +107,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("--port is required")?
         .parse::<u16>()?;
     let _listener = TcpListener::bind(("127.0.0.1", port))?;
+    if is_rest && let Some(path) = report.as_deref() {
+        write_json(
+            &path.with_file_name("argv_summary.json"),
+            &rest_argv_summary(&args),
+        )?;
+    }
     let mut signals = term_signals()?;
     let ignore_term = mode == "ignore_sigterm";
     if ignore_term {
@@ -118,18 +125,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(2);
     }
     if let Some(path) = report {
-        let schema = value_after(&args, "--schema").unwrap_or_default();
-        let value: Value = serde_json::from_str(READY_REPORT)?;
-        let mut value = value;
-        substitute_report(
-            &mut value,
-            schema,
-            port,
-            path.parent().unwrap_or(Path::new(".")),
-        );
-        write_json(&path, &value)?;
+        if is_rest {
+            let value = fake_rest_report(value_after(&args, "--spec").unwrap_or_default());
+            write_json(&path, &value)?;
+        } else {
+            let schema = value_after(&args, "--schema").unwrap_or_default();
+            let value: Value = serde_json::from_str(READY_REPORT)?;
+            let mut value = value;
+            substitute_report(
+                &mut value,
+                schema,
+                port,
+                path.parent().unwrap_or(Path::new(".")),
+            );
+            write_json(&path, &value)?;
+        }
     }
-    if let Some(path) = trace {
+    if !is_rest && let Some(path) = trace {
         write_json(
             &path,
             &json!({"version":"twinning.query-trace.v0","policy":"redacted","events":[]}),
@@ -139,6 +151,72 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn rest_argv_summary(args: &[String]) -> Value {
+    let server_variables = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--server-variable")
+        .filter_map(|pair| pair[1].split_once('=').map(|(name, _)| name.to_owned()))
+        .collect::<Vec<_>>();
+    json!({
+        "command": args.first(),
+        "port": value_after(args, "--port").and_then(|port| port.parse::<u16>().ok()),
+        "spec_present": value_after(args, "--spec").is_some(),
+        "auth_mode": value_after(args, "--auth-mode"),
+        "server_variable_names": server_variables,
+        "run_enabled": args.iter().any(|arg| arg == "--run"),
+        "chaos_enabled": args.iter().any(|arg| arg == "--chaos"),
+        "canary_enabled": args.iter().any(|arg| arg == "--canary"),
+        "strict_enabled": args.iter().any(|arg| arg == "--strict"),
+        "routing_enabled": args.iter().any(|arg| arg == "--routing"),
+        "base_prefix_enabled": args.iter().any(|arg| arg == "--base-prefix")
+    })
+}
+
+fn fake_rest_report(spec_path: &str) -> Value {
+    let large = std::env::var("FAKE_TWINNING_REST_LARGE_REPORT").as_deref() == Ok("1");
+    let outcome = std::env::var("FAKE_TWINNING_REST_OUTCOME").unwrap_or_else(|_| "PASS".into());
+    let version = if std::env::var("FAKE_TWINNING_REST_BAD_VERSION").as_deref() == Ok("1") {
+        "not-a-rest-report"
+    } else {
+        "twinning.rest-report.v0"
+    };
+    let exercised = if large {
+        (0..60)
+            .map(|index| format!("GET /items/{index}"))
+            .collect::<Vec<_>>()
+    } else {
+        vec!["GET /items".into()]
+    };
+    let not_exercised = if large {
+        (0..60)
+            .map(|index| format!("POST /items/{index}"))
+            .collect::<Vec<_>>()
+    } else {
+        vec!["POST /items".into()]
+    };
+    json!({
+        "version": version,
+        "outcome": outcome,
+        "spec": {
+            "source": spec_path,
+            "hash": "sha256:fake-report-only",
+            "resource_count": 1,
+            "route_count": 2,
+            "security_schemes_bypassed": []
+        },
+        "session": {
+            "request_count": 7,
+            "endpoints_exercised": exercised,
+            "endpoints_not_exercised": not_exercised,
+            "response_stubs": {"get_items": 2},
+            "outcomes": {"auth_refusal": 1, "response_stub": 2},
+            "constraint_violations": {"unique": 1},
+            "refusals": {"unauthorized": 1}
+        },
+        "next_step": "Inspect the REST session coverage before relying on this twin."
+    })
 }
 
 fn print_bind_refusal() {

@@ -15,12 +15,13 @@ use crate::{
     doctor,
     errors::ToolError,
     locate,
-    paths::{Workdir, resolve_input_file, validate_restricted},
+    paths::{Workdir, reject_nonlocal_refs, resolve_input_file, validate_restricted},
     registry::{
-        DEFAULT_MAX_TWINS, Registry, TwinRecord, TwinStatus, connection_string, parse_ttl_minutes,
+        DEFAULT_MAX_TWINS, Registry, TwinKind, TwinRecord, TwinStatus, connection_string,
+        parse_ttl_minutes,
     },
     report, stale,
-    supervisor::{StartRequest, Supervisor, SupervisorConfig},
+    supervisor::{Supervisor, SupervisorConfig, TwinStartRequest},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -112,37 +113,79 @@ impl ToolService {
             &[
                 "kind",
                 "schema_path",
+                "spec_path",
                 "verify_path",
                 "seed_path",
                 "restore_path",
+                "auth_mode",
+                "server_variables",
                 "ttl_minutes",
             ],
         )?;
         let kind = required_string(arguments, "kind")?;
-        let schema_raw = required_string(arguments, "schema_path")?;
-        let verify_raw = optional_string(arguments, "verify_path")?;
-        let seed_raw = optional_string(arguments, "seed_path")?;
-        let restore_raw = optional_string(arguments, "restore_path")?;
+        let kind = match kind {
+            "postgres" => TwinKind::Postgres,
+            "rest" => TwinKind::Rest,
+            other => return Err(kind_unsupported(other)),
+        };
         let ttl = match arguments.get("ttl_minutes") {
             Some(value) => parse_ttl_minutes(value)?,
             None => 60,
         };
-
-        if kind != "postgres" {
-            return Err(kind_unsupported(kind));
-        }
         let workdir = self.safe_workdir()?.path.clone();
-        validate_restricted(self.config.restricted, verify_raw, seed_raw, restore_raw)?;
-        let schema = resolve_argument_file("schema_path", schema_raw, &workdir)?;
-        let verify = verify_raw
-            .map(|path| resolve_argument_file("verify_path", path, &workdir))
-            .transpose()?;
-        let seed = seed_raw
-            .map(|path| resolve_argument_file("seed_path", path, &workdir))
-            .transpose()?;
-        let restore = restore_raw
-            .map(|path| resolve_argument_file("restore_path", path, &workdir))
-            .transpose()?;
+        let (input, verify, seed, restore, auth_mode, server_variables) = match kind {
+            TwinKind::Postgres => {
+                for field in ["spec_path", "auth_mode", "server_variables"] {
+                    reject_wrong_kind_field(arguments, field, "postgres")?;
+                }
+                let schema_raw = required_string(arguments, "schema_path")?;
+                let verify_raw = optional_string(arguments, "verify_path")?;
+                let seed_raw = optional_string(arguments, "seed_path")?;
+                let restore_raw = optional_string(arguments, "restore_path")?;
+                validate_restricted(self.config.restricted, verify_raw, seed_raw, restore_raw)?;
+                (
+                    resolve_argument_file("schema_path", schema_raw, &workdir)?,
+                    verify_raw
+                        .map(|path| resolve_argument_file("verify_path", path, &workdir))
+                        .transpose()?,
+                    seed_raw
+                        .map(|path| resolve_argument_file("seed_path", path, &workdir))
+                        .transpose()?,
+                    restore_raw
+                        .map(|path| resolve_argument_file("restore_path", path, &workdir))
+                        .transpose()?,
+                    None,
+                    Vec::new(),
+                )
+            }
+            TwinKind::Rest => {
+                for field in ["schema_path", "verify_path", "seed_path", "restore_path"] {
+                    reject_wrong_kind_field(arguments, field, "rest")?;
+                }
+                let spec_raw = required_string(arguments, "spec_path")?;
+                let auth_mode = match optional_string(arguments, "auth_mode")? {
+                    None | Some("shape") => "shape".to_owned(),
+                    Some("bypass") => "bypass".to_owned(),
+                    Some(_) => {
+                        return Err(argument_error(
+                            "auth_mode",
+                            "must be shape or bypass for kind rest",
+                        ));
+                    }
+                };
+                let server_variables = parse_server_variables(arguments.get("server_variables"))?;
+                let spec_path = resolve_argument_file("spec_path", spec_raw, &workdir)?;
+                reject_nonlocal_refs(&spec_path)?;
+                (
+                    spec_path,
+                    None,
+                    None,
+                    None,
+                    Some(auth_mode),
+                    server_variables,
+                )
+            }
+        };
         let twinning_bin = self.locate_twinning()?;
         let cap = self.configured_cap()?;
 
@@ -160,12 +203,15 @@ impl ToolService {
         let start_result = {
             let supervisor = self.ensure_supervisor(twinning_bin, cap)?;
             let before = supervisor.records().len();
-            let result = supervisor.start(StartRequest {
+            let result = supervisor.start_typed(TwinStartRequest {
                 workdir: workdir.clone(),
-                schema,
+                kind,
+                input,
                 verify,
                 seed,
                 restore,
+                auth_mode,
+                server_variables,
                 ttl: Duration::from_secs(ttl * 60),
             });
             let failed_record = if result.is_err() && supervisor.records().len() > before {
@@ -186,15 +232,20 @@ impl ToolService {
         let pid = record
             .child_pid
             .ok_or_else(|| internal_error("twin child pid is missing"))?;
-        Ok(json!({
+        let mut response = json!({
             "twin_id": record.id,
-            "kind": "postgres",
+            "kind": kind.as_str(),
             "port": record.port,
             "pid": pid,
-            "connection_string": connection_string(record.port),
             "started_at": record.started_at,
             "expires_at": record.expires_at
-        }))
+        });
+        if kind == TwinKind::Postgres {
+            response["connection_string"] = Value::String(connection_string(record.port));
+        } else {
+            response["base_url"] = Value::String(format!("http://127.0.0.1:{}", record.port));
+        }
+        Ok(response)
     }
 
     fn twin_list(&self, arguments: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -209,7 +260,7 @@ impl ToolService {
             .map(|record| {
                 json!({
                     "twin_id": record.id,
-                    "kind": "postgres",
+                    "kind": record.kind.as_str(),
                     "status": status_name(record.status),
                     "port": record.port,
                     "started_at": record.started_at,
@@ -252,7 +303,11 @@ impl ToolService {
                 hint: "Call twin_stop to finalize the report",
             });
         }
-        let full_report = report::read_report(&record.report_path, &record.stderr_path)?;
+        let full_report =
+            report::read_report(&record.report_path, &record.stderr_path, record.kind)?;
+        if record.kind == TwinKind::Rest {
+            return Ok(report::full_rest_report(&full_report, &record.report_path));
+        }
         let trace = report::read_trace(&record.trace_path, &record.stderr_path)?;
         Ok(report::full_report(
             full_report,
@@ -264,10 +319,13 @@ impl ToolService {
     fn twin_seed_contract(&mut self, arguments: &Map<String, Value>) -> Result<Value, ToolError> {
         reject_unknown(arguments, &["kind", "schema_path"])?;
         let kind = required_string(arguments, "kind")?;
-        let schema_raw = required_string(arguments, "schema_path")?;
+        if kind == "rest" {
+            return Err(operation_kind_unsupported("twin_seed_contract", kind));
+        }
         if kind != "postgres" {
             return Err(kind_unsupported(kind));
         }
+        let schema_raw = required_string(arguments, "schema_path")?;
         let workdir = self.safe_workdir()?;
         let schema = resolve_argument_file("schema_path", schema_raw, &workdir.path)?;
         let twinning_bin = self.locate_twinning()?;
@@ -315,13 +373,15 @@ impl ToolService {
     fn twin_doctor(&self, arguments: &Map<String, Value>) -> Result<Value, ToolError> {
         reject_unknown(arguments, &[])?;
         let cap = self.configured_cap().unwrap_or(DEFAULT_MAX_TWINS);
-        Ok(doctor::diagnose(
+        let mut result = doctor::diagnose(
             self.config.twinning_bin.as_deref(),
             self.env_twinning_bin.as_deref(),
             &self.workdir,
             cap,
             self.config.restricted,
-        ))
+        );
+        result["supported_kinds"] = json!(["postgres", "rest"]);
+        Ok(result)
     }
 
     fn safe_workdir(&self) -> Result<&Workdir, ToolError> {
@@ -433,19 +493,19 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         json!({
             "name": "twin_doctor",
-            "description": "Check the twinning binary and the configured work directory for this declared-subset Postgres twin server.",
+            "description": "Check the twinning binary and configured work directory for the declared-subset Postgres and spec-based REST twin server.",
             "inputSchema": empty_object_schema(),
             "annotations": { "readOnlyHint": true }
         }),
         json!({
             "name": "twin_list",
-            "description": "List retained Postgres twins managed for the declared client subset.",
+            "description": "List retained Postgres and spec-based REST twins managed for the declared client subset.",
             "inputSchema": empty_object_schema(),
             "annotations": { "readOnlyHint": true }
         }),
         json!({
             "name": "twin_report",
-            "description": "Read the report for a stopped declared-subset Postgres twin.",
+            "description": "Read a bounded report for a stopped declared-subset Postgres or spec-based REST twin.",
             "inputSchema": object_schema(
                 json!({ "twin_id": { "type": "string", "description": "Twin id returned by twin_start." } }),
                 vec!["twin_id"]
@@ -466,23 +526,32 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "twin_start",
-            "description": "Start a disposable Postgres twin for the manifest-backed declared client subset from a schema file.",
-            "inputSchema": object_schema(
-                json!({
-                    "kind": { "type": "string", "enum": ["postgres"] },
+            "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["postgres", "rest"] },
                     "schema_path": { "type": "string", "description": "Path to a schema within the declared Postgres subset." },
-                    "verify_path": { "type": "string", "description": "Optional verify artifact path." },
-                    "seed_path": { "type": "string", "description": "Optional seed file path." },
-                    "restore_path": { "type": "string", "description": "Optional snapshot path to restore." },
+                    "spec_path": { "type": "string", "description": "Path to an OpenAPI YAML or JSON spec inside the workdir; external references are refused." },
+                    "verify_path": { "type": "string", "description": "Optional verify artifact path for Postgres." },
+                    "seed_path": { "type": "string", "description": "Optional seed file path for Postgres." },
+                    "restore_path": { "type": "string", "description": "Optional snapshot path to restore for Postgres." },
+                    "auth_mode": { "type": "string", "enum": ["shape", "bypass"], "default": "shape", "description": "REST authentication behavior." },
+                    "server_variables": { "type": "object", "additionalProperties": { "type": "string" }, "description": "OpenAPI server variables passed as repeated --server-variable options." },
                     "ttl_minutes": { "type": "integer", "minimum": 1, "maximum": 1440, "default": 60 }
-                }),
-                vec!["kind", "schema_path"]
-            ),
+                },
+                "required": ["kind"],
+                "additionalProperties": false,
+                "oneOf": [
+                    { "properties": { "kind": { "const": "postgres" } }, "required": ["schema_path"] },
+                    { "properties": { "kind": { "const": "rest" } }, "required": ["spec_path"] }
+                ]
+            },
             "annotations": { "readOnlyHint": false, "idempotentHint": false }
         }),
         json!({
             "name": "twin_stop",
-            "description": "Stop a managed declared-subset Postgres twin and return its run summary.",
+            "description": "Stop a managed declared-subset Postgres or REST twin and return its run summary.",
             "inputSchema": object_schema(
                 json!({ "twin_id": { "type": "string", "description": "Twin id returned by twin_start." } }),
                 vec!["twin_id"]
@@ -526,6 +595,62 @@ fn reject_unknown(arguments: &Map<String, Value>, allowed: &[&str]) -> Result<()
     Ok(())
 }
 
+fn reject_wrong_kind_field(
+    arguments: &Map<String, Value>,
+    field: &str,
+    allowed_kind: &str,
+) -> Result<(), ToolError> {
+    if arguments.contains_key(field) {
+        let detail = match allowed_kind {
+            "postgres" => "is only valid for kind postgres",
+            "rest" => "is only valid for kind rest",
+            _ => "is not valid for this kind",
+        };
+        return Err(argument_error(field, detail));
+    }
+    Ok(())
+}
+
+fn parse_server_variables(value: Option<&Value>) -> Result<Vec<(String, String)>, ToolError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let object = value.as_object().ok_or_else(|| {
+        argument_error(
+            "server_variables",
+            "must be an object of NAME to string values",
+        )
+    })?;
+    let mut variables = Vec::with_capacity(object.len());
+    for (name, value) in object {
+        if !valid_server_variable_name(name) {
+            return Err(argument_error(
+                "server_variables",
+                "keys must be non-empty names without equals signs or whitespace",
+            ));
+        }
+        let value = value
+            .as_str()
+            .ok_or_else(|| argument_error("server_variables", "every value must be a string"))?;
+        if value.chars().any(char::is_control) {
+            return Err(argument_error(
+                "server_variables",
+                "values must not contain control characters",
+            ));
+        }
+        variables.push((name.clone(), value.to_owned()));
+    }
+    Ok(variables)
+}
+
+fn valid_server_variable_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
 fn required_string<'a>(
     arguments: &'a Map<String, Value>,
     field: &str,
@@ -552,11 +677,14 @@ fn optional_string<'a>(
 
 fn argument_error(field: &str, detail: &str) -> ToolError {
     let hint = match field {
-        "kind" => "Set kind to postgres",
+        "kind" => "Choose kind postgres or rest",
         "schema_path" => "Set schema_path to a file inside the workdir",
+        "spec_path" => "Set spec_path to an OpenAPI file inside the workdir",
         "verify_path" => "Set verify_path to a file inside the workdir or omit it",
         "seed_path" => "Set seed_path to a file inside the workdir or omit it",
         "restore_path" => "Set restore_path to a file inside the workdir or omit it",
+        "auth_mode" => "Set auth_mode to shape or bypass for kind rest",
+        "server_variables" => "Set server_variables to an object of NAME to string values",
         "ttl_minutes" => "Set ttl_minutes to an integer from 1 through 1440",
         "twin_id" => "Set twin_id to an id returned by twin_start",
         "max_twins" => "Set max_twins to a positive integer",
@@ -578,6 +706,7 @@ fn resolve_argument_file(
         error.message = format!("{field}: {}", error.message);
         error.hint = match field {
             "schema_path" => "Check schema_path relative to the workdir",
+            "spec_path" => "Check spec_path relative to the workdir",
             "verify_path" => "Check verify_path relative to the workdir",
             "seed_path" => "Check seed_path relative to the workdir",
             "restore_path" => "Check restore_path relative to the workdir",
@@ -591,7 +720,15 @@ fn kind_unsupported(kind: &str) -> ToolError {
     ToolError {
         code: "E_KIND_UNSUPPORTED",
         message: format!("kind: `{kind}` is not available"),
-        hint: "Only postgres is available in v0",
+        hint: "Choose kind postgres or rest",
+    }
+}
+
+fn operation_kind_unsupported(operation: &str, kind: &str) -> ToolError {
+    ToolError {
+        code: "E_KIND_UNSUPPORTED",
+        message: format!("{operation}: kind `{kind}` is not supported"),
+        hint: "Use kind postgres for twin_seed_contract",
     }
 }
 

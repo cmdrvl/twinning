@@ -4,7 +4,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Check the twinning binary and the configured work directory for this declared-subset Postgres twin server.",
+      "description": "Check the twinning binary and configured work directory for the declared-subset Postgres and spec-based REST twin server.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -17,7 +17,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "List retained Postgres twins managed for the declared client subset.",
+      "description": "List retained Postgres and spec-based REST twins managed for the declared client subset.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -30,7 +30,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Read the report for a stopped declared-subset Postgres twin.",
+      "description": "Read a bounded report for a stopped declared-subset Postgres or spec-based REST twin.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -78,18 +78,50 @@
         "idempotentHint": false,
         "readOnlyHint": false
       },
-      "description": "Start a disposable Postgres twin for the manifest-backed declared client subset from a schema file.",
+      "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define.",
       "inputSchema": {
         "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "const": "postgres"
+              }
+            },
+            "required": [
+              "schema_path"
+            ]
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "rest"
+              }
+            },
+            "required": [
+              "spec_path"
+            ]
+          }
+        ],
         "properties": {
+          "auth_mode": {
+            "default": "shape",
+            "description": "REST authentication behavior.",
+            "enum": [
+              "shape",
+              "bypass"
+            ],
+            "type": "string"
+          },
           "kind": {
             "enum": [
-              "postgres"
+              "postgres",
+              "rest"
             ],
             "type": "string"
           },
           "restore_path": {
-            "description": "Optional snapshot path to restore.",
+            "description": "Optional snapshot path to restore for Postgres.",
             "type": "string"
           },
           "schema_path": {
@@ -97,7 +129,18 @@
             "type": "string"
           },
           "seed_path": {
-            "description": "Optional seed file path.",
+            "description": "Optional seed file path for Postgres.",
+            "type": "string"
+          },
+          "server_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "OpenAPI server variables passed as repeated --server-variable options.",
+            "type": "object"
+          },
+          "spec_path": {
+            "description": "Path to an OpenAPI YAML or JSON spec inside the workdir; external references are refused.",
             "type": "string"
           },
           "ttl_minutes": {
@@ -107,13 +150,12 @@
             "type": "integer"
           },
           "verify_path": {
-            "description": "Optional verify artifact path.",
+            "description": "Optional verify artifact path for Postgres.",
             "type": "string"
           }
         },
         "required": [
-          "kind",
-          "schema_path"
+          "kind"
         ],
         "type": "object"
       },
@@ -124,7 +166,7 @@
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Stop a managed declared-subset Postgres twin and return its run summary.",
+      "description": "Stop a managed declared-subset Postgres or REST twin and return its run summary.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

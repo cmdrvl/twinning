@@ -11,7 +11,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use common::{poll_until, scaled_deadline};
+use common::scaled_deadline;
 use serde_json::{Value, json};
 
 const SERVER_BIN: &str = env!("CARGO_BIN_EXE_twinning-mcp");
@@ -274,6 +274,49 @@ fn test_tempdir() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
+fn poll_until<T>(
+    deadline: std::time::Instant,
+    interval: Duration,
+    what: &str,
+    mut observe: impl FnMut() -> Option<T>,
+) -> T {
+    let start = std::time::Instant::now();
+    let label = std::thread::current()
+        .name()
+        .and_then(|name| {
+            let prefix = if name.starts_with("rs") {
+                name.get(..4)
+            } else {
+                name.get(..3)
+            }?;
+            let digits = prefix
+                .strip_prefix("rs")
+                .or_else(|| prefix.strip_prefix('s'))?;
+            digits
+                .bytes()
+                .all(|byte| byte.is_ascii_digit())
+                .then(|| prefix.to_ascii_uppercase())
+        })
+        .unwrap_or_else(|| "TEST".into());
+    loop {
+        if let Some(value) = observe() {
+            println!(
+                "[{label}] poll what={what:?} elapsed_ms={}",
+                start.elapsed().as_millis()
+            );
+            return value;
+        }
+        let last = format!("not observed after {} ms", start.elapsed().as_millis());
+        if std::time::Instant::now() >= deadline {
+            panic!(
+                "[{label}] poll timeout what={what:?} elapsed_ms={} last={last}",
+                start.elapsed().as_millis()
+            );
+        }
+        std::thread::sleep(interval);
+    }
+}
+
 fn create_workdir(root: &Path, schema: &str) -> PathBuf {
     let workdir = root.join("work");
     fs::create_dir_all(&workdir).unwrap();
@@ -291,6 +334,22 @@ fn default_launch(workdir: &Path, mode: &'static str) -> LaunchOptions {
 
 fn start_args(workdir: &Path) -> Value {
     json!({"kind":"postgres","schema_path":workdir.join("schema.sql")})
+}
+
+fn rest_start_args(spec_path: &Path) -> Value {
+    json!({"kind":"rest","spec_path":spec_path})
+}
+
+fn write_rest_spec(workdir: &Path, name: &str, description: &str) -> PathBuf {
+    let path = workdir.join(name);
+    fs::write(
+        &path,
+        format!(
+            "openapi: 3.0.3\ninfo:\n  title: Test REST twin\n  version: '1.0'\n  description: {description:?}\nservers:\n  - url: https://api.example.invalid/{{basePath}}\n    variables:\n      basePath:\n        default: v1\npaths:\n  /items:\n    get:\n      responses:\n        '200':\n          description: items\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/Item'\ncomponents:\n  schemas:\n    Item:\n      type: object\n      properties:\n        id:\n          type: integer\n"
+        ),
+    )
+    .unwrap();
+    path
 }
 
 fn successful_tool(response: &Value) -> Value {
@@ -418,6 +477,12 @@ fn copy_state_artifacts(test_id: &str, state_root: &Path, artifacts: &Path, log:
         let port = report
             .as_ref()
             .and_then(|value| value["port"].as_u64())
+            .or_else(|| {
+                fs::read(path.join("argv_summary.json"))
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                    .and_then(|value| value["port"].as_u64())
+            })
             .map(|port| port.to_string())
             .unwrap_or_else(|| "unknown".into());
         if !child.trim().is_empty() {
@@ -800,11 +865,11 @@ fn s12_non_postgres_kind_is_refused_before_binary_or_spawn() {
     let error = failed_tool(
         &server.call_tool(
             "twin_start",
-            json!({"kind":"rest","schema_path":"schema.sql"}),
+            json!({"kind":"mysql","schema_path":"schema.sql"}),
         ),
         "E_KIND_UNSUPPORTED",
     );
-    assert_eq!("Only postgres is available in v0", error["error"]["hint"]);
+    assert_eq!("Choose kind postgres or rest", error["error"]["hint"]);
     let state_root = server.state_root();
     let finished = server.finish("S12");
     assert!(finished.status.success());
@@ -1241,4 +1306,481 @@ fn s21_protocol_errors_stop_idempotence_and_doctor_degradation() {
     assert_eq!("/", doctor_result["workdir"]["path"]);
     assert_eq!(false, doctor_result["workdir"]["safe"]);
     assert!(doctor.finish("S21-doctor").status.success());
+}
+
+#[test]
+fn rs01_start_list_stop_report_and_openapi_argv() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS01 local-ref spec body marker");
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "ok"));
+    let mut arguments = rest_start_args(&spec);
+    arguments["auth_mode"] = json!("bypass");
+    arguments["server_variables"] = json!({"basePath":"v3"});
+    let started = successful_tool(&server.call_tool("twin_start", arguments));
+    let twin_id = started["twin_id"].as_str().unwrap();
+    let pid = started["pid"].as_u64().unwrap() as u32;
+    assert_eq!("rest", started["kind"]);
+    assert!(
+        started["base_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:")
+    );
+    assert!(started.get("connection_string").is_none());
+    assert!(TcpStream::connect(("127.0.0.1", started["port"].as_u64().unwrap() as u16)).is_ok());
+    let listed = list_twins(&mut server);
+    assert_eq!(1, listed.len());
+    assert_eq!("rest", listed[0]["kind"]);
+    let state = server.state_dir(twin_id);
+    let argv: Value = serde_json::from_slice(&fs::read(state.join("argv_summary.json")).unwrap())
+        .expect("fake rest child records a redacted argv summary");
+    assert_eq!("rest", argv["command"]);
+    assert_eq!(true, argv["spec_present"]);
+    assert_eq!("bypass", argv["auth_mode"]);
+    assert_eq!(json!(["basePath"]), argv["server_variable_names"]);
+    for option in [
+        "run_enabled",
+        "chaos_enabled",
+        "canary_enabled",
+        "strict_enabled",
+        "routing_enabled",
+        "base_prefix_enabled",
+    ] {
+        assert_eq!(false, argv[option], "REST MCP must not expose {option}");
+    }
+
+    let stopped = successful_tool(&server.call_tool("twin_stop", json!({"twin_id":twin_id})));
+    assert_eq!("rest", stopped["kind"]);
+    assert_eq!("stopped", stopped["status"]);
+    assert_eq!("PASS", stopped["outcome"]);
+    assert_eq!(7, stopped["request_count"]);
+    assert_eq!(
+        json!({"auth_refusal":1,"response_stub":2}),
+        stopped["outcomes"]
+    );
+    assert_eq!(json!({"unauthorized":1}), stopped["refusals"]);
+    assert_eq!(json!(["GET /items"]), stopped["endpoints_exercised"]);
+    assert_eq!(json!(["POST /items"]), stopped["endpoints_not_exercised"]);
+    assert!(stopped.get("trace_path").is_none());
+
+    let report = successful_tool(&server.call_tool("twin_report", json!({"twin_id":twin_id})));
+    assert_eq!("twinning.rest-report.v0", report["version"]);
+    assert_eq!("PASS", report["outcome"]);
+    assert_eq!(7, report["request_count"]);
+    assert!(report.get("spec").is_none());
+    assert!(report.get("session").is_none());
+    let defaulted = successful_tool(&server.call_tool("twin_start", rest_start_args(&spec)));
+    let defaulted_argv: Value = serde_json::from_slice(
+        &fs::read(
+            server
+                .state_dir(defaulted["twin_id"].as_str().unwrap())
+                .join("argv_summary.json"),
+        )
+        .unwrap(),
+    )
+    .expect("default-mode child argv summary is JSON");
+    assert_eq!("shape", defaulted_argv["auth_mode"]);
+    successful_tool(&server.call_tool("twin_stop", json!({"twin_id":defaulted["twin_id"]})));
+    let finished = server.finish("RS01");
+    assert!(finished.status.success());
+    assert_process_gone(pid, "RS01 REST twin stop");
+    assert_process_gone(
+        defaulted["pid"].as_u64().unwrap() as u32,
+        "RS01 REST default-mode twin stop",
+    );
+}
+
+#[test]
+fn rs02_kind_specific_fields_and_server_variables_are_validated() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS02 spec");
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "ok"));
+
+    for (arguments, field) in [
+        (json!({"kind":"rest"}), "spec_path"),
+        (
+            json!({"kind":"rest","spec_path":"api.yaml","schema_path":"schema.sql"}),
+            "schema_path",
+        ),
+        (
+            json!({"kind":"rest","spec_path":"api.yaml","verify_path":"verify.json"}),
+            "verify_path",
+        ),
+        (
+            json!({"kind":"postgres","schema_path":"schema.sql","spec_path":"api.yaml"}),
+            "spec_path",
+        ),
+        (
+            json!({"kind":"postgres","schema_path":"schema.sql","auth_mode":"shape"}),
+            "auth_mode",
+        ),
+        (json!({"kind":"postgres"}), "schema_path"),
+    ] {
+        let error = failed_tool(
+            &server.call_tool("twin_start", arguments),
+            "E_ARGUMENT_INVALID",
+        );
+        assert!(error["error"]["message"].as_str().unwrap().contains(field));
+        assert!(error["error"]["hint"].as_str().unwrap().contains(field));
+    }
+    for arguments in [
+        json!({"kind":"rest","spec_path":"api.yaml","auth_mode":"secret"}),
+        json!({"kind":"rest","spec_path":"api.yaml","server_variables":[]}),
+        json!({"kind":"rest","spec_path":"api.yaml","server_variables":{"basePath":7}}),
+        json!({"kind":"rest","spec_path":"api.yaml","server_variables":{"bad=name":"v3"}}),
+    ] {
+        let error = failed_tool(
+            &server.call_tool("twin_start", arguments),
+            "E_ARGUMENT_INVALID",
+        );
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("auth_mode")
+                || error["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("server_variables")
+        );
+    }
+    assert!(!server.state_root().exists());
+    assert!(server.finish("RS02").status.success());
+    assert!(spec.is_file());
+}
+
+#[test]
+fn rs03_remote_ref_is_refused_before_child_spawn_without_echoing_spec_text() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let secret = "RS03_PRIVATE_REMOTE_REF_91df";
+    let spec = workdir.join("remote.yaml");
+    fs::write(
+        &spec,
+        format!(
+            "openapi: 3.0.3\ninfo:\n  title: remote ref test\n  version: '1.0'\npaths:\n  /items:\n    get:\n      responses:\n        '200':\n          description: item\n          content:\n            application/json:\n              schema:\n                $ref: 'https://example.invalid/{secret}#/Item'\n"
+        ),
+    )
+    .unwrap();
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "ok"));
+    let error = failed_tool(
+        &server.call_tool("twin_start", rest_start_args(&spec)),
+        "E_ARGUMENT_INVALID",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("spec_path")
+    );
+    assert!(error["error"]["hint"].as_str().unwrap().contains("local"));
+    assert!(!serde_json::to_string(&error).unwrap().contains(secret));
+    assert!(!server.raw_stdout.contains(secret));
+    assert!(
+        !server.state_root().exists(),
+        "preflight refusal must not spawn a child"
+    );
+    assert!(server.finish("RS03").status.success());
+}
+
+#[test]
+fn rs04_rest_report_versions_and_outcomes_are_checked() {
+    for outcome in ["PASS", "FAIL", "VIOLATIONS", "REFUSAL"] {
+        let temp = test_tempdir();
+        let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+        let spec = write_rest_spec(&workdir, "api.yaml", "RS04 outcome");
+        let mut options = default_launch(&workdir, "ok");
+        options
+            .env
+            .push(("FAKE_TWINNING_REST_OUTCOME".into(), outcome.into()));
+        let mut server = TestServer::new(&temp, options);
+        let twin = successful_tool(&server.call_tool("twin_start", rest_start_args(&spec)));
+        let stopped =
+            successful_tool(&server.call_tool("twin_stop", json!({"twin_id":twin["twin_id"]})));
+        assert_eq!(outcome, stopped["outcome"]);
+        assert!(server.finish(&format!("RS04-{outcome}")).status.success());
+        assert_process_gone(
+            twin["pid"].as_u64().unwrap() as u32,
+            "RS04 report child stop",
+        );
+    }
+
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS04 invalid version");
+    let mut options = default_launch(&workdir, "ok");
+    options
+        .env
+        .push(("FAKE_TWINNING_REST_BAD_VERSION".into(), "1".into()));
+    let mut server = TestServer::new(&temp, options);
+    let twin = successful_tool(&server.call_tool("twin_start", rest_start_args(&spec)));
+    failed_tool(
+        &server.call_tool("twin_stop", json!({"twin_id":twin["twin_id"]})),
+        "E_REPORT_UNREADABLE",
+    );
+    assert!(server.finish("RS04-invalid-version").status.success());
+    assert_process_gone(
+        twin["pid"].as_u64().unwrap() as u32,
+        "RS04 invalid report child stop",
+    );
+
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS04 invalid outcome");
+    let mut options = default_launch(&workdir, "ok");
+    options
+        .env
+        .push(("FAKE_TWINNING_REST_OUTCOME".into(), "UNKNOWN".into()));
+    let mut server = TestServer::new(&temp, options);
+    let twin = successful_tool(&server.call_tool("twin_start", rest_start_args(&spec)));
+    failed_tool(
+        &server.call_tool("twin_stop", json!({"twin_id":twin["twin_id"]})),
+        "E_REPORT_UNREADABLE",
+    );
+    assert!(server.finish("RS04-invalid-outcome").status.success());
+    assert_process_gone(
+        twin["pid"].as_u64().unwrap() as u32,
+        "RS04 invalid outcome child stop",
+    );
+}
+
+#[test]
+fn rs05_endpoint_summaries_are_capped_with_truncation_marker() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS05 large report");
+    let mut options = default_launch(&workdir, "ok");
+    options
+        .env
+        .push(("FAKE_TWINNING_REST_LARGE_REPORT".into(), "1".into()));
+    let mut server = TestServer::new(&temp, options);
+    let twin = successful_tool(&server.call_tool("twin_start", rest_start_args(&spec)));
+    let stopped =
+        successful_tool(&server.call_tool("twin_stop", json!({"twin_id":twin["twin_id"]})));
+    assert_eq!(50, stopped["endpoints_exercised"].as_array().unwrap().len());
+    assert_eq!(
+        50,
+        stopped["endpoints_not_exercised"].as_array().unwrap().len()
+    );
+    assert_eq!(true, stopped["truncated"]);
+    assert_eq!(
+        json!(["endpoints_exercised", "endpoints_not_exercised"]),
+        stopped["truncated_fields"]
+    );
+    let report =
+        successful_tool(&server.call_tool("twin_report", json!({"twin_id":twin["twin_id"]})));
+    assert_eq!(50, report["endpoints_exercised"].as_array().unwrap().len());
+    assert_eq!(true, report["truncated"]);
+    assert!(server.finish("RS05").status.success());
+    assert_process_gone(
+        twin["pid"].as_u64().unwrap() as u32,
+        "RS05 report child stop",
+    );
+}
+
+#[test]
+fn rs06_postgres_and_rest_share_the_live_twin_cap() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS06 shared cap");
+    let mut server = TestServer::new(
+        &temp,
+        LaunchOptions {
+            workdir: Some(workdir.clone()),
+            fake_mode: Some("ok"),
+            max_twins: Some(2),
+            ..LaunchOptions::default()
+        },
+    );
+    let postgres = successful_tool(&server.call_tool("twin_start", start_args(&workdir)));
+    let rest = successful_tool(&server.call_tool("twin_start", rest_start_args(&spec)));
+    assert_eq!("postgres", postgres["kind"]);
+    assert_eq!("rest", rest["kind"]);
+    failed_tool(
+        &server.call_tool("twin_start", rest_start_args(&spec)),
+        "E_TWIN_CAP_REACHED",
+    );
+    let listed = list_twins(&mut server);
+    assert_eq!(2, listed.len());
+    assert_eq!("postgres", listed[0]["kind"]);
+    assert_eq!("rest", listed[1]["kind"]);
+    let finished = server.finish("RS06");
+    assert!(finished.status.success());
+    assert_process_gone(
+        postgres["pid"].as_u64().unwrap() as u32,
+        "RS06 postgres shutdown",
+    );
+    assert_process_gone(rest["pid"].as_u64().unwrap() as u32, "RS06 rest shutdown");
+}
+
+#[test]
+fn rs07_rest_ttl_expiry_stops_child_and_retains_report() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS07 TTL");
+    let mut options = default_launch(&workdir, "ok");
+    options
+        .env
+        .push(("TWINNING_MCP_TTL_SECONDS_TEST".into(), "1".into()));
+    let mut server = TestServer::new(&temp, options);
+    let twin = successful_tool(&server.call_tool("twin_start", rest_start_args(&spec)));
+    let twin_id = twin["twin_id"].as_str().unwrap().to_owned();
+    let expired = poll_until(
+        scaled_deadline(Duration::from_secs(5)),
+        Duration::from_millis(20),
+        "RS07 REST TTL status expired",
+        || {
+            list_twins(&mut server)
+                .into_iter()
+                .find(|entry| entry["twin_id"] == twin_id && entry["status"] == "expired")
+        },
+    );
+    assert_eq!("expired", expired["status"]);
+    let stopped = successful_tool(&server.call_tool("twin_stop", json!({"twin_id":twin_id})));
+    assert_eq!("expired", stopped["status"]);
+    assert_eq!("PASS", stopped["outcome"]);
+    let report = successful_tool(&server.call_tool("twin_report", json!({"twin_id":twin_id})));
+    assert_eq!("twinning.rest-report.v0", report["version"]);
+    assert!(server.finish("RS07").status.success());
+    assert_process_gone(
+        twin["pid"].as_u64().unwrap() as u32,
+        "RS07 REST TTL child stop",
+    );
+}
+
+#[test]
+fn rs08_stale_sweep_removes_orphan_rest_child_and_preserves_live_child() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec = write_rest_spec(&workdir, "api.yaml", "RS08 stale sweep");
+    let shared_tmp = temp.path().join("shared-tmp");
+    fs::create_dir_all(&shared_tmp).unwrap();
+
+    let mut crashed = TestServer::new(
+        &temp,
+        LaunchOptions {
+            workdir: Some(workdir.clone()),
+            temp_dir: Some(shared_tmp.clone()),
+            fake_mode: Some("ok"),
+            ..LaunchOptions::default()
+        },
+    );
+    let orphan = successful_tool(&crashed.call_tool("twin_start", rest_start_args(&spec)));
+    let orphan_pid = orphan["pid"].as_u64().unwrap() as u32;
+    let crashed_root = crashed.state_root();
+
+    let mut live = TestServer::new(
+        &temp,
+        LaunchOptions {
+            workdir: Some(workdir.clone()),
+            temp_dir: Some(shared_tmp.clone()),
+            fake_mode: Some("ok"),
+            ..LaunchOptions::default()
+        },
+    );
+    let live_twin = successful_tool(&live.call_tool("twin_start", start_args(&workdir)));
+    let live_pid = live_twin["pid"].as_u64().unwrap() as u32;
+    let live_root = live.state_root();
+
+    crashed.signal(libc::SIGKILL);
+    let killed = crashed.finish("RS08-crashed-server");
+    assert!(!killed.status.success());
+    assert!(
+        process_alive(orphan_pid),
+        "RS08 crashed server should leave its child for sweep"
+    );
+
+    let mut sweeper = TestServer::new(
+        &temp,
+        LaunchOptions {
+            workdir: Some(workdir.clone()),
+            temp_dir: Some(shared_tmp),
+            fake_mode: Some("ok"),
+            ..LaunchOptions::default()
+        },
+    );
+    let sweep_twin = successful_tool(&sweeper.call_tool("twin_start", rest_start_args(&spec)));
+    assert_process_gone(orphan_pid, "RS08 stale orphan REST child");
+    assert!(
+        !crashed_root.exists(),
+        "RS08 dead server directory is removed"
+    );
+    assert!(
+        live_root.exists(),
+        "RS08 active server directory is preserved"
+    );
+    assert!(
+        process_alive(live_pid),
+        "RS08 active Postgres child remains alive"
+    );
+
+    successful_tool(&live.call_tool("twin_stop", json!({"twin_id":live_twin["twin_id"]})));
+    successful_tool(&sweeper.call_tool("twin_stop", json!({"twin_id":sweep_twin["twin_id"]})));
+    assert!(live.finish("RS08-live-server").status.success());
+    assert!(sweeper.finish("RS08-sweeper-server").status.success());
+    assert_process_gone(live_pid, "RS08 live Postgres stop");
+    assert_process_gone(
+        sweep_twin["pid"].as_u64().unwrap() as u32,
+        "RS08 sweeper REST stop",
+    );
+}
+
+#[test]
+fn rs09_openapi_spec_and_server_variable_secrets_never_enter_logs_or_report() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let spec_secret = "RS09_PRIVATE_SPEC_CONTENT_104a";
+    let variable_secret = "RS09_PRIVATE_SERVER_VARIABLE_87cd";
+    let spec = write_rest_spec(&workdir, "api.yaml", spec_secret);
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "ok"));
+    let mut arguments = rest_start_args(&spec);
+    arguments["server_variables"] = json!({"basePath":variable_secret});
+    let twin = successful_tool(&server.call_tool("twin_start", arguments));
+    let stopped =
+        successful_tool(&server.call_tool("twin_stop", json!({"twin_id":twin["twin_id"]})));
+    let report =
+        successful_tool(&server.call_tool("twin_report", json!({"twin_id":twin["twin_id"]})));
+    let finished = server.finish("RS09");
+    assert!(finished.status.success());
+    for secret in [spec_secret, variable_secret] {
+        assert!(
+            !finished.stdout.contains(secret),
+            "secret appeared in stdout: {secret}"
+        );
+        assert!(
+            !finished.stderr.contains(secret),
+            "secret appeared in stderr: {secret}"
+        );
+        assert!(!serde_json::to_string(&stopped).unwrap().contains(secret));
+        assert!(!serde_json::to_string(&report).unwrap().contains(secret));
+    }
+    assert_process_gone(twin["pid"].as_u64().unwrap() as u32, "RS09 REST stop");
+}
+
+#[test]
+fn rs10_doctor_lists_supported_kinds_and_seed_contract_refuses_rest() {
+    let temp = test_tempdir();
+    let workdir = create_workdir(temp.path(), "CREATE TABLE t (id INT);");
+    let mut server = TestServer::new(&temp, default_launch(&workdir, "ok"));
+    let doctor = successful_tool(&server.call_tool("twin_doctor", json!({})));
+    assert_eq!(json!(["postgres", "rest"]), doctor["supported_kinds"]);
+    let error = failed_tool(
+        &server.call_tool("twin_seed_contract", json!({"kind":"rest"})),
+        "E_KIND_UNSUPPORTED",
+    );
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("twin_seed_contract")
+    );
+    assert!(
+        error["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("postgres")
+    );
+    assert!(server.finish("RS10").status.success());
 }
