@@ -3,13 +3,15 @@
 Audience: Cairn. Status: revised draft for Zac's review. Date: 2026-11-01.
 Revises the 2026-11-01 draft. Source checked: github.com/cmdrvl/twinning at HEAD (operator.json 0.6.0, v0.6.0 released 2026-06-25).
 
+Implementation details live in [PLAN_TWINNING_MCP_SPEC.md](./PLAN_TWINNING_MCP_SPEC.md) (files, invariants, errors, tests, gates). Where the two differ, the spec wins, and these amendments apply: process management is synchronous std threads, not tokio; `twin_report` works on stopped twins only (twinning writes its report at shutdown); `setup` ships for Claude Desktop and Cursor plus `--print`, other clients later; the OCI image and Windows are deferred past v0; `twinning-rest` is not refactored in v0.
+
 This is CMD+RVL's first MCP server to list in public directories. It is separate from the spine (loan tape) local MCP server, which is a later phase.
 
 ## 1. Pitch
 
 One-liner: disposable, constraint-checked twins of your datastores, APIs and MCP servers that your agent can create, use and tear down on your own machine, with a JSON report of what happened and which constraints were violated. v1 ships the Postgres twin; Snowflake, REST and MCP twins follow behind the same tools.
 
-For: agent builders and data engineers who want to test agents and extractors against a throwaway Postgres (real pgwire, so psycopg2 and SQLAlchemy connect unchanged) without touching production.
+For: agent builders and data engineers who want to test agents and extractors against a throwaway Postgres that speaks pgwire for a declared SQL subset, without touching production. Compatibility with real client libraries (psycopg2, SQLAlchemy, psql) is a go-live gate (milestones 0 and 7), not yet an established fact; see section 2.1.
 
 What it is not: a full Postgres. The twin serves a canary-defined SQL subset and refuses what it cannot handle, with an explicit refusal and SQLSTATE. The README says this up front.
 
@@ -26,13 +28,26 @@ Naming: the listing name and README lead with "twins", not "Postgres". Tools tak
 - Postgres CLI used by this server: `twinning postgres --schema <DDL> [--verify <artifact>] [--host 127.0.0.1] [--port N] --serve [--report FILE] [--snapshot FILE] [--restore FILE] [--seed FILE] [--json]`, `--export-seed-contract out.jsonl`, `twinning doctor health|capabilities --json`.
 - No MCP server that controls twinning exists yet. `crates/twinning-rest/src/mcp` is the MCP twin (it mocks other servers). The control server is new code that reuses its transport.
 
+### 2.1 Smoke-test findings (2026-11-01, `target/debug/twinning`, psql 14.24)
+
+Ran `twinning postgres --schema loans.sql --serve --port 54329 --report r.json --json` and drove it with psql. Findings that change this plan:
+
+1. **Stop works.** SIGTERM stops the server, exit code 0, and the `--report` file is written (outcome READY, `twinning.v0`). This confirms the `twin_stop` mapping.
+2. **No ready signal.** While serving, stdout and stderr are empty. The JSON report prints only at shutdown. The control server must detect readiness by polling a TCP connect to the port, with a timeout.
+3. **Default libpq settings fail.** psql with the default `sslmode=prefer` hangs until timeout, and the twin's listener then exits with REFUSAL `E_RUNTIME_IO` ("connection closed while reading frame", stage `listener_accept_loop`), exit code 2, and no report file. With `PGSSLMODE=disable` the same session works. Unit test `ssl_request_is_denied_without_fatal_refusal` exists, so the SSL-denied reply needs a real-client check. Consequences: the connection string the MCP returns carries `sslmode=disable` and `gssencmode=disable`, and a twinning fix is a prerequisite (milestone 0).
+4. **One bad connection ends the server.** The accept loop treats a mid-frame disconnect as fatal for the whole listener. A long-lived twin managed by an agent needs per-connection errors isolated. Seen in one case only; milestone 0 reproduces it with a test.
+5. **Simple-query writes are refused.** `INSERT INTO loans (id, balance) VALUES (1, 100)` through `psql -c` returns "simple query shape `unsupported_statement` is outside the declared session subset". The canary manifest lists writes only for extended-query clients (`psycopg2_params`, `sqlalchemy_core`); `psql_smoke` has `write_shapes: []`. The demo and the e2e tests must use an extended-protocol client, not `psql -c`.
+6. **The canaries are frozen fixtures, not real driver runs.** `tests/fixtures/canaries/*/ir_equivalence.json` and the Rust test harness pin the statement shapes. Nothing in the repo runs real psycopg2 or SQLAlchemy against the server. The first real-driver run is milestone 0, and installing a driver needs Zac's approval (a throwaway `uv` environment).
+7. **Report details.** `wire_protocol` reads `planned.pgwire` (stale string). The `constraints` block has `not_null`, `fk`, `check` and `unique` counters; whether violations raised through extended-query inserts increment them is untested and is checked in milestone 0.
+8. **AGENTS.md is stale.** It says a long-lived standalone server is not implemented, but `--serve` exists (README and CLI help agree). Fix in milestone 0.
+
 ## 3. v1 tools (Postgres lifecycle)
 
 The server is a local process. It spawns `twinning postgres ... --serve` child processes, tracks them by `twin_id`, and reads their `--report` and `--json` output. Data stays on the machine.
 
 | Tool | Behavior | Maps to |
 | --- | --- | --- |
-| `twin_start` | Input: `kind` (v1: `postgres` only), DDL path; optional verify artifact, seed file, restore snapshot, `ttl_minutes` (default 60; the twin stops and writes its report when it expires). Returns `twin_id` and a `postgresql://...@127.0.0.1:<port>/...` connection string | `postgres --schema --serve --port` (free port by default) |
+| `twin_start` | Input: `kind` (v1: `postgres` only), DDL path; optional verify artifact, seed file, restore snapshot, `ttl_minutes` (default 60; the twin stops and writes its report when it expires). Returns `twin_id` and `postgresql://u@127.0.0.1:<port>/db?sslmode=disable&gssencmode=disable`, only after a TCP connect to the port succeeds (10 s timeout; on failure the child is killed and its stderr returned) | `postgres --schema --serve --port` (free port by default) |
 | `twin_list` | Running twins: id, port, uptime, schema | server state |
 | `twin_stop` | Stop the twin; write the report and optionally a snapshot | SIGTERM to child, `--report`, `--snapshot` |
 | `twin_report` | Session report JSON: constraint violations, refusals, metrics | `--report` file |
@@ -64,13 +79,13 @@ Deferred (not in v1):
 
 - Rust, a new workspace crate and binary in the twinning repo: `crates/twinning-mcp` producing `twinning-mcp`. Same repo because it is a thin controller over the twinning binary (flag and report changes move together), reuses workspace code, and shares one release pipeline. Split out only if its release cadence or contributors diverge.
 - Reuse from `crates/twinning-rest/src/mcp`: `stdio.rs`, `dispatcher.rs` (`JsonRpcRequest`/`Response`/`Error`), `version.rs`. Extract into a small shared crate (`twinning-mcp-core`) so the spine server can reuse it.
-- Process management with tokio. Default cap of 5 concurrent twins. Clean up children on exit and on crash (children must not survive a killed parent: process group or parent-death handling; sweep stale children at startup).
+- Process management with std threads and `signal-hook` (no tokio; spec D1). Default cap of 5 concurrent twins. Clean up children on exit and on crash (children must not survive a killed parent: process group or parent-death handling; sweep stale children at startup).
 - Fix the build gap first: switch `verify-core` and `verify-engine` to git dependencies in both places (root `Cargo.toml` and `twinning-kernel`). Crates.io publishing is optional later. Once fixed, remove the vendoring step in `release.yml`.
 - Packaging: extend the existing `release.yml` and Homebrew formula (`brew install cmdrvl/tap/twinning` already works). Add:
   - the `twinning-mcp` binary to release assets, with SHA-256 checksums and build provenance;
   - an npm launcher `@cmdrvl/twinning-mcp` in an `npm/` subfolder that downloads the matching release binary, verifies its checksum and runs it (pin the version in the package);
-  - an OCI image (needed for the Docker MCP catalog).
-- `twinning-mcp setup`: one command that detects installed clients (Claude Desktop, Cursor, VS Code, Cline, Codex) and writes the MCP config entry, with `--dry-run` to print the change and `--client <name>` to target one. Idempotent, backs up the file it edits, never touches other servers' entries. Also `twinning-mcp doctor` (same checks as `twin_doctor`) so a user can verify the install from a shell. Idea taken from PGSandbox (section 11).
+  - an OCI image (needed for the Docker MCP catalog): deferred past v0.
+- `twinning-mcp setup`: one command that writes the MCP config entry for Claude Desktop and Cursor (other clients via `--print`, more later), with `--dry-run` to print the change and `--client <name>` to target one. Idempotent, backs up the file it edits, never touches other servers' entries. Also `twinning-mcp doctor` (same checks as `twin_doctor`) so a user can verify the install from a shell. Idea taken from PGSandbox (section 11).
 - Read-only/restricted mode: `twinning-mcp --restricted` (or an env var) disables `twin_start` options that read caller-supplied seed or snapshot paths outside the configured working directory. Idea taken from Neon and Postgres MCP Pro access modes.
 - Document `cargo install --git ...` as a secondary route. Prebuilt binaries are the default install; source is public for review and fallback.
 
@@ -84,8 +99,8 @@ Deferred (not in v1):
 
 ## 7. Listing plan (nothing is published without Zac's approval)
 
-1. Official MCP Registry first (preview; no uptime guarantees). `server.json` name `com.cmdrvl/twinning` with `packages` entries for npm (`@cmdrvl/twinning-mcp`, stdio) and OCI.
-   - Registry verification: the npm `package.json` must contain `"mcpName": "com.cmdrvl/twinning"`, matching `server.json`. The OCI image needs the registry's matching label (confirm the exact label name from the registry docs before building).
+1. Official MCP Registry first (preview; no uptime guarantees). `server.json` name `com.cmdrvl/twinning` with a `packages` entry for npm (`@cmdrvl/twinning-mcp`, stdio); OCI is added later.
+   - Registry verification: the npm `package.json` must contain `"mcpName": "com.cmdrvl/twinning"`, matching `server.json`. When the OCI image is added, confirm the registry's matching label name from its docs first.
    - Domain proof for the `com.cmdrvl` namespace by DNS TXT (`v=MCPv1; k=ed25519; p=<key>`) or the HTTP file at `https://cmdrvl.com/.well-known/mcp-registry-auth` (served from the website's `static/`; no DNS access needed). Without domain proof, GitHub auth would force `io.github.cmdrvl/twinning`.
    - Check `repository.subfolder` in the schema if the package lives in a subfolder.
 2. Repo discoverability: add topics `mcp` and `mcp-server` (current topics are CLI-flavored); lead the README with a "Use with an agent (MCP)" section.
@@ -100,13 +115,14 @@ None in v1. Revisit an opt-in `next_actions` hint in a later release.
 
 ## 9. Milestones
 
+0. Twinning preflight: fix the SSL-denied handshake with real libpq clients, isolate per-connection errors so one bad client cannot end the server, run real psycopg2 and SQLAlchemy through a throwaway `uv` environment (needs Zac's approval to install) and record the result, fix the stale `wire_protocol` string and AGENTS.md. Go-live is blocked until this passes.
 1. Switch `verify-core` and `verify-engine` to git dependencies (root and `twinning-kernel`); confirm `cargo build` works standalone and simplify `release.yml`.
 2. Extract `twinning-mcp-core` from `twinning-rest`.
 3. Control server skeleton with `twin_start`, `twin_list`, `twin_stop`, `twin_report`.
 4. Add `twin_seed_contract`, `twin_doctor`, TTL expiry. Child cleanup and path restrictions.
 5. `twinning-mcp setup` and `twinning-mcp doctor` (client config writer, dry-run, backup).
 6. Integration tests in Claude Desktop, Cursor and Cline, using `setup` to install. Demo GIF.
-7. Release: binaries with checksums and provenance, npm launcher with checksum verification, OCI image, README.
+7. Release: binaries with checksums and provenance, npm launcher with checksum verification, README (OCI later).
 8. `server.json`, `mcpName`, domain proof, then registry and directory submissions (after Zac approves).
 
 ## 10. Landscape
