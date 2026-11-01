@@ -2,7 +2,7 @@
 compile_error!("twinning-mcp supports Unix only");
 
 mod cli;
-mod errors;
+pub use twinning_mcp::errors;
 mod server;
 mod tools;
 
