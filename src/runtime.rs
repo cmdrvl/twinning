@@ -23,7 +23,7 @@ use crate::{
 #[cfg(feature = "postgres")]
 use crate::{
     backend::BaseSnapshotBackend,
-    query_trace::{SharedQueryTrace, write_query_trace},
+    query_trace::{QueryTracePolicy, SharedQueryTrace, write_query_trace},
 };
 
 #[cfg(feature = "postgres")]
@@ -326,10 +326,13 @@ fn live_pgwire_state(
     state: &BootstrapState,
 ) -> RefusalResult<(SharedPgwireState, Option<SharedQueryTrace>)> {
     let initial_committed_tables = committed_tables_for_live_run(config, state)?;
-    let query_trace = config
-        .query_trace_path
-        .as_ref()
-        .map(|_| SharedQueryTrace::new());
+    let query_trace = config.query_trace_path.as_ref().map(|_| {
+        if config.capture_refused_statements {
+            SharedQueryTrace::with_policy(QueryTracePolicy::refused_text())
+        } else {
+            SharedQueryTrace::new()
+        }
+    });
     let mut live_state =
         SharedPgwireState::from_committed_tables(state.catalog.clone(), initial_committed_tables)
             .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
@@ -744,6 +747,7 @@ mod tests {
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -793,6 +797,7 @@ mod tests {
             report_path: None,
             snapshot_path: None,
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: Some(contract_path.clone()),
             seed_path: None,
@@ -848,6 +853,7 @@ mod tests {
             report_path: None,
             snapshot_path: Some(first_snapshot_path.clone()),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: Some(seed_path.clone()),
@@ -1005,6 +1011,7 @@ sock.close()
             report_path: Some(report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1154,6 +1161,7 @@ sock.close()
             report_path: None,
             snapshot_path: None,
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: Some(seed_path),
@@ -1191,6 +1199,7 @@ sock.close()
             report_path: Some(invalid_report_path),
             snapshot_path: None,
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1241,6 +1250,7 @@ sock.close()
             report_path: None,
             snapshot_path: None,
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1275,6 +1285,7 @@ sock.close()
             report_path: Some(report_path),
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1320,6 +1331,7 @@ sock.close()
             report_path: Some(invalid_report_path.clone()),
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1346,6 +1358,7 @@ sock.close()
             report_path: Some(invalid_report_path),
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: Some(malformed_snapshot_path),
             export_seed_contract_path: None,
             seed_path: None,
@@ -1388,6 +1401,7 @@ sock.close()
             report_path: Some(invalid_report_path),
             snapshot_path: Some(blocked_snapshot_path.clone()),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1421,6 +1435,7 @@ sock.close()
             report_path: Some(report_output_path.clone()),
             snapshot_path: Some(invalid_snapshot_path),
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1541,6 +1556,7 @@ sock.close()
             report_path: None,
             snapshot_path: None,
             query_trace_path: None,
+            capture_refused_statements: false,
             restore_path: Some(snapshot_path),
             export_seed_contract_path: None,
             seed_path: None,

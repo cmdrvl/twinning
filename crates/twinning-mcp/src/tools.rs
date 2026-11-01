@@ -119,6 +119,7 @@ impl ToolService {
                 "restore_path",
                 "auth_mode",
                 "server_variables",
+                "capture_refused_statements",
                 "ttl_minutes",
             ],
         )?;
@@ -133,6 +134,15 @@ impl ToolService {
             None => 60,
         };
         let workdir = self.safe_workdir()?.path.clone();
+        let capture_refused_statements = match kind {
+            TwinKind::Postgres => {
+                optional_bool(arguments, "capture_refused_statements")?.unwrap_or(false)
+            }
+            TwinKind::Rest => {
+                reject_wrong_kind_field(arguments, "capture_refused_statements", "postgres")?;
+                false
+            }
+        };
         let (input, verify, seed, restore, auth_mode, server_variables) = match kind {
             TwinKind::Postgres => {
                 for field in ["spec_path", "auth_mode", "server_variables"] {
@@ -212,6 +222,7 @@ impl ToolService {
                 restore,
                 auth_mode,
                 server_variables,
+                capture_refused_statements,
                 ttl: Duration::from_secs(ttl * 60),
             });
             let failed_record = if result.is_err() && supervisor.records().len() > before {
@@ -505,7 +516,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "twin_report",
-            "description": "Read a bounded report for a stopped declared-subset Postgres or spec-based REST twin.",
+            "description": "Read a bounded report for a stopped declared-subset Postgres or spec-based REST twin. Opt-in refused Postgres SQL text appears only here and can contain SQL literals.",
             "inputSchema": object_schema(
                 json!({ "twin_id": { "type": "string", "description": "Twin id returned by twin_start." } }),
                 vec!["twin_id"]
@@ -526,7 +537,7 @@ pub fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "twin_start",
-            "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define.",
+            "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define. Opt-in refused SQL capture writes text only to the local trace file and twin_report; SQL text can contain literals, and bind values are never captured.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -538,13 +549,14 @@ pub fn tool_definitions() -> Vec<Value> {
                     "restore_path": { "type": "string", "description": "Optional snapshot path to restore for Postgres." },
                     "auth_mode": { "type": "string", "enum": ["shape", "bypass"], "default": "shape", "description": "REST authentication behavior." },
                     "server_variables": { "type": "object", "additionalProperties": { "type": "string" }, "description": "OpenAPI server variables passed as repeated --server-variable options." },
+                    "capture_refused_statements": { "type": "boolean", "default": false, "description": "Postgres only. Store refused SQL text in the local trace file and expose bounded samples in twin_report. Text may contain SQL literals; bind values are never captured." },
                     "ttl_minutes": { "type": "integer", "minimum": 1, "maximum": 1440, "default": 60 }
                 },
                 "required": ["kind"],
                 "additionalProperties": false,
                 "oneOf": [
                     { "properties": { "kind": { "const": "postgres" } }, "required": ["schema_path"] },
-                    { "properties": { "kind": { "const": "rest" } }, "required": ["spec_path"] }
+                    { "properties": { "kind": { "const": "rest" } }, "required": ["spec_path"], "not": { "required": ["capture_refused_statements"] } }
                 ]
             },
             "annotations": { "readOnlyHint": false, "idempotentHint": false }
@@ -675,6 +687,17 @@ fn optional_string<'a>(
         .transpose()
 }
 
+fn optional_bool(arguments: &Map<String, Value>, field: &str) -> Result<Option<bool>, ToolError> {
+    arguments
+        .get(field)
+        .map(|value| {
+            value
+                .as_bool()
+                .ok_or_else(|| argument_error(field, "must be a boolean when provided"))
+        })
+        .transpose()
+}
+
 fn argument_error(field: &str, detail: &str) -> ToolError {
     let hint = match field {
         "kind" => "Choose kind postgres or rest",
@@ -685,6 +708,9 @@ fn argument_error(field: &str, detail: &str) -> ToolError {
         "restore_path" => "Set restore_path to a file inside the workdir or omit it",
         "auth_mode" => "Set auth_mode to shape or bypass for kind rest",
         "server_variables" => "Set server_variables to an object of NAME to string values",
+        "capture_refused_statements" => {
+            "Set capture_refused_statements to true or false for kind postgres"
+        }
         "ttl_minutes" => "Set ttl_minutes to an integer from 1 through 1440",
         "twin_id" => "Set twin_id to an id returned by twin_start",
         "max_twins" => "Set max_twins to a positive integer",

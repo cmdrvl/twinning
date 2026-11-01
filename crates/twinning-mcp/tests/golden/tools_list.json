@@ -30,7 +30,7 @@
       "annotations": {
         "readOnlyHint": true
       },
-      "description": "Read a bounded report for a stopped declared-subset Postgres or spec-based REST twin.",
+      "description": "Read a bounded report for a stopped declared-subset Postgres or spec-based REST twin. Opt-in refused Postgres SQL text appears only here and can contain SQL literals.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -78,7 +78,7 @@
         "idempotentHint": false,
         "readOnlyHint": false
       },
-      "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define.",
+      "description": "Start a Postgres twin for the declared client subset or a REST twin built from an OpenAPI spec; the REST twin refuses requests the spec does not define. Opt-in refused SQL capture writes text only to the local trace file and twin_report; SQL text can contain literals, and bind values are never captured.",
       "inputSchema": {
         "additionalProperties": false,
         "oneOf": [
@@ -93,6 +93,11 @@
             ]
           },
           {
+            "not": {
+              "required": [
+                "capture_refused_statements"
+              ]
+            },
             "properties": {
               "kind": {
                 "const": "rest"
@@ -112,6 +117,11 @@
               "bypass"
             ],
             "type": "string"
+          },
+          "capture_refused_statements": {
+            "default": false,
+            "description": "Postgres only. Store refused SQL text in the local trace file and expose bounded samples in twin_report. Text may contain SQL literals; bind values are never captured.",
+            "type": "boolean"
           },
           "kind": {
             "enum": [

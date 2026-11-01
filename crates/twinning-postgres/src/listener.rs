@@ -471,6 +471,15 @@ fn serve_connection_with_shutdown(
                         let transaction_status = session.transaction_status();
                         let trace_identity =
                             execute_state.trace_identity(&state.catalog, &parse_state, &request);
+                        let sql_text = state
+                            .query_trace()
+                            .is_some_and(SharedQueryTrace::captures_refused_sql_text)
+                            .then(|| {
+                                parse_state
+                                    .portal(request.portal_name.as_str())
+                                    .map(|portal| portal.sql.clone())
+                            })
+                            .flatten();
                         if matches!(transaction_status, TransactionStatus::FailedTransaction) {
                             let frames = execute_state.process_failed_transaction_execute();
                             pending_query_trace =
@@ -478,6 +487,7 @@ fn serve_connection_with_shutdown(
                                     PendingQueryTrace::new(
                                         session_id.as_str(),
                                         trace_identity,
+                                        sql_text,
                                         transaction_status,
                                         result,
                                     )
@@ -497,6 +507,7 @@ fn serve_connection_with_shutdown(
                                         PendingQueryTrace::new(
                                             session_id.as_str(),
                                             trace_identity,
+                                            sql_text.clone(),
                                             transaction_status,
                                             result,
                                         )
@@ -537,6 +548,7 @@ fn serve_connection_with_shutdown(
                                     PendingQueryTrace::new(
                                         session_id.as_str(),
                                         trace_identity,
+                                        sql_text,
                                         transaction_status,
                                         result,
                                     )
@@ -578,6 +590,7 @@ struct PendingQueryTrace {
     session_id: String,
     protocol: String,
     statement_kind: String,
+    sql_text: Option<String>,
     sql_hash: Option<String>,
     operation_hash: Option<String>,
     binds: Option<crate::query_trace::BindTrace>,
@@ -589,6 +602,7 @@ impl PendingQueryTrace {
     fn new(
         session_id: &str,
         identity: super::extended_execute::TraceIdentity,
+        sql_text: Option<String>,
         transaction_before: TransactionStatus,
         result: &KernelResult,
     ) -> Self {
@@ -596,6 +610,11 @@ impl PendingQueryTrace {
             session_id: session_id.to_owned(),
             protocol: String::from("extended_query"),
             statement_kind: identity.statement_kind,
+            sql_text: if matches!(result, KernelResult::Refusal(_)) {
+                sql_text
+            } else {
+                None
+            },
             sql_hash: identity.sql_hash,
             operation_hash: identity.operation_hash,
             binds: identity.binds,
@@ -609,6 +628,7 @@ impl PendingQueryTrace {
             session_id: self.session_id,
             protocol: self.protocol,
             statement_kind: self.statement_kind,
+            sql_text: self.sql_text,
             sql_hash: self.sql_hash,
             operation_hash: self.operation_hash,
             binds: self.binds,
@@ -637,6 +657,15 @@ fn record_simple_query_trace(
             session_id: session_id.to_owned(),
             protocol: String::from("simple_query"),
             statement_kind: crate::query_trace::statement_kind(sql),
+            sql_text: if live_state
+                .query_trace()
+                .is_some_and(SharedQueryTrace::captures_refused_sql_text)
+                && matches!(result, KernelResult::Refusal(_))
+            {
+                Some(sql.to_owned())
+            } else {
+                None
+            },
             sql_hash: Some(crate::query_trace::sql_hash(sql)),
             operation_hash,
             binds: None,

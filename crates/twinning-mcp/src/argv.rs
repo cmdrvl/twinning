@@ -17,6 +17,7 @@ pub struct TwinArgv {
     pub report: PathBuf,
     pub trace: PathBuf,
     pub port: u16,
+    pub capture_refused_statements: bool,
 }
 
 impl TwinArgv {
@@ -32,6 +33,9 @@ impl TwinArgv {
                 push_optional(&mut args, "--verify", self.verify.as_deref());
                 push_optional(&mut args, "--seed", self.seed.as_deref());
                 push_optional(&mut args, "--restore", self.restore.as_deref());
+                if self.capture_refused_statements {
+                    args.push(OsString::from("--capture-refused-statements"));
+                }
                 args.extend([
                     OsString::from("--host"),
                     OsString::from("127.0.0.1"),
@@ -117,6 +121,7 @@ mod tests {
             report: PathBuf::from("/state/report.json"),
             trace: PathBuf::from("/state/trace.json"),
             port: 54321,
+            capture_refused_statements: false,
         };
         let args = argv.build();
         let strings: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
@@ -133,6 +138,40 @@ mod tests {
                 .any(|arg| arg.as_ref() == "--materialize-source-url")
         );
         assert!(!strings.iter().any(|arg| arg.as_ref() == "0.0.0.0"));
+        assert!(
+            !strings
+                .iter()
+                .any(|arg| arg.as_ref() == "--capture-refused-statements")
+        );
+    }
+
+    #[test]
+    fn postgres_argv_passes_refused_statement_capture_only_when_enabled() {
+        let mut argv = TwinArgv {
+            kind: TwinKind::Postgres,
+            input: PathBuf::from("/work/schema.sql"),
+            verify: None,
+            seed: None,
+            restore: None,
+            auth_mode: None,
+            server_variables: Vec::new(),
+            report: PathBuf::from("/state/report.json"),
+            trace: PathBuf::from("/state/trace.json"),
+            port: 54321,
+            capture_refused_statements: false,
+        };
+        assert!(
+            !argv
+                .build()
+                .iter()
+                .any(|arg| arg == "--capture-refused-statements")
+        );
+        argv.capture_refused_statements = true;
+        assert!(
+            argv.build()
+                .iter()
+                .any(|arg| arg == "--capture-refused-statements")
+        );
     }
 
     #[test]
@@ -151,6 +190,7 @@ mod tests {
             report: PathBuf::from("/state/report.json"),
             trace: PathBuf::from("/state/trace.json"),
             port: 54321,
+            capture_refused_statements: false,
         }
         .build();
         let strings = args

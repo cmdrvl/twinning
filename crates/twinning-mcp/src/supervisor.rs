@@ -55,6 +55,7 @@ pub struct TwinStartRequest {
     pub restore: Option<PathBuf>,
     pub auth_mode: Option<String>,
     pub server_variables: Vec<(String, String)>,
+    pub capture_refused_statements: bool,
     pub ttl: Duration,
 }
 
@@ -127,6 +128,7 @@ impl Supervisor {
             restore: request.restore,
             auth_mode: None,
             server_variables: Vec::new(),
+            capture_refused_statements: false,
             ttl: request.ttl,
         })
     }
@@ -157,6 +159,7 @@ impl Supervisor {
             restore: request.restore,
             auth_mode: request.auth_mode,
             server_variables: request.server_variables,
+            capture_refused_statements: request.capture_refused_statements,
             report: record.report_path.clone(),
             trace: record.trace_path.clone(),
             port: first_port,

@@ -212,6 +212,10 @@ pub struct TwinArgs {
     #[arg(long, value_name = "FILE")]
     pub query_trace: Option<PathBuf>,
 
+    /// Capture refused Postgres SQL in the local query trace (may contain SQL literals; never includes bind values; requires --query-trace and --run or --serve)
+    #[arg(long, requires = "query_trace")]
+    pub capture_refused_statements: bool,
+
     /// Restore a prior twinning.snapshot.v0 instead of loading --schema (provide exactly one of --schema or --restore)
     #[arg(long, value_name = "FILE")]
     pub restore: Option<PathBuf>,

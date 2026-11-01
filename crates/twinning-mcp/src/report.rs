@@ -1,7 +1,7 @@
 //! Validates committed twin reports and renders bounded MCP response bodies.
 
-use std::fs;
 use std::path::Path;
+use std::{collections::BTreeMap, fs};
 
 use serde_json::{Value, json};
 
@@ -12,6 +12,9 @@ use crate::{
 };
 
 const MAX_REPORT_RESPONSE_BYTES: usize = 256 * 1024;
+const MAX_REFUSED_STATEMENT_GROUPS: usize = 50;
+const MAX_REFUSED_SAMPLE_CHARS: usize = 500;
+const REFUSED_SAMPLE_TRUNCATION_MARKER: &str = " [truncated]";
 
 pub fn validate_report(
     report: &Value,
@@ -87,7 +90,11 @@ pub fn read_trace(path: &Path, stderr_path: &Path) -> Result<Value, ToolError> {
             stderr_path,
         )
     })?;
-    if trace["version"] != "twinning.query-trace.v0" || !trace["events"].is_array() {
+    if !matches!(
+        trace["version"].as_str(),
+        Some("twinning.query-trace.v0" | "twinning.query-trace.v1")
+    ) || !trace["events"].is_array()
+    {
         return Err(unreadable(
             format!("query trace has an unsupported shape at {}", path.display()),
             stderr_path,
@@ -238,11 +245,79 @@ fn valid_count_map(value: Option<&Value>, optional: bool) -> bool {
 }
 
 pub fn trace_summary(trace: &Value) -> Value {
-    json!({
+    let events = trace["events"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let capture_enabled = trace["policy"]["sql_text"] == "refused_text";
+    let mut summary = json!({
         "version": trace["version"],
         "policy": trace["policy"],
-        "request_count": trace["events"].as_array().map_or(0, Vec::len)
-    })
+        "request_count": events.len(),
+        "capture": if capture_enabled { "refused_text" } else { "off" }
+    });
+    if capture_enabled {
+        summary["refused_statements"] = Value::Array(refused_statement_summary(events));
+    } else {
+        summary["capture_note"] = Value::String(String::from(
+            "capture: off; set capture_refused_statements=true in twin_start to include refused Postgres SQL text in this local report.",
+        ));
+    }
+    summary
+}
+
+fn refused_statement_summary(events: &[Value]) -> Vec<Value> {
+    let mut groups = BTreeMap::<(String, String, String), usize>::new();
+    for event in events {
+        if event["result"]["outcome"] != "refusal" {
+            continue;
+        }
+        let (Some(sql_text), Some(shape), Some(sqlstate)) = (
+            event["sql_text"].as_str(),
+            event["result"]["refusal_code"].as_str(),
+            event["result"]["sqlstate"].as_str(),
+        ) else {
+            continue;
+        };
+        let normalized = sql_text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if normalized.is_empty() {
+            continue;
+        }
+        *groups
+            .entry((normalized, shape.to_owned(), sqlstate.to_owned()))
+            .or_default() += 1;
+    }
+
+    groups
+        .into_iter()
+        .take(MAX_REFUSED_STATEMENT_GROUPS)
+        .map(|((sample_text, shape, sqlstate), count)| {
+            json!({
+                "shape": shape,
+                "sqlstate": sqlstate,
+                "count": count,
+                "sample_text": cap_refused_sample(&sample_text)
+            })
+        })
+        .collect()
+}
+
+fn cap_refused_sample(text: &str) -> String {
+    let mut chars = text.chars();
+    let sample = chars
+        .by_ref()
+        .take(MAX_REFUSED_SAMPLE_CHARS)
+        .collect::<String>();
+    if chars.next().is_some() {
+        let keep = MAX_REFUSED_SAMPLE_CHARS - REFUSED_SAMPLE_TRUNCATION_MARKER.chars().count();
+        format!(
+            "{}{}",
+            sample.chars().take(keep).collect::<String>(),
+            REFUSED_SAMPLE_TRUNCATION_MARKER
+        )
+    } else {
+        sample
+    }
 }
 
 fn status_name(status: TwinStatus) -> &'static str {
@@ -338,7 +413,7 @@ mod tests {
     #[test]
     fn trace_summary_counts_events_without_exposing_query_text() {
         let trace = json!({
-            "version":"twinning.query-trace.v0",
+            "version":"twinning.query-trace.v1",
             "policy":"redacted",
             "events":[{"sql_hash":"sha256:abc","sql":"must not be copied"}]
         });
@@ -346,6 +421,84 @@ mod tests {
         assert_eq!(1, summary["request_count"]);
         assert!(summary.get("events").is_none());
         assert!(summary.get("sql").is_none());
+    }
+
+    #[test]
+    fn refused_statement_summary_groups_caps_and_marks_truncated_samples() {
+        let long_sql = format!("SELECT {}", "x".repeat(600));
+        let mut events = vec![
+            json!({
+                "statement_kind":"select",
+                "sql_text":"SELECT  1   FROM  public.deals",
+                "result":{"outcome":"refusal","sqlstate":"0A000","refusal_code":"unsupported_join"}
+            }),
+            json!({
+                "statement_kind":"select",
+                "sql_text":"SELECT 1 FROM public.deals",
+                "result":{"outcome":"refusal","sqlstate":"0A000","refusal_code":"unsupported_join"}
+            }),
+            json!({
+                "statement_kind":"select",
+                "sql_text":long_sql,
+                "result":{"outcome":"refusal","sqlstate":"0A000","refusal_code":"unsupported_join"}
+            }),
+        ];
+        for index in 0..51 {
+            events.push(json!({
+                "statement_kind":"show",
+                "sql_text":format!("SHOW setting_{index}"),
+                "result":{"outcome":"refusal","sqlstate":"0A000","refusal_code":"unsupported_show"}
+            }));
+        }
+        let trace = json!({
+            "version":"twinning.query-trace.v1",
+            "policy":{"sql_text":"refused_text","bind_values":"redacted_hash_or_null"},
+            "events":events
+        });
+        let summary = trace_summary(&trace);
+        let refused = summary["refused_statements"].as_array().unwrap();
+        assert_eq!(50, refused.len());
+        assert!(
+            summary["capture"]
+                .as_str()
+                .unwrap()
+                .contains("refused_text")
+        );
+        let normalized = refused
+            .iter()
+            .find(|item| item["sample_text"] == "SELECT 1 FROM public.deals")
+            .unwrap();
+        assert_eq!(2, normalized["count"]);
+        assert_eq!("unsupported_join", normalized["shape"]);
+        assert_eq!("0A000", normalized["sqlstate"]);
+        let truncated = refused
+            .iter()
+            .find(|item| {
+                item["sample_text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("[truncated]")
+            })
+            .unwrap();
+        assert!(truncated["sample_text"].as_str().unwrap().chars().count() <= 500);
+    }
+
+    #[test]
+    fn refused_statement_summary_is_absent_when_capture_is_off() {
+        let trace = json!({
+            "version":"twinning.query-trace.v0",
+            "policy":{"sql_text":"redacted_hash_only","bind_values":"redacted_hash_or_null"},
+            "events":[{"result":{"outcome":"refusal","sqlstate":"0A000","refusal_code":"unsupported_join"}}]
+        });
+        let summary = trace_summary(&trace);
+        assert!(summary.get("refused_statements").is_none());
+        assert_eq!("off", summary["capture"]);
+        assert!(
+            summary["capture_note"]
+                .as_str()
+                .unwrap()
+                .contains("capture_refused_statements")
+        );
     }
 
     #[test]

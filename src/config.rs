@@ -3,6 +3,8 @@ use crate::{
     refusal,
     refusal::RefusalResult,
 };
+use serde_json::json;
+use twinning_kernel::refusal::RefusalEnvelope;
 
 pub use twinning_kernel::TwinConfig;
 #[cfg(feature = "rest")]
@@ -61,6 +63,33 @@ pub fn twin_config_from_engine_args(
         return Err(Box::new(refusal::ambiguous_live_mode(engine)));
     }
 
+    if args.capture_refused_statements {
+        if engine != Engine::Postgres {
+            return Err(Box::new(RefusalEnvelope::new(
+                "E_QUERY_TRACE_CAPTURE_CONFIG",
+                "Refused-statement capture is available only for Postgres.",
+                json!({ "engine": engine.as_str() }),
+                Some("twinning postgres --schema schema.sql --serve --query-trace out/trace.json --capture-refused-statements --json".to_owned()),
+            )));
+        }
+        if args.query_trace.is_none() {
+            return Err(Box::new(RefusalEnvelope::new(
+                "E_QUERY_TRACE_CAPTURE_CONFIG",
+                "Refused-statement capture requires --query-trace so captured text has an explicit local destination.",
+                json!({ "required": "--query-trace" }),
+                Some("twinning postgres --schema schema.sql --serve --query-trace out/trace.json --capture-refused-statements --json".to_owned()),
+            )));
+        }
+        if !args.serve && args.run.is_none() {
+            return Err(Box::new(RefusalEnvelope::new(
+                "E_QUERY_TRACE_CAPTURE_CONFIG",
+                "Refused-statement capture applies only to live --run or --serve sessions.",
+                json!({ "required_any": ["--run", "--serve"] }),
+                Some("twinning postgres --schema schema.sql --serve --query-trace out/trace.json --capture-refused-statements --json".to_owned()),
+            )));
+        }
+    }
+
     Ok(TwinConfig {
         engine,
         host: args.host.clone(),
@@ -73,6 +102,7 @@ pub fn twin_config_from_engine_args(
         report_path: args.report.clone(),
         snapshot_path: args.snapshot.clone(),
         query_trace_path: args.query_trace.clone(),
+        capture_refused_statements: args.capture_refused_statements,
         restore_path: args.restore.clone(),
         export_seed_contract_path: args.export_seed_contract.clone(),
         seed_path: args.seed.clone(),
@@ -266,6 +296,7 @@ mod tests {
             report: None,
             snapshot: None,
             query_trace: None,
+            capture_refused_statements: false,
             restore: None,
             export_seed_contract: None,
             seed: None,
@@ -275,6 +306,50 @@ mod tests {
         let config =
             twin_config_from_engine_args(Engine::Mysql, &args, false).expect("config should build");
         assert_eq!(config.port, 3306);
+    }
+
+    #[test]
+    fn refused_statement_capture_requires_local_live_postgres_trace() {
+        let mut args = TwinArgs {
+            schema: Some("schema.sql".into()),
+            verify: None,
+            declaration: None,
+            host: "127.0.0.1".to_owned(),
+            port: None,
+            run: None,
+            serve: false,
+            report: None,
+            snapshot: None,
+            query_trace: None,
+            capture_refused_statements: true,
+            restore: None,
+            export_seed_contract: None,
+            seed: None,
+            materialize_source_url: None,
+        };
+        let refusal = twin_config_from_engine_args(Engine::Postgres, &args, true)
+            .expect_err("capture without a trace path is refused");
+        assert!(
+            refusal
+                .render(true)
+                .unwrap()
+                .contains("requires --query-trace")
+        );
+
+        args.query_trace = Some("trace.json".into());
+        let refusal = twin_config_from_engine_args(Engine::Postgres, &args, true)
+            .expect_err("capture outside a live mode is refused");
+        assert!(
+            refusal
+                .render(true)
+                .unwrap()
+                .contains("only to live --run or --serve")
+        );
+
+        args.serve = true;
+        let config = twin_config_from_engine_args(Engine::Postgres, &args, true)
+            .expect("capture-enabled live Postgres config is accepted");
+        assert!(config.capture_refused_statements);
     }
 
     #[test]
@@ -290,6 +365,7 @@ mod tests {
             report: None,
             snapshot: None,
             query_trace: None,
+            capture_refused_statements: false,
             restore: None,
             export_seed_contract: None,
             seed: None,
