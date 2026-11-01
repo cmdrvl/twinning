@@ -31,16 +31,16 @@ Approval-gated, never done autonomously (each needs Zac's explicit yes in chat):
 | --- | --- |
 | D1 | Synchronous Rust with `std::thread`, `std::process`, `signal-hook` (already a dependency). No tokio in `twinning-mcp`. |
 | D2 | `twinning-mcp-core` is created by copying the JSON-RPC types and `negotiate_initialize_protocol` from `crates/twinning-rest/src/mcp/{dispatcher,version}.rs` and the newline-framed stdio loop idea from `stdio.rs`, with their own tests. `twinning-rest` is not modified. De-duplication is a later bead. The existing `dispatch` is tied to `McpCatalog` and is not reusable as is. |
-| D3 | The control server finds the `twinning` binary in this order: `--twinning-bin`, env `TWINNING_BIN`, a sibling of its own executable, then `PATH`. |
+| D3 | The control server finds the `twinning` binary in this order: `--twinning-bin`, env `TWINNING_BIN`, a sibling of its own executable (directory of `current_exe()` after canonicalizing; true for `target/debug`, the flat release archive, the npm cache and Homebrew `bin`), then `PATH`. A candidate counts only if `twinning --describe` exits 0 (verified: it prints `operator.v0` JSON with `name` and `version`, no engine subcommand needed). |
 | D4 | Working directory: `--workdir` or env `TWINNING_MCP_WORKDIR`, else the launch directory. If the resolved workdir is `/` or the user's home directory itself and `--workdir` was not given explicitly, refuse to start with `E_WORKDIR_UNSAFE`. (Claude Desktop launches servers with cwd `/`.) `setup` always writes an explicit `--workdir`. |
-| D5 | State directory: `<temp_dir>/twinning-mcp/<server_pid>/<twin_id>/` mode 0700, holding `report.json`, `trace.json`, `stderr.log`, `child.pid`. Callers never choose output paths. |
-| D6 | Port: server binds `127.0.0.1:0`, reads the port, drops the socket, passes `--port N`. If the child exits within 1 s with an address-in-use message, retry up to 3 times. |
+| D5 | State directory: `<temp_dir>/twinning-mcp/<server_pid>/<twin_id>/` mode 0700, holding `report.json`, `trace.json`, `stdout.json`, `stderr.log`, `child.pid`. Child stdout is redirected to `stdout.json` (with `--json` the twin prints the final report there at shutdown, and prints a `twinning.v0` REFUSAL there on startup failures; stderr stays empty). Callers never choose output paths. |
+| D6 | Port: server binds `127.0.0.1:0`, reads the port, drops the socket, passes `--port N`. If the child exits within 1 s and its `stdout.json` holds a REFUSAL with `detail.stage` = `listener_bind` and an `Address already in use` error (verified: it is on stdout, not stderr, exit 2), retry up to 3 times. |
 | D7 | Readiness: poll `TcpStream::connect` every 50 ms up to 10 s (env `TWINNING_MCP_READY_TIMEOUT_MS` overrides, for tests). The twin prints nothing while serving. |
 | D8 | Stop: SIGTERM, wait up to 10 s (env override), then SIGKILL and `E_STOP_TIMEOUT`. Exit code 0 or 1 with a report file is a normal stop. Exit code 2 or no report file is `E_REPORT_UNREADABLE` with stderr tail. |
 | D9 | `twin_report` works only for stopped twins. For a running twin it returns `E_REPORT_NOT_READY` with the hint to call `twin_stop` (twinning writes its report only at shutdown). Stopped records are kept for the server's lifetime, at most 50. |
 | D10 | The connection string is `postgresql://u@127.0.0.1:<port>/db?sslmode=disable&gssencmode=disable`. No password, no secret. |
 | D11 | Tool results are MCP `tools/call` results: `content: [{"type":"text","text":"<compact JSON>"}]`, plus `isError: true` and body `{"error":{"code","message","hint"}}` on failure. Protocol methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`, `ping`. Server name `twinning-mcp`, version from Cargo. |
-| D12 | `twin_start` passes `--query-trace <state>/trace.json` so the stop result can summarize request history. |
+| D12 | `twin_start` passes `--query-trace <state>/trace.json` so the stop result can summarize request history. The trace is written only at shutdown (like the report) as `{version: "twinning.query-trace.v0", policy, events: [...]}`; SQL text and bind values are redacted to hashes. `request_count` is `events.len()`. |
 | D13 | Twin id: `tw_` plus 6 lowercase hex characters from `/dev/urandom`-seeded randomness, regenerated on collision. |
 
 ## 3. Module skeleton
@@ -53,7 +53,7 @@ New workspace members (add to root `Cargo.toml` `members`).
 | --- | --- |
 | `src/lib.rs` | Re-exports |
 | `src/jsonrpc.rs` | `JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcError`, parse, error constructors (copied, D2) |
-| `src/version.rs` | `negotiate_initialize_protocol` and supported-version list (copied, D2) |
+| `src/version.rs` | `negotiate_initialize_protocol` and supported-version list (copied, D2; the source list is `2024-11-05`, `2025-03-26`, and unknown client versions fall back to the last entry; add newer versions only deliberately, with a test) |
 | `src/stdio.rs` | Read newline-delimited requests from a `BufRead`, write responses to a `Write`, flush per message; nothing else writes to stdout |
 
 `crates/twinning-mcp` (binary `twinning-mcp`):
@@ -105,10 +105,10 @@ Tools (all schemas `additionalProperties: false`):
 | --- | --- | --- | --- |
 | `twin_start` | `kind` (required, `postgres`), `schema_path` (required), `verify_path`, `seed_path`, `restore_path`, `ttl_minutes` (1 to 1440, default 60) | `{twin_id, kind, port, pid, connection_string, started_at, expires_at}` | not read-only, not idempotent |
 | `twin_list` | none | `{twins:[{twin_id, kind, status, port, started_at, expires_at}]}`, status in `running`, `stopped`, `expired` | read-only |
-| `twin_stop` | `twin_id` | `{twin_id, status, outcome, exit_code, constraints, tables, request_count, report_path, trace_path}` where `constraints` and `tables` come from the twinning report | destructive hint false |
+| `twin_stop` | `twin_id` | `{twin_id, status, outcome, exit_code, constraints, tables, request_count, report_path, trace_path}` where `constraints` (keys `not_null_violations`, `fk_violations`, `check_violations`, `unique_violations`) and `tables` (object keyed by table name, each with `rows`, `columns`, `indexes`, `constraints`) come from the twinning report | destructive hint false |
 | `twin_report` | `twin_id` | The full `twinning.v0` report JSON, plus `trace_summary`; truncated at 256 KiB with `truncated: true` and `report_path` | read-only |
 | `twin_seed_contract` | `kind`, `schema_path` | `{contract_path, table_count}`; the file is written in the twin's state area via `--export-seed-contract` | not read-only |
-| `twin_doctor` | none | `{twinning_bin, twinning_version, health, capabilities, workdir, cap, restricted}` | read-only |
+| `twin_doctor` | none | `{twinning_bin, twinning_version, health, capabilities, workdir, cap, restricted}`; `twinning_version` is `version` from `--describe`, `health` is the `status` and `outcome` of `doctor health --json`, `capabilities` is the `commands` list of `doctor capabilities --json` (both verified to exit 0 and print `twinning.v0` JSON) | read-only |
 
 Error codes (body `{"error":{"code","message","hint"}}`, `isError: true`):
 
@@ -289,12 +289,12 @@ In dcg-guarded sessions, shell redirects to variable paths and `psql -c "$var"` 
 | N06 | Refusals and errors are explicit with codes; no silent fallback to partial behavior. |
 | N07 | A failing test is reported as failing. A skipped test prints why. No test is weakened to pass. |
 | N08 | No em dashes in authored docs or the README. |
-| N09 | Beads implemented by an agent stay open for an independent verifier with an evidence comment; the agent does not close its own work as verified. |
+| N09 | A bead is closed only with evidence in the close reason (commands run and their results). A bead whose acceptance depends on something not run, skipped or approval-gated stays open and says why. |
 
 ## 12. Session kickoff prompt (one-shot)
 
 ```
 Onboard: read AGENTS.md, CLAUDE.md, docs/PLAN_TWINNING_MCP.md and docs/PLAN_TWINNING_MCP_SPEC.md in the twinning repo. The spec wins on implementation details. Epic: see `br show` for the epic titled "Twinning MCP v0". Work beads in `br ready` order, M0a through M8. Use cass/ubs/testing-real-service-e2e-no-mocks where they fit.
 
-Rules: no worktrees; br not bd; commit locally after each bead; do NOT push, tag, publish, or install network packages without Zac's explicit yes (spec N04). Ask once at the start for the throwaway `uv` driver environment (M0c). Stop rules in spec section 6 are binding: if M0c shows reports miss real-driver violations, stop and report. Leave implemented beads open for an independent verifier with an evidence comment (N09). Never-idle ladder when beads run out: re-run G1 to G10, then testing-* skills against the new crate, then the README claims audit (G8), then report. Done means: M0 to M8 beads have evidence comments, G1 to G10 recorded in docs/CLIENT_COMPAT.md or the epic, and a go-live checklist for Zac listing each approval-gated step.
+Rules: no worktrees; br not bd; commit locally after each bead; do NOT push, tag, publish, or install network packages without Zac's explicit yes (spec N04). Ask once at the start for the throwaway `uv` driver environment (M0c). Stop rules in spec section 6 are binding: if M0c shows reports miss real-driver violations, stop and report. Close a bead only with evidence in the close reason (N09); leave it open if its acceptance depends on something not run. Never-idle ladder when beads run out: re-run G1 to G10, then testing-* skills against the new crate, then the README claims audit (G8), then report. Done means: M0 to M8 beads are closed with evidence or open with a stated reason, G1 to G10 recorded in docs/CLIENT_COMPAT.md or the epic, and a go-live checklist for Zac listing each approval-gated step.
 ```
