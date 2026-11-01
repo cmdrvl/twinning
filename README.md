@@ -20,8 +20,12 @@ spec-defined routes, and requests outside those contracts receive a reason.
 Build both executables from source:
 
 ```bash
-cargo build --locked --offline --release -p twinning -p twinning-mcp
+cargo build --locked --release -p twinning -p twinning-mcp
 ```
+
+On a first run with empty caches, Cargo needs network access to download the
+locked Rust dependencies. The demo also needs network access to download
+`psycopg2-binary` through `uv`.
 
 Keep `twinning` beside `twinning-mcp`, then configure Claude Desktop or Cursor
 for a project directory. When a config needs an update, `setup` merges the
@@ -160,9 +164,11 @@ From a clean clone with Cargo, Python, and `uv` available, run:
 ./docs/demo/run.sh
 ```
 
-The script builds the real `twinning` and `twinning-mcp` binaries offline, uses
-the real psycopg2 driver, starts a twin, inserts one valid row, records a CHECK
-violation, stops the twin, and reads the final report. See
+On a first run with empty Cargo and uv caches, the script needs network access
+to download the locked Rust dependencies and `psycopg2-binary`. It builds the
+real `twinning` and `twinning-mcp` binaries, uses the real psycopg2 driver,
+starts a twin, inserts one valid row, records a CHECK violation, stops the
+twin, and reads the final report. See
 [the demo steps](./docs/demo/README.md).
 
 **Protocol-faithful interface twins for fast extractor iteration and later migration proof.**

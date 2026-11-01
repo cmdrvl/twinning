@@ -13,7 +13,7 @@ listed operations.
 
 The psycopg2 and SQLAlchemy results are from the R05/R06 run on 2026-11-01 at
 commit `fa5570d791d98e696e24eac253b81b68be2cdb10`, exercised by
-`CARGO_TARGET_DIR=target/pane-a cargo test --offline --test compat_drivers -- --nocapture`.
+`cargo test --offline --test compat_drivers -- --nocapture`.
 It passed all 7 declared driver cases; 0 cases were skipped. The run used uv
 0.13.5 with the approved invocation
 `uv run --with psycopg2-binary --with sqlalchemy python <absolute script path>`
@@ -55,7 +55,7 @@ started and stopped its twin through MCP tool calls, passed an explicit real
 `--host 127.0.0.1`. No fake twin was used for these cases.
 
 The focused command was
-`CARGO_TARGET_DIR=target/pane-a cargo test --locked --offline -p twinning-mcp --test e2e_real -- --nocapture --test-threads=1`.
+`cargo test --locked --offline -p twinning-mcp --test e2e_real -- --nocapture --test-threads=1`.
 It passed R01-R08: 8 passed, 0 failed, 0 ignored; `SKIPPED:` count 0. The run
 used psql 14.24 (Homebrew), psycopg2 2.9.13 (`dt dec pq3 ext lo64`), SQLAlchemy
 2.1.6, and uv 0.13.5 (Homebrew 2026-10-22, x86_64-apple-darwin). R05-R07 each
@@ -75,7 +75,7 @@ form from a scratch directory under the test artifacts directory.
 | R08 | `twin_seed_contract`, filled seed, `twin_start` with the seed, then `twin_stop` | Stop summary showed 1 row in `public.deals` and `outcome=READY`. |
 
 G3 and the full workspace suite were also run from a fresh clone at source
-revision `d6bdf1f` with an initially absent `target/pane-a`. In that clone,
+revision `d6bdf1f` with an initially absent `target` directory. In that clone,
 `cargo build --locked -p twinning`, `cargo fmt --check`,
 `cargo clippy --workspace --all-targets -- -D warnings`, and
 `cargo test --workspace --locked --offline -- --nocapture` all exited 0. The
@@ -106,7 +106,7 @@ LibreSSL `3.3.6`.
 | RR08 | Shutdown of active REST twins by MCP SIGTERM and stdin EOF | Both children exited, both reports had outcome `PASS`, and the before/after filtered process snapshots were empty. |
 
 The focused command
-`CARGO_TARGET_DIR=target/pane-a cargo test --offline -p twinning-mcp --test e2e_rest -- --nocapture --test-threads=1`
+`cargo test --offline -p twinning-mcp --test e2e_rest -- --nocapture --test-threads=1`
 passed all eight cases with 0 failures and 0 ignored tests. No case printed
 `SKIPPED:`. The demo in `docs/demo/rest/run.sh` repeated the four HTTP calls
 with release binaries and produced a `PASS` report with four requests and the

@@ -4,14 +4,14 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 cd "$repo_root"
 
-CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target/pane-a}
+CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target}
 export CARGO_TARGET_DIR
 case "$CARGO_TARGET_DIR" in
   /*) target_root=$CARGO_TARGET_DIR ;;
   *) target_root=$repo_root/$CARGO_TARGET_DIR ;;
 esac
 
-cargo build --locked --offline --release -p twinning -p twinning-mcp
+cargo build --locked --release -p twinning -p twinning-mcp
 
 workdir=$(mktemp -d "${TMPDIR:-/tmp}/twinning-rest-demo.XXXXXX")
 trap 'rm -rf "$workdir"' EXIT HUP INT TERM

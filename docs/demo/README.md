@@ -8,17 +8,18 @@ other psycopg2 statements or clients.
 
 ## Run from a clean clone
 
-Prerequisites are Cargo, Python 3.11, and `uv`. From the repository root, run:
+Prerequisites are Cargo, Python 3.11, `uv`, and network access on the first run
+with empty caches. Cargo downloads the locked Rust dependencies, and `uv`
+downloads `psycopg2-binary` 2.9.13. From the repository root, run:
 
 ```bash
 ./docs/demo/run.sh
 ```
 
-The wrapper builds both release executables with Cargo offline into
-`target/pane-c` by default, then runs `demo.py` in an isolated `uv` environment
-with cached psycopg2-binary 2.9.13. Set `CARGO_TARGET_DIR` to choose another
-target directory. Both Cargo and `uv` run offline; no package download is
-attempted.
+The wrapper builds both release executables into `target` by default, then runs
+`demo.py` in an isolated `uv` environment with psycopg2-binary 2.9.13. Set
+`CARGO_TARGET_DIR` to choose another target directory. A first run downloads
+dependencies; later runs can use the local caches.
 
 ## Steps
 

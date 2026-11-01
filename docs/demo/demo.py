@@ -77,7 +77,7 @@ class McpClient:
 
 def parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[2]
-    default_target = Path(os.environ.get("CARGO_TARGET_DIR", "target/pane-c"))
+    default_target = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
     if not default_target.is_absolute():
         default_target = root / default_target
     parser = argparse.ArgumentParser(description=__doc__)
