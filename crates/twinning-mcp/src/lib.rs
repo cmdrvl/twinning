@@ -8,7 +8,3 @@ pub mod paths;
 pub mod registry;
 pub mod stale;
 pub mod supervisor;
-
-#[cfg(test)]
-#[path = "../tests/common/mod.rs"]
-pub mod test_common;
