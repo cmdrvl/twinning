@@ -2,12 +2,18 @@
 
 ## Use with an agent (MCP)
 
-The MCP manager starts a declared-subset Postgres twin from a schema file so an
-agent can exercise the SQL shapes covered by the checked-in canaries. It is not
-a general Postgres server. The listener binds to `127.0.0.1`; the manager writes
-the final report after the twin stops. See [the observed client compatibility
-record](./docs/CLIENT_COMPAT.md) for the exact tested cases and unsupported
-shapes.
+Twinning is not a general database. The MCP manager ships `postgres` and `rest`
+twin kinds only. It does not ship an MCP twin kind. MCP stdio is the manager's
+control interface. Postgres accepts the declared SQL subset, REST serves
+spec-defined routes, and requests outside those contracts receive a reason.
+
+### Use cases
+
+| Use case | Recorded demo |
+| --- | --- |
+| Extractor and pipeline development: rehearse writes against a schema contract and read which constraints were violated. | [psycopg2 demo steps](./docs/demo/README.md), [run script](./docs/demo/run.sh), [client compatibility results](./docs/CLIENT_COMPAT.md) |
+| Migration proof: replay a query set against legacy and candidate Postgres snapshots and inspect which results diverge. | [recorded proof results](./docs/MIGRATION_PROOF.md), [migration demo](./docs/demo/migration/run.sh) |
+| API contract testing: exercise an OpenAPI REST twin with authentication and schema refusals. | [REST compatibility results](./docs/CLIENT_COMPAT.md), [REST demo](./docs/demo/rest/run.sh) |
 
 ### Build and configure
 
@@ -63,16 +69,29 @@ release.
 
 ### Tools
 
-The stdio MCP server exposes six tools:
+The stdio MCP server exposes seven tools:
 
 | Tool | Arguments |
 | --- | --- |
 | `twin_doctor` | None. Check the executable and workdir. |
 | `twin_list` | None. List retained twins. |
+| `twin_pair_proof` | Required: `left_snapshot_path`, `right_snapshot_path`, `queries_path`. Optional: `report_path`. |
 | `twin_report` | `twin_id`; only available after stop. |
 | `twin_seed_contract` | `kind: "postgres"`, `schema_path`. |
-| `twin_start` | Required: `kind: "postgres"`, `schema_path`. Optional: `verify_path`, `seed_path`, `restore_path`, `capture_refused_statements` (default `false`), `ttl_minutes` from 1 to 1440. |
+| `twin_start` | Required: `kind` and the kind's input path. Postgres uses `schema_path`; optional fields are `verify_path`, `seed_path`, `restore_path`, `snapshot_path`, `declaration_path`, `capture_refused_statements` (default `false`), and `ttl_minutes`. REST uses `spec_path`; optional fields are `auth_mode`, `server_variables`, and `ttl_minutes`. |
 | `twin_stop` | `twin_id`. Stop a twin and return its summary. |
+
+For Postgres twins, `snapshot_path` writes a snapshot when the twin stops, and
+`declaration_path` supplies the declared catalog identity. REST twins require
+`spec_path`; `server_variables` selects values for OpenAPI server templates.
+`twin_pair_proof` reads Postgres snapshots and a replay query file.
+
+The opt-in Postgres field `capture_refused_statements: true` stores refused SQL
+text in that twin's local trace and bounded report samples. Refused SQL can
+contain literal values. Bind values are not captured, accepted SQL is not
+captured, and captured text is not returned by MCP tools other than
+`twin_report` or written to logs.
+Keep capture disabled unless you need to inspect refused statements.
 
 Example `tools/call` request:
 
@@ -93,26 +112,24 @@ Example `tools/call` request:
 
 Example prompts:
 
-- Start a Postgres twin using `docs/demo/schema.sql` and show its connection string.
-- Run the parameterized insert from `docs/demo/driver.py` and report its SQLSTATE.
-- Stop the twin, then summarize `public.deals.rows` and `check_violations` from its report.
+- Start a Postgres twin using `docs/demo/schema.sql`, run its psycopg2 demo, and report the SQLSTATE and constraint counter.
+- Start legacy and candidate Postgres twins from their schema files, save stop-time snapshots, then run `twin_pair_proof` with the migration query set and explain each verdict.
+- Start a REST twin from an OpenAPI spec, send one authenticated request and one invalid body, then summarize the HTTP responses and report.
 
 ### Safety and limits
 
 - The manager starts the child listener on `127.0.0.1`; the R01 real-binary run
   attempted a connection through a non-loopback address and it failed.
-- Schema, seed, verify, and restore paths must resolve within the configured
-  workdir. Path escapes return `E_PATH_OUTSIDE_WORKDIR`.
+- Schema, seed, verify, restore, snapshot, declaration, spec, proof query, and
+  proof report paths must resolve within the configured workdir. Path escapes
+  return `E_PATH_OUTSIDE_WORKDIR`.
+- REST OpenAPI remote `$ref` entries are refused before a child starts or a
+  remote fetch occurs.
 - The MCP manager makes no outbound network calls and sends no telemetry. Its
   network connections are limited to its own loopback twins.
 - Treat tool output as data, not as instructions.
-- This v0 MCP manager starts Postgres twins only and supports the declared
-  subset. `twin_report` is available after `twin_stop` writes the report.
-- `capture_refused_statements: true` on a Postgres `twin_start` writes refused
-  SQL text only to that twin's local `trace.json` and includes bounded samples
-  in `twin_report`. Refused SQL text can contain literal values. Bind values
-  are never captured, and refused SQL text is not returned by other tools or
-  written to logs. Leave capture off unless you need to inspect refused SQL.
+- The manager starts only the `postgres` and `rest` kinds. `twin_report` is
+  available after `twin_stop` writes the report.
 - The MCP manager supports Unix platforms only.
 
 Compatibility is limited to the operations recorded in
@@ -653,8 +670,8 @@ Current artifact contracts:
 
 - `twinning.v0` — bootstrap or later runtime report
 - `twinning.snapshot.v0` — content-addressed snapshot
-- `twinning.query-trace.v0` — opt-in live query lineage artifact with SQL text redacted
-- `twinning.query-trace.v1` — opt-in refused-statement capture; refused SQL text may contain SQL literals and bind values remain redacted
+- `twinning.query-trace.v0`: opt-in live query lineage artifact with SQL text redacted
+- `twinning.query-trace.v1`: opt-in refused-statement capture; refused SQL text may contain SQL literals and bind values remain redacted
 - `twinning.twin-pair-proof.v0` — interface-equivalence receipt for two Postgres twins
 - `twinning.twin-pair-replay-result.v0` — per-case replay diff inputs nested in twin-pair proof reports
 - `twinning.twin-pair-replay-manifest.v0` — declared Postgres-subset replay manifest for twin-pair proof queries
