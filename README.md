@@ -1,5 +1,59 @@
 # twinning
 
+## Set up with an agent
+
+Paste this prompt into your coding agent (Claude Code, Cursor, Codex, or any
+agent that can run shell commands) to install the twinning MCP server on your
+machine. It downloads the prebuilt release, verifies its checksum, and
+configures your MCP client. It works on macOS and Linux. The Windows archive
+does not include the MCP server yet.
+
+```text
+Set up the twinning MCP server on this machine. Work through the steps in order,
+run each command yourself, and tell me what you did and what you saw. Do not use
+sudo, and do not change any MCP server entry other than "twins".
+
+1. Detect my OS and CPU. Supported targets are aarch64-apple-darwin,
+   x86_64-apple-darwin, x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu.
+   If this is Windows, stop and tell me the MCP server is not available there yet.
+
+2. Find the latest release tag of https://github.com/cmdrvl/twinning (for example
+   by following the redirect from https://github.com/cmdrvl/twinning/releases/latest).
+   The archive is named twinning-<tag>-<target>.tar.gz and the checksums file is
+   named SHA256SUMS, both under https://github.com/cmdrvl/twinning/releases/download/<tag>/.
+
+3. Create a new, empty directory ~/.local/share/twinning/<tag> and download the
+   archive and SHA256SUMS into it with curl -fL (not a browser). Verify the archive
+   against its line in SHA256SUMS (shasum -a 256 -c, or sha256sum -c on Linux).
+   If the checksum does not match, stop and tell me. Do not extract it.
+
+4. Extract the archive into that directory. It must contain two executables,
+   twinning and twinning-mcp. Remember their absolute paths.
+
+5. Run "<dir>/twinning-mcp doctor". It must print "health: ok (healthy (READY))".
+   If macOS refuses to run the binaries, run
+   "xattr -d com.apple.quarantine <dir>/twinning <dir>/twinning-mcp" and retry.
+
+6. Ask me which project directory twins should work in (default: the current
+   directory) and which MCP client I use. Then configure it:
+   - Claude Desktop: "<dir>/twinning-mcp --workdir <project> setup --client claude-desktop"
+   - Cursor: "<dir>/twinning-mcp --workdir <project> setup --client cursor"
+   - Claude Code: "claude mcp add twins -- <dir>/twinning-mcp --workdir <project>"
+   - Anything else: run "<dir>/twinning-mcp --workdir <project> setup --client claude-desktop --print"
+     and add that "twins" entry to my client's MCP configuration by hand.
+   Tell me if I need to restart or reload the client.
+
+7. Check it works without the client: write a file schema.sql in the project
+   directory containing
+       CREATE TABLE deals (deal_id TEXT PRIMARY KEY, deal_name TEXT NOT NULL);
+   then start the server with "<dir>/twinning-mcp --workdir <project>" and, over
+   MCP stdio, call twin_doctor, then twin_start with kind "postgres" and
+   schema_path "schema.sql", then twin_stop with the returned twin_id. Report the
+   result of each call. Stop the server when done.
+
+If any step fails, stop and show me the exact command and its full output.
+```
+
 ## Use with an agent (MCP)
 
 Twinning is not a general database. The MCP manager ships `postgres` and `rest`
@@ -67,9 +121,11 @@ Cursor:
 }
 ```
 
-Prebuilt binary install: after release, download the matching `twinning` and
-`twinning-mcp` pair from the release page. Homebrew: after release. npm: after
-release.
+Prebuilt binary install: download the archive for your platform from the
+[release page](https://github.com/cmdrvl/twinning/releases/latest) and verify it
+against `SHA256SUMS`. Each macOS and Linux archive holds the matching `twinning`
+and `twinning-mcp` pair; the Windows archive holds `twinning` only. Homebrew and
+npm installs are not available yet.
 
 ### Tools
 
