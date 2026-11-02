@@ -3,7 +3,7 @@
   "name": "com.cmdrvl/twinning",
   "title": "Postgres and REST twins",
   "description": "Twins for Postgres and REST: declared-subset Postgres, spec-defined REST, migration proof.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "repository": {
     "url": "https://github.com/cmdrvl/twinning",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "identifier": "@cmdrvl/twinning-mcp",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "transport": {
         "type": "stdio"
       }

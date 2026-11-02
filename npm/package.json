@@ -1,6 +1,6 @@
 {
   "name": "@cmdrvl/twinning-mcp",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Twins for Postgres and REST: declared-subset Postgres, spec-defined REST, migration proof.",
   "license": "MIT",
   "mcpName": "com.cmdrvl/twinning",
