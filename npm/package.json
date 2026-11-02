@@ -3,6 +3,16 @@
   "version": "0.7.1",
   "description": "Twins for Postgres and REST: declared-subset Postgres, spec-defined REST, migration proof.",
   "license": "MIT",
+  "homepage": "https://cmdrvl.com/twinning/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmdrvl/twinning.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cmdrvl/twinning/issues"
+  },
+  "author": "CMD+RVL <engineering@cmdrvl.com>",
+  "keywords": ["mcp", "twin", "postgres", "openapi", "snowflake", "testing", "agents"],
   "mcpName": "com.cmdrvl/twinning",
   "bin": {
     "twinning-mcp": "bin/twinning-mcp.js"

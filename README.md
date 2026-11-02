@@ -64,7 +64,7 @@ sudo, and do not change any MCP server entry other than "twins".
 If any step fails, stop and show me the exact command and its full output.
 ```
 
-Twinning is built by [CMD+RVL](https://cmdrvl.com). If you work with filings or
+Twinning is built by [CMD+RVL](https://cmdrvl.com/twinning/). If you work with filings or
 structured finance data and want a sourced answer, you can chat with Cairn, our
 research assistant, over text at [textcairn.com](https://textcairn.com).
 
@@ -923,5 +923,5 @@ cargo test
 
 ---
 
-Built by [CMD+RVL](https://cmdrvl.com). Questions about filings or structured
+Built by [CMD+RVL](https://cmdrvl.com/twinning/). Questions about filings or structured
 finance data? Chat with Cairn over text at [textcairn.com](https://textcairn.com).

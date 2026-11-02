@@ -4,6 +4,7 @@
   "title": "Postgres and REST twins",
   "description": "Twins for Postgres and REST: declared-subset Postgres, spec-defined REST, migration proof.",
   "version": "0.7.1",
+  "websiteUrl": "https://cmdrvl.com/twinning/",
   "repository": {
     "url": "https://github.com/cmdrvl/twinning",
     "source": "github"
