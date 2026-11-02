@@ -241,14 +241,23 @@ fn write_fake_python(path: &Path) {
         path,
         r#"#!/usr/bin/env python3
 import json
+import os
 import sys
 
 if sys.argv[1:3] == ["-c", "import snowflake.connector"]:
     sys.exit(0)
 
-if len(sys.argv) >= 11 and sys.argv[1] == "-c":
-    table = sys.argv[8]
-    columns = json.loads(sys.argv[10])
+# argv: -c <script> account user database schema table limit raw_columns
+if len(sys.argv) == 10 and sys.argv[1] == "-c":
+    # The password must arrive through the environment, never the argument list.
+    if "fixture-password" in " ".join(sys.argv):
+        print("password leaked into argv", file=sys.stderr)
+        sys.exit(1)
+    if os.environ.get("SNOWFLAKE_PASSWORD") != "fixture-password":
+        print("password missing from environment", file=sys.stderr)
+        sys.exit(1)
+    table = sys.argv[7]
+    columns = json.loads(sys.argv[9])
     if table == "OBSERVATIONS":
         print(json.dumps({
             "columns": columns,
