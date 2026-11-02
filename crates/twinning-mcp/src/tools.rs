@@ -288,7 +288,7 @@ impl ToolService {
             "started_at": record.started_at,
             "expires_at": record.expires_at
         });
-        if kind == TwinKind::Postgres {
+        if matches!(kind, TwinKind::Postgres) {
             response["connection_string"] = Value::String(connection_string(record.port));
             if let Some(path) = snapshot {
                 response["snapshot_path"] = Value::String(path.display().to_string());
@@ -416,7 +416,7 @@ impl ToolService {
         }
         let full_report =
             report::read_report(&record.report_path, &record.stderr_path, record.kind)?;
-        if record.kind == TwinKind::Rest {
+        if matches!(record.kind, TwinKind::Rest) {
             return Ok(report::full_rest_report(&full_report, &record.report_path));
         }
         let trace = report::read_trace(&record.trace_path, &record.stderr_path)?;

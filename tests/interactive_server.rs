@@ -30,26 +30,27 @@ mod unix {
         let snapshot_path = dir.path().join("interactive.twin");
         let port = reserve_local_port();
 
-        let mut child = Command::new(twinning_bin())
-            .args([
-                "postgres",
-                "--schema",
-                schema_path.to_str().expect("schema path"),
-                "--serve",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &port.to_string(),
-                "--report",
-                report_path.to_str().expect("report path"),
-                "--snapshot",
-                snapshot_path.to_str().expect("snapshot path"),
-                "--json",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn twinning --serve");
+        let mut child = spawn_locked(
+            Command::new(twinning_bin())
+                .args([
+                    "postgres",
+                    "--schema",
+                    schema_path.to_str().expect("schema path"),
+                    "--serve",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    &port.to_string(),
+                    "--report",
+                    report_path.to_str().expect("report path"),
+                    "--snapshot",
+                    snapshot_path.to_str().expect("snapshot path"),
+                    "--json",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .expect("spawn twinning --serve");
 
         let mut client = connect_when_ready(port, &mut child);
         client
@@ -221,14 +222,15 @@ mod unix {
             "ROLLBACK".to_owned(),
         ];
         let psql_command = format!("psql {:?}", psql_args);
-        let psql = Command::new("psql")
-            .args(&psql_args)
-            .env_remove("PGSSLMODE")
-            .env_remove("PGGSSENCMODE")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn psql (PostgreSQL default SSL mode)");
+        let psql = spawn_locked(
+            Command::new("psql")
+                .args(&psql_args)
+                .env_remove("PGSSLMODE")
+                .env_remove("PGGSSENCMODE")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .expect("spawn psql (PostgreSQL default SSL mode)");
         let mut psql = ProcessGuard::new(psql);
         let psql_pid = psql.id();
         println!(
@@ -393,10 +395,26 @@ mod unix {
     impl Drop for ProcessGuard {
         fn drop(&mut self) {
             if let Some(mut child) = self.child.take() {
-                if child.try_wait().expect("check server status").is_none() {
+                let status_at_drop = child.try_wait().expect("check server status");
+                if status_at_drop.is_none() {
                     child.kill().expect("kill server during cleanup");
                 }
                 let _ = child.wait();
+                if thread::panicking() {
+                    // Surface what the server saw when a test fails, so a flaky
+                    // failure is diagnosable from the test log alone.
+                    let mut stdout_text = String::new();
+                    if let Some(mut stdout) = child.stdout.take() {
+                        let _ = stdout.read_to_string(&mut stdout_text);
+                    }
+                    let mut stderr_text = String::new();
+                    if let Some(mut stderr) = child.stderr.take() {
+                        let _ = stderr.read_to_string(&mut stderr_text);
+                    }
+                    eprintln!(
+                        "[ProcessGuard] test failed; server status_at_drop={status_at_drop:?} stdout={stdout_text:?} stderr={stderr_text:?}"
+                    );
+                }
             }
         }
     }
@@ -423,12 +441,13 @@ mod unix {
             "--json".to_owned(),
         ];
         let command_line = format!("{:?} {:?}", twinning_bin(), args);
-        let child = Command::new(twinning_bin())
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn twinning --serve");
+        let child = spawn_locked(
+            Command::new(twinning_bin())
+                .args(&args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .expect("spawn twinning --serve");
         (ProcessGuard::new(child), command_line)
     }
 
@@ -447,7 +466,31 @@ mod unix {
         schema_path
     }
 
+    /// Serializes `fork`/`exec` against the window in which `reserve_local_port`
+    /// holds its listener open.
+    ///
+    /// The tests in this file run in parallel threads of one process. A socket is
+    /// not close-on-exec until after it is created on some platforms (macOS), so a
+    /// child forked by another test thread in that window inherits the reservation
+    /// listener and keeps the port bound after the reserving test has dropped it.
+    /// The server this test then starts fails with `listener_bind: Address already
+    /// in use` and exits 2, while the test's client connects to the orphaned
+    /// listener and is reset when its holder exits. Every spawn takes this lock.
+    static FORK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn fork_guard() -> std::sync::MutexGuard<'static, ()> {
+        FORK_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn spawn_locked(command: &mut Command) -> std::io::Result<Child> {
+        let _guard = fork_guard();
+        command.spawn()
+    }
+
     fn reserve_local_port() -> u16 {
+        let _guard = fork_guard();
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local port");
         let port = listener.local_addr().expect("listener addr").port();
         drop(listener);
@@ -499,9 +542,9 @@ mod unix {
     }
 
     fn send_sigterm(pid: u32) {
-        let status = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status()
+        let status = spawn_locked(Command::new("kill").args(["-TERM", &pid.to_string()]))
+            .expect("spawn kill")
+            .wait()
             .expect("send SIGTERM");
         assert!(status.success(), "kill -TERM should succeed: {status}");
     }
