@@ -141,8 +141,8 @@ against `SHA256SUMS`. Each macOS and Linux archive holds the matching `twinning`
 and `twinning-mcp` pair; the Windows archive holds `twinning` only.
 
 The MCP server is also on npm. `npx @cmdrvl/twinning-mcp` downloads the matching
-release archive, checks it against its SHA-256, and runs it. Homebrew is not
-available yet.
+release archive, checks it against its SHA-256, and runs it. Homebrew also
+installs both binaries: `brew install cmdrvl/tap/twinning`.
 
 ### Tools
 

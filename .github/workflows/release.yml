@@ -399,8 +399,8 @@ jobs:
           # frozen_string_literal: true
 
           class Twinning < Formula
-            desc "Protocol-faithful interface twins for fast extractor iteration"
-            homepage "https://github.com/cmdrvl/twinning"
+            desc "Runnable twins of Postgres, REST, and Snowflake contracts, with an MCP server"
+            homepage "https://cmdrvl.com/twinning/"
             version "{bare}"
             license "MIT"
           {"".join(chr(10) + l for l in blocks)}
