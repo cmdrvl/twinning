@@ -5,6 +5,7 @@ edition = "2024"
 authors = ["CMD+RVL <engineering@cmdrvl.com>"]
 description = "Postgres pgwire protocol adapter for twinning"
 license = "MIT"
+license-file = "../../LICENSE"
 repository = "https://github.com/cmdrvl/twinning"
 
 [dependencies]
