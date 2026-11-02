@@ -926,5 +926,6 @@ cargo test
 
 ---
 
-Built by [CMD+RVL](https://cmdrvl.com/twinning/). Questions about filings or structured
-finance data? Chat with Cairn over text at [textcairn.com](https://textcairn.com).
+Built by [CMD+RVL](https://cmdrvl.com/twinning/). Support: cairn@cmdrvl.com or
+[GitHub issues](https://github.com/cmdrvl/twinning/issues). Questions about filings or
+structured finance data? Chat with Cairn over text at [textcairn.com](https://textcairn.com).
