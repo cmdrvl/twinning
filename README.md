@@ -138,8 +138,11 @@ Cursor:
 Prebuilt binary install: download the archive for your platform from the
 [release page](https://github.com/cmdrvl/twinning/releases/latest) and verify it
 against `SHA256SUMS`. Each macOS and Linux archive holds the matching `twinning`
-and `twinning-mcp` pair; the Windows archive holds `twinning` only. Homebrew and
-npm installs are not available yet.
+and `twinning-mcp` pair; the Windows archive holds `twinning` only.
+
+The MCP server is also on npm. `npx @cmdrvl/twinning-mcp` downloads the matching
+release archive, checks it against its SHA-256, and runs it. Homebrew is not
+available yet.
 
 ### Tools
 
