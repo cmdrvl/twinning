@@ -1,5 +1,15 @@
 # twinning
 
+Twinning gives your code and your agents a stand-in for a database or an API
+that tells them why a request was refused. Point it at a Postgres schema or an
+OpenAPI spec and it serves a local twin. Your client connects with its normal
+driver, a write that breaks a constraint comes back with the real SQLSTATE and a
+reason, and a report records what happened. Use it to rehearse extraction code
+and pipelines before they touch a real database, to check a migration by
+replaying queries against old and new snapshots, and to test API clients against
+a spec-defined contract. Anything outside the declared contract is refused with a
+reason instead of guessed.
+
 ## Set up with an agent
 
 Paste this prompt into your coding agent (Claude Code, Cursor, Codex, or any
