@@ -290,7 +290,7 @@ fn handle_jsonrpc_inner(
         );
     }
 
-    if state.auth_mode == RestAuthMode::Shape {
+    if matches!(state.auth_mode, RestAuthMode::Shape) {
         match check_auth(
             &state.catalog.required_auth_schemes,
             &state.catalog.security_schemes,

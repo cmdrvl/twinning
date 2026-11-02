@@ -651,7 +651,7 @@ fn read_report(
         TwinKind::Rest => matches!(outcome, Some("PASS" | "FAIL" | "VIOLATIONS" | "REFUSAL")),
     };
     let session = &report["session"];
-    let valid_rest_session = kind != TwinKind::Rest
+    let valid_rest_session = !matches!(kind, TwinKind::Rest)
         || (session["request_count"].as_u64().is_some()
             && session["endpoints_exercised"]
                 .as_array()

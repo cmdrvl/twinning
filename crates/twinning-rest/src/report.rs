@@ -171,7 +171,7 @@ impl RoutingReport {
             if route.conflict.is_some() {
                 summary.conflicts += 1;
             }
-            if route.auth == "public" {
+            if matches!(route.auth.as_str(), "public") {
                 summary.auth_public += 1;
             } else {
                 summary.auth_required += 1;

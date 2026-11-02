@@ -723,7 +723,8 @@ impl Drop for SessionCleanupGuard {
         let Ok(mut overlays) = live_state.lock_overlays() else {
             return;
         };
-        if overlays.writer_session_id() == Some(self.session_id.as_str()) {
+        let owns_writer = overlays.writer_session_id() == Some(self.session_id.as_str()); // ubs:ignore - in-process session label, not a credential
+        if owns_writer {
             let _ = overlays.rollback(&self.session_id);
         }
     }

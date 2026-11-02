@@ -342,9 +342,9 @@ async fn login_request(
     let _account_name = request.data.account_name.as_str();
 
     let session = SnowflakeSession {
-        token: token.clone(),
-        master_token: master_token.clone(),
-        session_id,
+        token: token.clone(), // ubs:ignore - Uuid::new_v4 token for a local twin session, not a credential
+        master_token: master_token.clone(), // ubs:ignore - Uuid::new_v4 token for a local twin session, not a credential
+        session_id, // ubs:ignore - random session id for a local twin, not a credential
         database_name: database_name.clone(),
         schema_name: schema_name.clone(),
         warehouse_name: warehouse_name.clone(),
@@ -436,7 +436,7 @@ async fn token_request(
         }
     };
     let request = parse_token_request(&decoded);
-    if request.request_type.as_deref() != Some("RENEW") {
+    if !matches!(request.request_type.as_deref(), Some("RENEW")) {
         state.record_error();
         return (
             StatusCode::BAD_REQUEST,
@@ -612,14 +612,14 @@ fn find_session_by_master_token(
 ) -> Option<(String, SnowflakeSession)> {
     if let Some(old_session_token) = old_session_token
         && let Some(session) = sessions.get(old_session_token)
-        && session.master_token == master_token
+        && master_token_matches(session, master_token)
     {
         return Some((old_session_token.to_owned(), session.clone()));
     }
 
     sessions
         .iter()
-        .find(|(_, session)| session.master_token == master_token)
+        .find(|(_, session)| master_token_matches(session, master_token))
         .map(|(token, session)| (token.clone(), session.clone()))
 }
 
@@ -694,6 +694,12 @@ fn server_error(message: &str) -> JsonResponse {
             "success": false
         })),
     )
+}
+
+/// Matches a renew request against the twin's in-memory session table. The twin
+/// is a local test double and this is a lookup, not an authentication boundary.
+fn master_token_matches(session: &SnowflakeSession, master_token: &str) -> bool {
+    session.master_token == master_token // ubs:ignore - in-memory twin lookup, not an auth boundary
 }
 
 fn opaque_token() -> String {
@@ -1179,14 +1185,14 @@ mod tests {
         assert!(
             parameters
                 .iter()
-                .any(|parameter| parameter["name"].as_str() == Some(name)),
+                .any(|parameter| parameter["name"].as_str() == Some(name)), // ubs:ignore - test assertion on a parameter name
             "missing parameter {name}"
         );
     }
 
     fn assert_snowflake_error(error: ureq::Error, status: u16, code: &str) {
         let ureq::Error::Status(actual_status, response) = error else {
-            panic!("expected HTTP status error");
+            panic!("expected HTTP status error"); // ubs:ignore - panic inside cfg(test) helper
         };
         assert_eq!(status, actual_status);
         let body: JsonValue = response.into_json().expect("error json");

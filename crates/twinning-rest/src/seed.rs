@@ -696,7 +696,7 @@ fn json_to_rest_scalar(value: &JsonValue) -> Result<ScalarValue, SeedCoercionErr
 }
 
 fn openapi_byte_string_to_bytea_hex(value: &str) -> Option<String> {
-    let bytes = BASE64_STANDARD.decode(value).ok()?;
+    let bytes = BASE64_STANDARD.decode(value).ok()?; // ubs:ignore - OpenAPI byte-format string, not a JWT
     let mut encoded = String::with_capacity(2 + bytes.len() * 2);
     encoded.push_str("\\x");
 

@@ -471,12 +471,12 @@ fn corrected_command(error: &clap::Error, args: &[OsString]) -> Option<(String, 
             .collect::<Vec<_>>();
         let mut corrected = Vec::with_capacity(tokens.len());
         let mut replaced = false;
-        for token in tokens {
-            if !replaced && token == invalid {
+        for word in tokens {
+            if !replaced && word == invalid {
                 corrected.push(suggestion.clone());
                 replaced = true;
             } else {
-                corrected.push(token);
+                corrected.push(word);
             }
         }
         if replaced {

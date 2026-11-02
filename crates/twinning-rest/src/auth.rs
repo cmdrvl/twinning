@@ -96,7 +96,7 @@ pub fn check_auth(
     for required_scheme in required {
         let result = schemes
             .iter()
-            .find(|scheme| scheme.name == *required_scheme)
+            .find(|scheme| scheme.name == *required_scheme) // ubs:ignore - OpenAPI security scheme name, not a secret
             .map_or_else(
                 || AuthExtract::Missing {
                     scheme: required_scheme.clone(),

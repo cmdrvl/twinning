@@ -20,6 +20,10 @@ use crate::catalog::{
     normalize_lookup_identifier,
 };
 
+/// Interpreter flag that runs a script given on the command line. Both scripts passed
+/// with it are compiled into this binary; user-supplied values reach them only as
+/// positional arguments or environment variables, never as script text.
+const INLINE_SCRIPT_FLAG: &str = "-c";
 const PYTHON_BIN_ENV: &str = "TWINNING_SNOWFLAKE_PYTHON_BIN";
 const MATERIALIZATION_METHOD: &str = "snowflake_connector_fetchall";
 const PYTHON_CONNECTOR_IMPORT: &str = "import snowflake.connector";
@@ -31,7 +35,8 @@ import sys
 
 import snowflake.connector
 
-account, user, password, database, schema, table, limit, raw_columns = sys.argv[1:9]
+account, user, database, schema, table, limit, raw_columns = sys.argv[1:8]
+password = os.environ.get("SNOWFLAKE_PASSWORD", "")
 columns = json.loads(raw_columns)
 
 def quote_identifier(value):
@@ -130,6 +135,36 @@ pub fn apply_source_materialization(
         .map_err(|error| Box::new(refusal::runtime_io("snowflake_materialization", error)))
 }
 
+struct FetchTarget<'a> {
+    account: &'a str,
+    user: &'a str,
+    password: &'a str,
+    database: &'a str,
+    schema: &'a str,
+    table: &'a str,
+    limit: usize,
+    raw_columns: &'a str,
+}
+
+/// Builds the child that fetches one table. The password travels in the child's
+/// environment, never its argument list, because argv is readable by every local
+/// user through the process table.
+fn fetch_command(python: &std::ffi::OsStr, target: FetchTarget<'_>) -> Command {
+    let mut command = Command::new(python);
+    command
+        .arg(INLINE_SCRIPT_FLAG)
+        .arg(PYTHON_FETCH_SCRIPT)
+        .arg(target.account)
+        .arg(target.user)
+        .arg(target.database)
+        .arg(target.schema)
+        .arg(target.table)
+        .arg(target.limit.to_string())
+        .arg(target.raw_columns)
+        .env("SNOWFLAKE_PASSWORD", target.password);
+    command
+}
+
 fn capture_table(
     account: &str,
     user: &str,
@@ -146,24 +181,26 @@ fn capture_table(
         .collect::<Vec<_>>();
     let raw_columns = serde_json::to_string(&columns)
         .map_err(|error| Box::new(refusal::serialization(error.to_string())))?;
-    let output = Command::new(python_bin())
-        .arg("-c")
-        .arg(PYTHON_FETCH_SCRIPT)
-        .arg(account)
-        .arg(user)
-        .arg(password)
-        .arg(database)
-        .arg(schema)
-        .arg(&table.name)
-        .arg(max_rows_per_table.to_string())
-        .arg(raw_columns)
-        .output()
-        .map_err(|error| {
-            Box::new(refusal::runtime_io(
-                "snowflake_materialization_python",
-                error.to_string(),
-            ))
-        })?;
+    let output = fetch_command(
+        &python_bin(),
+        FetchTarget {
+            account,
+            user,
+            password,
+            database,
+            schema,
+            table: &table.name,
+            limit: max_rows_per_table,
+            raw_columns: &raw_columns,
+        },
+    )
+    .output()
+    .map_err(|error| {
+        Box::new(refusal::runtime_io(
+            "snowflake_materialization_python",
+            error.to_string(),
+        ))
+    })?;
     let stdout = success_stdout(output, &format!("capture table `{}`", table.name))?;
     let source_rows = serde_json::from_str::<SourceRows>(&stdout).map_err(|error| {
         Box::new(refusal::runtime_io(
@@ -321,7 +358,7 @@ fn json_scalar_string(value: &JsonValue) -> Result<String, String> {
 
 fn ensure_python_connector_available() -> RefusalResult<()> {
     let output = Command::new(python_bin())
-        .arg("-c")
+        .arg(INLINE_SCRIPT_FLAG)
         .arg(PYTHON_CONNECTOR_IMPORT)
         .output()
         .map_err(|error| {
@@ -404,6 +441,54 @@ fn sha256_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn fetch_command_keeps_the_password_out_of_argv() {
+        let marker = ["not", "a", "real", "value"].join("-");
+        let command = fetch_command(
+            std::ffi::OsStr::new("python3"),
+            FetchTarget {
+                account: "acct",
+                user: "svc",
+                password: &marker,
+                database: "DB",
+                schema: "PUBLIC",
+                table: "DEALS",
+                limit: 25,
+                raw_columns: "[\"DEAL_ID\"]",
+            },
+        );
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            args.iter().all(|arg| !arg.contains(&marker)),
+            "password must not appear in argv: {args:?}"
+        );
+        // Script, then exactly the seven positional values the script unpacks.
+        assert_eq!(args.len(), 2 + 7, "{args:?}");
+        assert_eq!(
+            &args[2..],
+            [
+                "acct",
+                "svc",
+                "DB",
+                "PUBLIC",
+                "DEALS",
+                "25",
+                "[\"DEAL_ID\"]"
+            ]
+        );
+
+        let password = command
+            .get_envs()
+            .find(|(key, _)| *key == "SNOWFLAKE_PASSWORD")
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned());
+        assert_eq!(password.as_deref(), Some(marker.as_str()));
+    }
 
     #[test]
     fn coerces_source_values_to_arrow_ready_json_values() {

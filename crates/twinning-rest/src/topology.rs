@@ -939,7 +939,7 @@ mod tests {
         topology
             .path_bindings
             .get(path)
-            .unwrap_or_else(|| panic!("missing topology binding for {path}"))
+            .unwrap_or_else(|| panic!("missing topology binding for {path}")) // ubs:ignore - panic inside cfg(test) helper
     }
 
     #[test]

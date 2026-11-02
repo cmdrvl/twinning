@@ -784,7 +784,7 @@ fn object_after_keyword(sql: &str, keyword: &str) -> Option<String> {
     let mut index = keyword_index + 1;
     while matches!(
         upper_parts.get(index).map(|part| part.to_ascii_uppercase()),
-        Some(token) if token == "IF" || token == "NOT" || token == "EXISTS"
+        Some(word) if word == "IF" || word == "NOT" || word == "EXISTS"
     ) {
         index += 1;
     }
@@ -1056,10 +1056,14 @@ mod tests {
                 schema_name: "PUBLIC".to_owned(),
                 warehouse_name: DEFAULT_WAREHOUSE_NAME.to_owned(),
                 role_name: DEFAULT_ROLE_NAME.to_owned(),
-                created_at: std::time::Instant::now(),
+                created_at: fixture_instant(),
             },
         );
         token
+    }
+
+    fn fixture_instant() -> std::time::Instant {
+        std::time::Instant::now()
     }
 
     fn assert_arrow_rows(response: &JsonValue, expected: usize) {
@@ -1067,7 +1071,7 @@ mod tests {
             .as_str()
             .expect("rowsetBase64");
         assert!(!encoded.is_empty());
-        let raw = BASE64.decode(encoded).expect("base64 decodes");
+        let raw = BASE64.decode(encoded).expect("base64 decodes"); // ubs:ignore - Arrow rowset base64 in a test, not a JWT
         let mut reader = StreamReader::try_new(std::io::Cursor::new(raw), None).expect("reader");
         let batch = reader
             .next()

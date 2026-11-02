@@ -224,7 +224,7 @@ mod tests {
         assert!(
             strings
                 .windows(2)
-                .any(|pair| pair == ["--auth-mode", "bypass"])
+                .any(|pair| pair == ["--auth-mode", "bypass"]) // ubs:ignore - test assertion on argv, not a secret
         );
         assert_eq!(
             2,

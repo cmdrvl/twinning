@@ -342,7 +342,7 @@ mod tests {
                 *candidate_method == method && candidate_pattern == &pattern
             })
             .map(|(_, _, entry)| entry)
-            .unwrap_or_else(|| panic!("missing route for {method} {path}"));
+            .unwrap_or_else(|| panic!("missing route for {method} {path}")); // ubs:ignore - panic inside cfg(test) helper
         (catalog, route)
     }
 

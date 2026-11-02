@@ -670,7 +670,7 @@ mod tests {
         )];
         let encoded = encode_query_result(&columns, &[vec![json!("Alpha")]]).expect("encoded");
         let raw = BASE64
-            .decode(encoded.rowset_base64)
+            .decode(encoded.rowset_base64) // ubs:ignore - Arrow rowset base64 in a test, not a JWT
             .expect("base64 decodes");
         let mut reader = StreamReader::try_new(std::io::Cursor::new(raw), None).expect("reader");
         let batch = reader
