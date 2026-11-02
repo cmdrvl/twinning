@@ -91,7 +91,7 @@ fn unavailable(workdir: Value, cap: usize, restricted: bool) -> Value {
 }
 
 fn run_json(binary: &Path, args: &[&str]) -> Option<Value> {
-    let mut command = Command::new(binary);
+    let mut command = Command::new(binary); // ubs:ignore - binary is operator-supplied (flag/env/sibling), never a tool argument
     command
         .args(args)
         .stdin(Stdio::null())

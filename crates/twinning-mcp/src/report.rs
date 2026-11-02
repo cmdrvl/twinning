@@ -26,7 +26,8 @@ pub fn validate_report(
         TwinKind::Postgres => "twinning.v0",
         TwinKind::Rest => "twinning.rest-report.v0",
     };
-    if report["version"] != expected_version {
+    let version_matches = report["version"] == expected_version; // ubs:ignore - schema version string, not a secret
+    if !version_matches {
         return Err(unreadable(
             format!("expected a {expected_version} report at {}", path.display()),
             stderr_path,

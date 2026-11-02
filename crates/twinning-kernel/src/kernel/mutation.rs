@@ -1382,14 +1382,14 @@ mod constraint_counter_tests {
         ] {
             let mutation = match normalize_mutation_sql(&catalog, "constraint-counter-test", sql) {
                 Operation::Mutation(mutation) => mutation,
-                other => panic!("expected mutation operation, found {other:?}"),
+                other => panic!("expected mutation operation, found {other:?}"), // ubs:ignore - inside cfg(test); test assertion
             };
             let result = execute_mutation(&catalog, &mut backend, &mutation);
             match result {
                 KernelResult::Refusal(refusal) => {
                     assert_eq!(refusal.sqlstate, expected_sqlstate, "sql={sql}");
                 }
-                other => panic!("expected constraint refusal for {sql}, found {other:?}"),
+                other => panic!("expected constraint refusal for {sql}, found {other:?}"), // ubs:ignore - inside cfg(test); test assertion
             }
         }
 

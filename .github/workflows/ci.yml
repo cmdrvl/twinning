@@ -83,6 +83,8 @@ jobs:
         with:
           workspaces: |
             twinning -> target
+      - name: Install uv (real-driver compat tests shell out to uv)
+        uses: astral-sh/setup-uv@v5
       - name: Run tests
         run: cargo test
 
@@ -125,6 +127,8 @@ jobs:
         with:
           workspaces: |
             twinning -> ${{ matrix.target_dir }}
+      - name: Install uv (real-driver compat tests shell out to uv)
+        uses: astral-sh/setup-uv@v5
       - name: Build feature set
         run: cargo build ${{ matrix.cargo_flags }}
       - name: Test feature set

@@ -906,7 +906,7 @@ fn run_twin_pair_proof(
     report_path: &Path,
     timeout: Duration,
 ) -> Result<ProofOutput, ToolError> {
-    let mut command = Command::new(binary);
+    let mut command = Command::new(binary); // ubs:ignore - binary is operator-supplied (flag/env/sibling), never a tool argument
     command
         .arg("--json")
         .arg("proof")
