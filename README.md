@@ -54,6 +54,10 @@ sudo, and do not change any MCP server entry other than "twins".
 If any step fails, stop and show me the exact command and its full output.
 ```
 
+Twinning is built by [CMD+RVL](https://cmdrvl.com). If you work with filings or
+structured finance data and want a sourced answer, you can chat with Cairn, our
+research assistant, over text at [textcairn.com](https://textcairn.com).
+
 ## Use with an agent (MCP)
 
 Twinning is not a general database. The MCP manager ships `postgres` and `rest`
@@ -895,9 +899,6 @@ Only the Postgres engine is implemented. MySQL and Oracle are declared in the CL
 - Agent guidance: [AGENTS.md](./AGENTS.md)
 - Harness notes: [CODEX.md](./CODEX.md), [CLAUDE.md](./CLAUDE.md), [GEMINI.md](./GEMINI.md)
 - Canary manifest: [canaries/manifest.v0.json](./canaries/manifest.v0.json)
-- Crucible master plan: [PLAN_FACTORY.md](../cmdrvl-context/docs/09-plans/epistemic-spine/PLAN_FACTORY.md)
-
-If the code, README, and plan disagree, the plan wins.
 
 ---
 
@@ -909,3 +910,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ./scripts/ubs_gate.sh
 ```
+
+---
+
+Built by [CMD+RVL](https://cmdrvl.com). Questions about filings or structured
+finance data? Chat with Cairn over text at [textcairn.com](https://textcairn.com).
