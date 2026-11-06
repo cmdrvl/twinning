@@ -24,6 +24,8 @@ components:
           type: string
         idValue:
           type: string
+        exchCode:
+          type: string
     BulkMappingJob:
       type: array
       items:
