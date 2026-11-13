@@ -694,17 +694,73 @@ twinning rest --spec openapi.yaml --serve --report out/rest.json
 `--port` (default `8080`), so the base URL is `http://127.0.0.1:8080` unless you
 override them. The standalone REST server does not print its address at startup;
 it logs the route topology and then waits for SIGINT/SIGTERM. Pass `--port`
-explicitly if you need to be certain. Routes are mounted under the spec's
-`servers[].url` path prefix (for example `/api/cmbs-data/v1.0/...`). The
-session report is written to `--report` only after the server stops.
+explicitly if you need to be certain. The startup route table's `PATH` column is
+the path to request; a literal path in `servers[].url` was not added as a prefix
+in a local check (a spec with `url: http://localhost/api/demo/v1.0` and path
+`/loans` served `/loans`), so always read the table, not the spec. Each request
+is logged as `GET <path> -> <status>`. The session report is written to
+`--report` only after the server stops.
 
 **Reading the startup log.** Each route is listed as `ok` (materialized) or
 `REFUSED`. A line such as `[rest] 7 routes ok | 3 refused` means 3 routes will
 not return spec data. Lines such as "Schema has type string and is not
 materialized as REST resource fields in v0", "oneOf is treated as text" and
 "array path/query filters remain unsupported" are documented v0 limits, not
-errors. `No spec examples found - backend starts empty` means the twin serves
-empty collections; the REST twin has no `--seed` mode.
+errors. `No spec examples found - backend starts empty` means the spec has no
+`example` values to seed from, so list routes return `[]`. The REST twin has no
+`--seed` flag; it seeds committed rows at startup from OpenAPI examples (see
+below).
+
+**Getting sample objects back from `ok` routes.** Add `example` values to the
+spec and the twin seeds them as rows when it starts. The startup log then says
+`Seeded N rows across M resource types from spec examples`. Examples are read
+from a schema's `example` (`components.schemas.<Name>.example`), from named or
+inline component and request-body examples, and from `GET` response examples on
+routes that are not refused. A refused route is skipped, and an example whose
+values do not match the schema types is skipped with a warning. Without a
+primary key, all examples are seeded and a warning is logged once; with one,
+a duplicate key keeps the first example. Example rows that go in the spec are
+fixtures: use realistic but non-sensitive values.
+
+Worked example, checked against the real binary. A list route returning an
+array of objects, with one schema-level `example` on the item schema:
+
+```yaml
+openapi: 3.0.3
+info: { title: Seed demo, version: "1.0" }
+paths:
+  /loans:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Loan"
+components:
+  schemas:
+    Loan:
+      type: object
+      required: [loanId]
+      properties:
+        loanId: { type: string }
+        balance: { type: number }
+      example:
+        loanId: "L-001"
+        balance: 1250000
+```
+
+`twinning rest --spec seed.yaml --port 18080 --serve` logs
+`Seeded 1 rows across 1 resource types from spec examples`, and
+`curl http://127.0.0.1:18080/loans` returns
+`[{"balance":"1250000","loanId":"L-001"}]`. Note that the `number` field comes
+back as a JSON string. To seed several rows, use one `example` per schema or
+named `examples` where the spec allows them; only a single schema-level
+`example` was run here. Re-run `curl` against every route you expect to return
+data and confirm the object shape before relying on it.
 
 **Why a route is refused, and what to do.** Refusals are deliberate. Fix the
 spec or add a stub; do not loosen the twin to make a refusal go away.
@@ -731,7 +787,7 @@ x-twinning:
   response-stubs:
     - id: last_changed
       method: GET
-      path: /api/cmbs-data/v1.0/changes/last-changed   # mounted path, including the servers[].url prefix
+      path: /api/cmbs-data/v1.0/changes/last-changed   # the PATH shown in the startup route table
       status: 200
       headers:
         Content-Type: application/json
@@ -740,7 +796,7 @@ x-twinning:
 ```
 
 Rules, from `crates/twinning-rest/src/xext.rs`: each stub needs `id`, `method`,
-`path` (starting with `/`) and `status` (100 to 599), plus exactly one of `body`,
+`path` (starting with `/`, matching the mounted path in the startup route table) and `status` (100 to 599), plus exactly one of `body`,
 `body-text` or `body-file`. The only matcher is
 `when.body-json-equals`. Unknown keys are rejected. A stub whose path matches no
 mounted route is refused at startup with `E_REST_INVALID_X_TWINNING`. Stub paths
