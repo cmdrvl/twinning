@@ -684,6 +684,73 @@ Live-shape discipline:
 
 ---
 
+## Serving a REST twin from an OpenAPI spec
+
+```bash
+twinning rest --spec openapi.yaml --serve --report out/rest.json
+```
+
+**Where it serves.** `twinning rest` binds `--host` (default `127.0.0.1`) and
+`--port` (default `8080`), so the base URL is `http://127.0.0.1:8080` unless you
+override them. The standalone REST server does not print its address at startup;
+it logs the route topology and then waits for SIGINT/SIGTERM. Pass `--port`
+explicitly if you need to be certain. Routes are mounted under the spec's
+`servers[].url` path prefix (for example `/api/cmbs-data/v1.0/...`). The
+session report is written to `--report` only after the server stops.
+
+**Reading the startup log.** Each route is listed as `ok` (materialized) or
+`REFUSED`. A line such as `[rest] 7 routes ok | 3 refused` means 3 routes will
+not return spec data. Lines such as "Schema has type string and is not
+materialized as REST resource fields in v0", "oneOf is treated as text" and
+"array path/query filters remain unsupported" are documented v0 limits, not
+errors. `No spec examples found - backend starts empty` means the twin serves
+empty collections; the REST twin has no `--seed` mode.
+
+**Why a route is refused, and what to do.** Refusals are deliberate. Fix the
+spec or add a stub; do not loosen the twin to make a refusal go away.
+
+| Startup message | Cause | Fix |
+|-----------------|-------|-----|
+| `REST route declares a non-CRUD static discovery-style object response ... Path: <p>` | The route returns a fixed object (a discovery or "last changed" style endpoint), not a resource collection. | Declare a deterministic response under `x-twinning.response-stubs` for that route. |
+| `REST route requires path lookup on resource '<r>', but the resource has no primary key and no path parameter can materialize a declared column` | A route such as `GET /deal/{dealIdentifier}` needs to look a row up, but the path parameter does not match any property on the response schema. | Give the response schema a property that matches the path parameter, or use a response stub. |
+
+Path parameter to column matching (see `resource_column_for_path_param` in
+`crates/twinning-rest/src/normalize.rs`): the parameter name is compared with
+the resource's declared properties as written, lower-cased, and converted from
+camelCase to snake_case, and a resource-name prefix may be stripped. Matching
+ignores case. So `dealIdentifier` matches a property named `dealIdentifier`,
+`dealidentifier` or `deal_identifier`. A parameter named `pk` or `key` falls
+back to the schema's single required scalar property. Do not rely on any other
+name matching; name the property after the path parameter.
+
+**Response stubs for routes the twin cannot materialize.** Add to the OpenAPI
+document:
+
+```yaml
+x-twinning:
+  response-stubs:
+    - id: last_changed
+      method: GET
+      path: /api/cmbs-data/v1.0/changes/last-changed   # mounted path, including the servers[].url prefix
+      status: 200
+      headers:
+        Content-Type: application/json
+      body:
+        lastChanged: "2026-01-01T00:00:00Z"
+```
+
+Rules, from `crates/twinning-rest/src/xext.rs`: each stub needs `id`, `method`,
+`path` (starting with `/`) and `status` (100 to 599), plus exactly one of `body`,
+`body-text` or `body-file`. The only matcher is
+`when.body-json-equals`. Unknown keys are rejected. A stub whose path matches no
+mounted route is refused at startup with `E_REST_INVALID_X_TWINNING`. Stub paths
+are concrete, so a parameterized route needs one stub per concrete path you want
+served. Working examples: `docs/demo/rest/response-stub-schema.yaml` and
+`tests/fixtures/rest/openfigi_v2_v3/response-stub-schema.yaml`. Stubs are
+fixtures, not generated data and not a stateful simulator.
+
+---
+
 ## Spine Boundaries
 
 `twinning` owns:
