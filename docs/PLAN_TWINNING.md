@@ -1172,3 +1172,42 @@ The implementation lives or dies by the harnesses, not the prose.
 ## Determinism
 
 Same schema + same operation stream + same base snapshot = same twin state. No randomness, no side effects beyond the selected backend semantics. Snapshots are content-addressed — same state produces the same hash.
+
+---
+
+## System Integration & Agent-Ergonomic Synthesis — 2026-11-24
+
+Within the unified CMD+RVL architecture (`cmdrvl/docs/SYSTEM_ARCHITECTURE.md`),
+`twinning` is **Orthogonal Plane B: the Counterfactual Simulation Plane** across
+levels L3–L9 of the epistemic tower.
+
+### Agent-native ergonomics & system contracts
+
+1. **Turn-over-turn delta reporting (`--view brief | delta | full`):**
+   When an agent iterates 20x/hour on an extractor, SQL patch, or migration
+   against a twin, re-emitting the entire twin report + full `verify` breakdown
+   every turn burns context and degrades reasoning. Support:
+   - `--view brief` (default): bounded summary (pass/fail counts, top-K
+     constraint violations, SQLSTATE summary, snapshot `blake3:` ref, typed
+     `next_actions[]` with `effect_class: "twin_exec"`).
+   - `--view delta --since <prev_report_ref>`: **only what changed since the
+     previous iteration** (`violations_resolved: +N`, `new_regressions: M`,
+     `remaining_blockers`, `row_count_delta`, `snapshot_hash_changed`).
+2. **Swarm-safe ephemeral isolation by default:**
+   Support `--port 0` (ephemeral OS-assigned port printed in the startup JSON
+   readiness packet) and `--overlay-of <base_snapshot_ref>` (copy-on-write
+   branching from one immutable base snapshot) so concurrent agents, tournament
+   challengers, or RLVR rollouts run in parallel with zero port collisions and
+   bounded RSS.
+3. **Direct hookup with `veil sandbox --twin` (zero-retention workstation):**
+   When launched under `veil sandbox --twin` (`veil` `bd-2ex`), `twinning`
+   supplies synthetic local Postgres/Snowflake endpoints (`DATABASE_URL`,
+   `PGHOST`, `PGPORT`, `SNOWFLAKE_*`) alongside synthetic file overlays while
+   sandbox network rules block real production warehouse egress — enabling true
+   zero-retention data-engineering development and SDLC staging for
+   `evidence-protocol` runtimes.
+4. **Control-plane legibility:**
+   Expose active twin instances, base snapshot hashes, overlay status, and last
+   attached `verify` verdict through `twinning --robot-triage` so `cmdrvl orient`
+   and `control.v0` packets show live simulation state in one cold-start call.
+
