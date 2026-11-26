@@ -104,6 +104,10 @@ pub fn run(config: SnowflakeConfig) -> Result<Execution, Box<dyn std::error::Err
 
 fn run_inner(config: SnowflakeConfig) -> RefusalResult<Execution> {
     let json_mode = config.json;
+    if config.is_bootstrap_only() {
+        return bootstrap_only(&config);
+    }
+
     let Some(run_command) = config.run_command.clone() else {
         let server = start_server(&config)?;
         eprintln!(
@@ -205,12 +209,45 @@ impl Drop for EmbeddedSnowflakeServer {
     }
 }
 
-fn start_server(config: &SnowflakeConfig) -> RefusalResult<RunningSnowflakeServer> {
+/// Default mode (neither `--serve` nor `--run`): validate the schema, write `--report` if
+/// requested, print the readiness summary and exit 0. Nothing is bound, so a headless caller
+/// never blocks.
+fn bootstrap_only(config: &SnowflakeConfig) -> RefusalResult<Execution> {
+    let state = build_state(config)?;
+    write_report_if_requested(config, &state)?;
+    let stdout = if config.json {
+        let mut rendered =
+            serde_json::to_string_pretty(&state.report_value()).map_err(|error| {
+                Box::new(refusal::runtime_io(
+                    "snowflake_report_render",
+                    error.to_string(),
+                ))
+            })?;
+        rendered.push('\n');
+        rendered
+    } else {
+        format!(
+            "Snowflake twin ready - {} tables, {} rows materialized\nNext: pass --serve for the interactive HTTP twin or --run <command> to run one child against it\n",
+            state.catalog.table_count(),
+            state.catalog.row_count()
+        )
+    };
+    Ok(Execution {
+        exit_code: 0,
+        stdout,
+    })
+}
+
+fn build_state(config: &SnowflakeConfig) -> RefusalResult<Arc<SnowflakeSharedState>> {
     let mut catalog = SnowflakeCatalog::from_schema_path(config.schema_path.as_deref())?;
     if let Some(source_url) = &config.materialize_source_url {
         apply_source_materialization(&mut catalog, source_url, config.max_rows_per_table)?;
     }
-    let state = Arc::new(SnowflakeSharedState::new(catalog));
+    Ok(Arc::new(SnowflakeSharedState::new(catalog)))
+}
+
+fn start_server(config: &SnowflakeConfig) -> RefusalResult<RunningSnowflakeServer> {
+    let state = build_state(config)?;
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
     let (addr_tx, addr_rx) = mpsc::channel::<Result<SocketAddr, String>>();
     let host = config.host.clone();

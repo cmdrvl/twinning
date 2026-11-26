@@ -733,8 +733,9 @@ mod snowflake_tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 9876);
         assert_eq!(config.run_command, None);
-        assert!(config.serve);
-        assert!(config.serve_defaulted);
+        // bd-91hu: neither --serve nor --run is bootstrap-only (no listener).
+        assert!(!config.serve);
+        assert!(config.is_bootstrap_only());
         assert!(config.json);
     }
 

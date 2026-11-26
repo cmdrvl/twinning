@@ -392,7 +392,8 @@ pub struct SnowflakeArgs {
     #[arg(long, value_name = "COMMAND")]
     pub run: Option<String>,
 
-    /// Run the interactive Snowflake HTTP server until SIGINT/SIGTERM (mutually exclusive with --run)
+    /// Run the interactive Snowflake HTTP server until SIGINT/SIGTERM (mutually exclusive with --run).
+    /// Without --serve or --run the twin only validates the schema, writes --report and exits 0
     #[arg(long)]
     pub serve: bool,
 

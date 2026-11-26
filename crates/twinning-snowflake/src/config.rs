@@ -8,8 +8,9 @@ pub struct SnowflakeConfig {
     pub host: String,
     pub port: u16,
     pub run_command: Option<String>,
+    /// `--serve`: run the interactive HTTP twin until SIGINT/SIGTERM. With neither `serve` nor
+    /// `run_command`, the twin only validates, writes the report and exits (no listener).
     pub serve: bool,
-    pub serve_defaulted: bool,
     pub report_path: Option<PathBuf>,
     pub materialize_source_url: Option<String>,
     pub max_rows_per_table: usize,
@@ -18,19 +19,25 @@ pub struct SnowflakeConfig {
 
 impl SnowflakeConfig {
     pub fn from_parts(parts: SnowflakeConfigParts, json: bool) -> Self {
-        let serve_defaulted = !parts.serve && parts.run_command.is_none();
         Self {
             schema_path: parts.schema_path,
             host: parts.host,
             port: parts.port,
             run_command: parts.run_command,
-            serve: parts.serve || serve_defaulted,
-            serve_defaulted,
+            serve: parts.serve,
             report_path: parts.report_path,
             materialize_source_url: parts.materialize_source_url,
             max_rows_per_table: parts.max_rows_per_table,
             json,
         }
+    }
+}
+
+impl SnowflakeConfig {
+    /// Neither `--serve` nor `--run`: validate the schema, write the report, print the readiness
+    /// summary and exit without binding a port (same flag contract as `twinning postgres`).
+    pub fn is_bootstrap_only(&self) -> bool {
+        !self.serve && self.run_command.is_none()
     }
 }
 

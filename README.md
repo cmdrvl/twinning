@@ -343,6 +343,9 @@ cargo run --features mcp -- mcp --manifest manifest.json --serve
 # Snowflake wire twin — serve Snowflake HTTP protocol with Arrow IPC results
 cargo run --features snowflake -- snowflake --schema schema.sql --serve --report out/sf.json
 
+# Validate the schema, write the report and exit 0 (no listener; same contract as `twinning postgres`)
+cargo run --features snowflake -- snowflake --schema schema.sql --report out/sf.json --json
+
 # Run a standalone interactive twin until SIGINT/SIGTERM
 cargo run -- postgres --schema schema.sql \
   --serve \
