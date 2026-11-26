@@ -46,7 +46,9 @@ sudo, and do not change any MCP server entry other than "twins".
 
 6. Ask me which project directory twins should work in (default: the current
    directory) and which MCP client I use. Then configure it:
-   - Claude Desktop: "<dir>/twinning-mcp --workdir <project> setup --client claude-desktop"
+   - Claude Desktop on macOS: "<dir>/twinning-mcp --workdir <project> setup --client claude-desktop"
+     (setup writes Claude Desktop's config file on macOS only; elsewhere use the
+     "Anything else" step below)
    - Cursor: "<dir>/twinning-mcp --workdir <project> setup --client cursor"
    - Claude Code: "claude mcp add twins -- <dir>/twinning-mcp --workdir <project>"
    - Anything else: run "<dir>/twinning-mcp --workdir <project> setup --client claude-desktop --print"
@@ -99,9 +101,12 @@ Keep `twinning` beside `twinning-mcp`, then configure Claude Desktop or Cursor
 for a project directory. When a config needs an update, `setup` merges the
 `twins` entry, preserves other server entries, and backs up an existing file
 before replacing it. `--print` shows the snippet without writing a file.
+`setup` writes Claude Desktop's config file on macOS only. On other systems
+`--client claude-desktop` is refused and nothing is written; use `--print` and
+add the entry by hand.
 
 ```bash
-./target/release/twinning-mcp --workdir "$PWD" setup --client claude-desktop
+./target/release/twinning-mcp --workdir "$PWD" setup --client claude-desktop # macOS only
 ./target/release/twinning-mcp --workdir "$PWD" setup --client cursor
 ./target/release/twinning-mcp --workdir "$PWD" setup --client claude-desktop --print
 ```
