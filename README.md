@@ -603,6 +603,7 @@ Current options:
 
 - `--schema <FILE>`: SQL DDL file defining tables, constraints, and indexes
 - `--verify <FILE>`: compiled `verify.constraint.v1` artifact
+- `--explicit`: put raw failing keys and cell values in the embedded verify report (see below)
 - `--declaration <FILE>`: optional `twinning.catalog-declaration.v0` parent catalog subset identity
 - `--host <HOST>`: bind host (default `127.0.0.1`)
 - `--port <PORT>`: bind port (default `5432`)
@@ -677,6 +678,28 @@ Exit codes:
 | `0` | clean bootstrap, `run_once`, or `--serve` completion without embedded verify failure; `proof twin-pair` (and `orchestrate`) with outcome `PASS` |
 | `1` | live finalization completed but embedded verify reported `FAIL`; `proof twin-pair` (and `orchestrate`) with outcome `FAIL` (the report is still written) |
 | `2` | refusal / bootstrap failure / CLI error |
+
+### Redaction of the embedded verify report
+
+By default the report's `verify` section carries no failing row's key or cell
+value, following standalone `verify`:
+
+- `verify.results[].affected[].key.*` and `verify.results[].affected[].value`, and
+  the row key inside `verify.refusal.detail`, become `redacted:ref:k1`, `...:v1`
+  in order of first appearance. A ref shows only which values within one report
+  are equal.
+- With `VERIFY_REDACTION_KEY` set to at least 16 bytes they become
+  `redacted:hmac-sha256:<32 hex>` instead, the same marker standalone `verify`
+  makes for the same value and key. An empty or shorter key is refused with
+  `E_REDACTION_KEY` before anything listens, even with `--explicit`. The variable
+  is read only for `--run` or `--serve` with `--verify`.
+- `--explicit` leaves the raw values.
+
+Redaction runs after evaluation: outcome, counts, rule status and exit code are
+the same either way. It does **not** cover the snapshot (which is the committed
+data), `run.command` (your own command line), `--capture-refused-statements`
+text, or `verify.bindings.<name>.content_hash`, an unsalted hash over a whole
+relation that can be confirmed by guessing when the relation is small.
 
 Live-shape discipline:
 
@@ -919,6 +942,7 @@ Refusals are structured errors with exit code `2`. Each includes a code, message
 | `E_SCHEMA_PARSE` | DDL parsing failed | Fix SQL syntax in schema file |
 | `E_DECLARATION_PARSE` | Catalog declaration malformed or mismatched | Regenerate the declaration for the selected schema |
 | `E_VERIFY_ARTIFACT_PARSE` | Verify artifact malformed | Regenerate with `verify` |
+| `E_REDACTION_KEY` | `VERIFY_REDACTION_KEY` is empty or under 16 bytes in a live run with `--verify` | Set at least 16 bytes, or unset it |
 | `E_SNAPSHOT_VERIFY` | Snapshot hash mismatch or version error | Re-emit from schema source |
 | `E_SEED_BOOTSTRAP_SOURCE` | Seed import/export requested with `--restore` | Use `--schema` |
 | `E_SEED_SOURCE_COMPOSITION` | `--seed` combined with `--materialize-source-url` | Pick one source for v1 |

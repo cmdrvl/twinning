@@ -16,8 +16,8 @@ pub mod report;
 pub mod runtime;
 
 pub use twinning_kernel::{
-    backend, catalog, declaration, ir, kernel, materialize, query_trace, result, seed, snapshot,
-    verify_bridge,
+    backend, catalog, declaration, ir, kernel, materialize, query_trace, redaction, result, seed,
+    snapshot, verify_bridge,
 };
 
 const OPERATOR_JSON: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/operator.json"));

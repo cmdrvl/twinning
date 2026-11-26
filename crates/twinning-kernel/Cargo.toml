@@ -10,6 +10,7 @@ repository = "https://github.com/cmdrvl/twinning"
 
 [dependencies]
 chrono = { version = "0.4", features = ["clock"] }
+hmac = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

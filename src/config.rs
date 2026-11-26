@@ -96,6 +96,7 @@ pub fn twin_config_from_engine_args(
         port: args.port.unwrap_or_else(|| engine.default_port()),
         schema_path: args.schema.clone(),
         verify_path: args.verify.clone(),
+        explicit: args.explicit,
         declaration_path: args.declaration.clone(),
         run_command: args.run.clone(),
         serve: args.serve,
@@ -288,6 +289,7 @@ mod tests {
         let args = TwinArgs {
             schema: Some("schema.sql".into()),
             verify: None,
+            explicit: false,
             declaration: None,
             host: "127.0.0.1".to_owned(),
             port: None,
@@ -313,6 +315,7 @@ mod tests {
         let mut args = TwinArgs {
             schema: Some("schema.sql".into()),
             verify: None,
+            explicit: false,
             declaration: None,
             host: "127.0.0.1".to_owned(),
             port: None,
@@ -357,6 +360,7 @@ mod tests {
         let base = TwinArgs {
             schema: Some("schema.sql".into()),
             verify: None,
+            explicit: false,
             declaration: None,
             host: "127.0.0.1".to_owned(),
             port: None,

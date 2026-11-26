@@ -60,6 +60,12 @@
       "description": "Compiled verify constraint artifact (`verify.constraint.v1`) for twin-side validation"
     },
     {
+      "name": "explicit",
+      "flag": "--explicit",
+      "type": "boolean",
+      "description": "Put raw failing keys and cell values in the embedded verify report. Default: redacted:ref markers, or keyed HMAC markers when VERIFY_REDACTION_KEY (at least 16 bytes) is set; an empty or shorter key is refused with E_REDACTION_KEY"
+    },
+    {
       "name": "declaration",
       "flag": "--declaration",
       "type": "file_path",

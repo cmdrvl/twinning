@@ -3,7 +3,11 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{Engine, TwinConfig, report::LiveVerifyArtifact};
+use crate::{
+    Engine, TwinConfig,
+    redaction::{ENV_KEY, KeyError, MIN_KEY_BYTES},
+    report::LiveVerifyArtifact,
+};
 
 pub const VERSION: &str = "twinning.v0";
 pub type RefusalResult<T> = Result<T, Box<RefusalEnvelope>>;
@@ -267,6 +271,27 @@ pub fn verify_batch_only_rule(artifact: &LiveVerifyArtifact) -> RefusalEnvelope 
             },
             "rule_id": batch_only_rule.rule_id,
             "op": batch_only_rule.op,
+        }),
+        None,
+    )
+}
+
+/// A set-but-unusable `VERIFY_REDACTION_KEY`. The same code, message and detail as standalone
+/// verify; it names the variable and the rule, never the key or its length.
+pub fn redaction_key(error: KeyError) -> RefusalEnvelope {
+    RefusalEnvelope::new(
+        "E_REDACTION_KEY",
+        format!(
+            "{ENV_KEY} is set but {}; it must be at least {MIN_KEY_BYTES} bytes",
+            match error {
+                KeyError::Empty => "empty",
+                KeyError::TooShort => "too short",
+            }
+        ),
+        json!({
+            "env_var": ENV_KEY,
+            "reason": error.reason(),
+            "min_bytes": MIN_KEY_BYTES,
         }),
         None,
     )

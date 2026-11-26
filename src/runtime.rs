@@ -11,7 +11,9 @@ use crate::{
     config::TwinConfig,
     declaration::{CatalogDeclarationIdentity, load_catalog_declaration},
     kernel::storage::TableStorage,
-    materialize, refusal,
+    materialize,
+    redaction::{self, VerifyRedaction},
+    refusal,
     refusal::RefusalResult,
     report::{
         LiveVerifyArtifact, RatioMap, RunReport, SourceMaterializationReport, VerifyArtifactReport,
@@ -54,6 +56,7 @@ struct BootstrapState {
     verify_artifact: Option<VerifyArtifactReport>,
     verify_report: Option<serde_json::Value>,
     live_verify_artifact: Option<LiveVerifyArtifact>,
+    verify_redaction: VerifyRedaction,
     catalog_declaration: Option<CatalogDeclarationIdentity>,
     source_materialization: Option<SourceMaterializationReport>,
     materialized_relations: Option<SnapshotRelations>,
@@ -86,11 +89,20 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
 
     let live_mode = config.run_command.is_some() || config.serve;
 
+    // First, so that a bad key is refused before any input is read or anything listens.
+    let verify_redaction = if live_mode && config.verify_path.is_some() {
+        VerifyRedaction::resolve(config.explicit, std::env::var_os(redaction::ENV_KEY))
+            .map_err(|error| Box::new(refusal::redaction_key(error)))?
+    } else {
+        VerifyRedaction::default()
+    };
+
     let mut state = if let Some(restore_path) = &config.restore_path {
         restore_state(config, restore_path, !live_mode, !live_mode)?
     } else {
         load_state_from_schema(config, !live_mode)?
     };
+    state.verify_redaction = verify_redaction;
 
     if live_mode
         && let Some(verify_artifact) = load_live_verify_artifact(config.verify_path.as_deref())?
@@ -390,6 +402,7 @@ fn load_state_from_schema(
         },
         verify_report: None,
         live_verify_artifact: None,
+        verify_redaction: VerifyRedaction::default(),
         catalog_declaration,
         source_materialization: None,
         materialized_relations: None,
@@ -437,6 +450,7 @@ fn restore_state(
         verify_artifact,
         verify_report: None,
         live_verify_artifact: None,
+        verify_redaction: VerifyRedaction::default(),
         catalog_declaration,
         source_materialization: None,
         materialized_relations: None,
@@ -748,6 +762,7 @@ mod tests {
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -798,6 +813,7 @@ mod tests {
             snapshot_path: None,
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: Some(contract_path.clone()),
             seed_path: None,
@@ -854,6 +870,7 @@ mod tests {
             snapshot_path: Some(first_snapshot_path.clone()),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: Some(seed_path.clone()),
@@ -1012,6 +1029,7 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1162,6 +1180,7 @@ sock.close()
             snapshot_path: None,
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: Some(seed_path),
@@ -1200,6 +1219,7 @@ sock.close()
             snapshot_path: None,
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1251,6 +1271,7 @@ sock.close()
             snapshot_path: None,
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1286,6 +1307,7 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1332,6 +1354,7 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1359,6 +1382,7 @@ sock.close()
             snapshot_path: Some(snapshot_path.clone()),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: Some(malformed_snapshot_path),
             export_seed_contract_path: None,
             seed_path: None,
@@ -1402,6 +1426,7 @@ sock.close()
             snapshot_path: Some(blocked_snapshot_path.clone()),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1436,6 +1461,7 @@ sock.close()
             snapshot_path: Some(invalid_snapshot_path),
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: None,
             export_seed_contract_path: None,
             seed_path: None,
@@ -1557,6 +1583,7 @@ sock.close()
             snapshot_path: None,
             query_trace_path: None,
             capture_refused_statements: false,
+            explicit: false,
             restore_path: Some(snapshot_path),
             export_seed_contract_path: None,
             seed_path: None,

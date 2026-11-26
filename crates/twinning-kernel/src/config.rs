@@ -11,6 +11,9 @@ pub struct TwinConfig {
     pub port: u16,
     pub schema_path: Option<PathBuf>,
     pub verify_path: Option<PathBuf>,
+    /// `--explicit`: leave raw keys and cell values in the embedded verify report.
+    #[serde(default)]
+    pub explicit: bool,
     pub declaration_path: Option<PathBuf>,
     pub run_command: Option<String>,
     pub serve: bool,

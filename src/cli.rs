@@ -180,6 +180,12 @@ pub struct TwinArgs {
     #[arg(long, value_name = "FILE")]
     pub verify: Option<PathBuf>,
 
+    /// Put raw failing keys and cell values in the embedded verify report. By default they are
+    /// replaced by redacted:ref:... markers, or by keyed HMAC markers when
+    /// VERIFY_REDACTION_KEY (at least 16 bytes) is set
+    #[arg(long)]
+    pub explicit: bool,
+
     /// Optional catalog-declared subset identity (twinning.catalog-declaration.v0)
     #[arg(long, value_name = "FILE")]
     pub declaration: Option<PathBuf>,

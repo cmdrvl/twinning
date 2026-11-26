@@ -11,6 +11,7 @@ use crate::{
     backend::SessionOverlayManager,
     catalog::Catalog,
     kernel::storage::TableStorage,
+    redaction::VerifyRedaction,
     refusal,
     refusal::RefusalResult,
     report::LiveVerifyArtifact,
@@ -65,9 +66,12 @@ pub fn bind_overlay_committed_relations(
     bind_committed_relations(catalog, committed_tables)
 }
 
+/// The one place a verify report is made. `redaction` is required so that no caller can
+/// forget it; it is applied after evaluation and before serialization.
 pub fn execute_embedded_verify(
     artifact: &LiveVerifyArtifact,
     bindings: &VerifyRelationBindings,
+    redaction: &VerifyRedaction,
 ) -> RefusalResult<JsonValue> {
     let mut embedded_bindings = EmbeddedBindings::new();
 
@@ -91,12 +95,15 @@ pub fn execute_embedded_verify(
         );
     }
 
-    serde_json::to_value(EmbeddedExecutor::evaluate(
+    let mut report = EmbeddedExecutor::evaluate(
         &artifact.constraint_set,
         artifact.report.hash.clone(),
         &embedded_bindings,
-    ))
-    .map_err(|error| Box::new(refusal::serialization(error.to_string())))
+    );
+    redaction.apply(&mut report);
+
+    serde_json::to_value(report)
+        .map_err(|error| Box::new(refusal::serialization(error.to_string())))
 }
 
 fn snapshot_row_to_verify_row(row: &SnapshotRow) -> RefusalResult<BTreeMap<String, JsonValue>> {
@@ -170,6 +177,7 @@ mod tests {
         backend::{BaseSnapshotBackend, SessionOverlayManager},
         catalog::parse_postgres_schema,
         kernel::{storage::TableStorage, value::KernelValue},
+        redaction::VerifyRedaction,
         report::LiveVerifyArtifact,
     };
 
@@ -348,7 +356,8 @@ mod tests {
         )
         .expect("parse verify artifact");
 
-        let verify = execute_embedded_verify(&artifact, &bindings).expect("execute verify");
+        let verify = execute_embedded_verify(&artifact, &bindings, &VerifyRedaction::default())
+            .expect("execute verify");
 
         assert_eq!(verify["tool"], "verify");
         assert_eq!(verify["version"], "verify.report.v1");
@@ -405,7 +414,9 @@ mod tests {
         )
         .expect("parse verify artifact");
 
-        let verify = execute_embedded_verify(&artifact, &bindings).expect("execute verify");
+        // Which row and field the engine localizes, so the raw values.
+        let verify = execute_embedded_verify(&artifact, &bindings, &VerifyRedaction::Explicit)
+            .expect("execute verify");
 
         assert_eq!(verify["outcome"], "FAIL");
         assert_eq!(verify["summary"]["failed_rules"], 1);

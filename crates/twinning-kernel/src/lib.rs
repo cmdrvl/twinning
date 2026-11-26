@@ -9,6 +9,7 @@ pub mod ir;
 pub mod kernel;
 pub mod materialize;
 pub mod query_trace;
+pub mod redaction;
 pub mod refusal;
 pub mod report;
 pub mod result;

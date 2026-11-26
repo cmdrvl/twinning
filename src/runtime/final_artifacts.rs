@@ -157,6 +157,7 @@ fn resolve_verify_report(
     Ok(Some(execute_embedded_verify(
         live_verify_artifact,
         &bindings,
+        &state.verify_redaction,
     )?))
 }
 
@@ -664,6 +665,7 @@ mod tests {
                 verify_artifact: None,
                 verify_report: None,
                 live_verify_artifact: None,
+                verify_redaction: Default::default(),
                 catalog_declaration: None,
                 source_materialization: None,
                 materialized_relations: None,
