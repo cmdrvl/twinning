@@ -3,9 +3,10 @@
 
 use std::{
     fs,
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant},
 };
 
 use serde_json::Value;
@@ -210,7 +211,8 @@ fn redaction_changes_only_row_keys_and_cells() {
             "refusing",
             REFUSING_PREDICATE,
             "REFUSAL",
-            0,
+            // 0 before bd-0yjb: this recorded a refused check passing as success.
+            2,
             &["/verify/refusal/detail/key/deal_id"],
         ),
     ];
@@ -389,6 +391,128 @@ fn a_short_key_does_not_matter_without_verify() {
     assert_eq!(output.status.code(), Some(0), "{:?}", output);
 }
 
+/// bd-0yjb: a check the engine refused was never evaluated, so the run must not read as a
+/// success. As standalone verify, it is a refusal with exit 2; the report is still written.
+#[test]
+fn a_refused_check_is_a_top_level_refusal_with_exit_2() {
+    for serve in [false, true] {
+        let mode = if serve { "interactive" } else { "run_once" };
+        let run = Run {
+            serve,
+            ..Run::default()
+        };
+        let result = Case::new(REFUSING_PREDICATE).run(CANARY_NAME, run);
+
+        assert_eq!(
+            result.exit_code, 2,
+            "{mode}: {} {}",
+            result.stdout, result.diagnostics
+        );
+        assert_eq!(result.json["outcome"], "REFUSAL", "{mode}");
+        assert_eq!(result.json["mode"], mode);
+        // A twin report, not a process refusal: the evidence stays.
+        assert!(result.json["refusal"].is_null(), "{mode}");
+        assert_eq!(result.json["tables"]["public.deals"]["rows"], 1, "{mode}");
+        assert_eq!(result.json["verify"]["outcome"], "REFUSAL", "{mode}");
+        assert_eq!(result.json["verify"]["refusal"]["code"], "E_BAD_EXPR");
+        assert_eq!(
+            result.json["verify"]["refusal"]["detail"]["key"],
+            serde_json::json!({ "deal_id": "redacted:ref:k1" })
+        );
+        assert_eq!(result.report_file, result.stdout, "{mode}");
+    }
+}
+
+/// The refusal outranks a failed child, and the child's result stays in the report.
+#[test]
+fn a_refused_check_outranks_a_failed_child() {
+    for (then, exit_code, signal) in [
+        ("; exit 7", Some(7), None),
+        ("; kill -KILL $$", None, Some(9)),
+    ] {
+        let run = Run {
+            then,
+            ..Run::default()
+        };
+        let result = Case::new(REFUSING_PREDICATE).run(CANARY_NAME, run);
+
+        assert_eq!(result.exit_code, 2, "{then}: {}", result.stdout);
+        assert_eq!(result.json["outcome"], "REFUSAL", "{then}");
+        assert_eq!(
+            result.json["run"]["exit_code"],
+            serde_json::json!(exit_code)
+        );
+        assert_eq!(result.json["run"]["signal"], serde_json::json!(signal));
+        assert_eq!(result.json["verify"]["outcome"], "REFUSAL", "{then}");
+    }
+}
+
+/// One refused rule makes the whole verify report a refusal (the engine keeps no results, as
+/// standalone verify), whether another rule would have failed before it or after it.
+#[test]
+fn a_refused_check_outranks_a_failing_one_in_either_order() {
+    for (first, second) in [
+        (FAILING_PREDICATE, REFUSING_PREDICATE),
+        (REFUSING_PREDICATE, FAILING_PREDICATE),
+    ] {
+        let both = format!(
+            r#"{first} }}, {{ "id": "SECOND", "severity": "error", "portability": "portable",
+                "check": {second}"#
+        );
+        let result = Case::new(&both).run(CANARY_NAME, Run::default());
+
+        assert_eq!(result.exit_code, 2, "{}", result.stdout);
+        assert_eq!(result.json["outcome"], "REFUSAL");
+        assert_eq!(result.json["verify"]["outcome"], "REFUSAL");
+        assert_eq!(result.json["verify"]["results"], serde_json::json!([]));
+    }
+}
+
+#[test]
+fn the_human_view_says_refusal() {
+    let run = Run {
+        human: true,
+        ..Run::default()
+    };
+    let result = Case::new(REFUSING_PREDICATE).run(CANARY_NAME, run);
+
+    assert_eq!(result.exit_code, 2, "{}", result.stdout);
+    assert_eq!(
+        result.stdout.lines().next(),
+        Some("twinning postgres run_once refusal")
+    );
+}
+
+/// Guard, true before and after bd-0yjb: passing and failing checks behave as they did,
+/// including that a failed child alone does not change the exit code.
+#[test]
+fn passing_and_failing_checks_keep_their_outcomes_and_exit_codes() {
+    let passing = r#"{ "op": "not_null", "binding": "public.deals", "columns": ["deal_id"] }"#;
+    for (check, serve, then, outcome, exit_code) in [
+        (passing, false, "", "PASS", 0),
+        (passing, true, "", "PASS", 0),
+        (passing, false, "; exit 7", "FAIL", 0),
+        (FAILING_PREDICATE, false, "", "FAIL", 1),
+        (FAILING_PREDICATE, true, "", "FAIL", 1),
+        (FAILING_PREDICATE, false, "; exit 7", "FAIL", 1),
+    ] {
+        let run = Run {
+            serve,
+            then,
+            ..Run::default()
+        };
+        let result = Case::new(check).run(CANARY_NAME, run);
+
+        assert_eq!(
+            (result.exit_code, &result.json["outcome"]),
+            (exit_code, &Value::from(outcome)),
+            "serve={serve} then={then:?}: {} {}",
+            result.stdout,
+            result.diagnostics
+        );
+    }
+}
+
 const CANARY_NAME: &str = "ZQXCANARY-deal-name-5521";
 const GOOD_KEY: &str = "0123456789abcdef";
 const FAILING_PREDICATE: &str = r#"{ "op": "predicate", "binding": "public.deals",
@@ -452,6 +576,10 @@ struct Run {
     explicit: bool,
     human: bool,
     key: Option<&'static str>,
+    /// `--serve` instead of `--run`: the same client runs against it, then SIGINT.
+    serve: bool,
+    /// Appended to the `--run` command: how the child ends after committing its row.
+    then: &'static str,
 }
 
 impl Run {
@@ -504,7 +632,7 @@ impl Case {
         let diagnostics_path = self.dir.path().join("client.err");
         // Named for the run, so that a run cannot be judged by an earlier run's report.
         let report_path = self.dir.path().join(format!("report-{port}.json"));
-        let run_command = format!(
+        let client_command = format!(
             "python3 {} 127.0.0.1 {} {} {}",
             shell_quote(&self.child_path),
             port,
@@ -523,12 +651,17 @@ impl Case {
             .arg("127.0.0.1")
             .arg("--port")
             .arg(port.to_string())
-            .arg("--run")
-            .arg(run_command)
             .arg("--report")
             .arg(&report_path)
             // The caller's environment must not decide what a test sees.
             .env_remove("VERIFY_REDACTION_KEY");
+        if run.serve {
+            command.arg("--serve");
+        } else {
+            command
+                .arg("--run")
+                .arg(format!("{client_command}{}", run.then));
+        }
         if !run.human {
             command.arg("--json");
         }
@@ -538,7 +671,16 @@ impl Case {
         if let Some(key) = run.key {
             command.env("VERIFY_REDACTION_KEY", key);
         }
-        let output = command.output().expect("run twinning");
+        let output = if run.serve {
+            let mut client = Command::new("python3");
+            client
+                .arg(&self.child_path)
+                .args(["127.0.0.1", &port.to_string(), deal_name_arg])
+                .arg(&diagnostics_path);
+            serve_one_client(command, port, client)
+        } else {
+            command.output().expect("run twinning")
+        };
         let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
         let stderr = String::from_utf8(output.stderr).expect("stderr utf-8");
         let diagnostics = fs::read_to_string(diagnostics_path).unwrap_or_default();
@@ -567,6 +709,41 @@ impl Case {
             json,
         })
     }
+}
+
+/// Start a `--serve` twin, run the client once against it, then SIGINT it and collect what
+/// it printed. If it never listens, its own output says why.
+fn serve_one_client(mut command: Command, port: u16, mut client: Command) -> Output {
+    let mut twin = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start twinning --serve");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let listening = loop {
+        if twin.try_wait().expect("twin status").is_some() {
+            break false;
+        }
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    if listening {
+        // The client reports its own failure to the diagnostics file.
+        let _ = client.output();
+    }
+    if twin.try_wait().expect("twin status").is_none() {
+        let signal = if listening { "-INT" } else { "-KILL" };
+        Command::new("kill")
+            .args([signal, &twin.id().to_string()])
+            .status()
+            .expect("signal twin");
+    }
+    twin.wait_with_output().expect("twin output")
 }
 
 fn write_schema(dir: &Path) -> PathBuf {

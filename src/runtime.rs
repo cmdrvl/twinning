@@ -156,7 +156,7 @@ fn execute_inner(config: &TwinConfig) -> RefusalResult<Execution> {
     };
 
     Ok(Execution {
-        exit_code: execution_exit_domain(None, false),
+        exit_code: execution_exit_domain(None, None),
         stdout,
     })
 }
@@ -238,7 +238,6 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
     )
     .with_constraint_counters(final_live_state.constraint_counters());
     let finalized = emitter.emit_once(state, Some(committed_tables), Some(run.clone()))?;
-    let verify_failed = verify_failed(finalized.report.verify.as_ref());
 
     let stdout = if config.json {
         finalized
@@ -250,7 +249,10 @@ fn execute_run_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalResul
     };
 
     Ok(Execution {
-        exit_code: execution_exit_domain(Some(&run), verify_failed),
+        exit_code: execution_exit_domain(
+            Some(&run),
+            verify_outcome(finalized.report.verify.as_ref()),
+        ),
         stdout,
     })
 }
@@ -310,7 +312,6 @@ fn execute_serve_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalRes
     .with_mode("interactive")
     .with_constraint_counters(final_live_state.constraint_counters());
     let finalized = emitter.emit_once(state, Some(committed_tables), None)?;
-    let verify_failed = verify_failed(finalized.report.verify.as_ref());
 
     let stdout = if config.json {
         finalized
@@ -322,7 +323,7 @@ fn execute_serve_mode(config: &TwinConfig, state: &BootstrapState) -> RefusalRes
     };
 
     Ok(Execution {
-        exit_code: execution_exit_domain(None, verify_failed),
+        exit_code: execution_exit_domain(None, verify_outcome(finalized.report.verify.as_ref())),
         stdout,
     })
 }
@@ -654,19 +655,19 @@ fn state_committed_tables(state: &BootstrapState) -> RefusalResult<Option<Vec<Ta
 }
 
 #[cfg(feature = "postgres")]
-fn verify_failed(verify: Option<&serde_json::Value>) -> bool {
+fn verify_outcome(verify: Option<&serde_json::Value>) -> Option<&str> {
     verify
         .and_then(|verify| verify.get("outcome"))
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|outcome| outcome == "FAIL")
 }
 
-fn execution_exit_domain(_run: Option<&RunReport>, verify_failed: bool) -> u8 {
-    if verify_failed {
-        return 1;
+/// As standalone verify: 2 for a refusal, 1 for a failed check.
+fn execution_exit_domain(_run: Option<&RunReport>, verify_outcome: Option<&str>) -> u8 {
+    match verify_outcome {
+        Some("REFUSAL") => 2,
+        Some("FAIL") => 1,
+        _ => 0,
     }
-
-    0
 }
 
 #[cfg(test)]
@@ -1501,13 +1502,16 @@ sock.close()
             timed_out: true,
         };
 
-        assert_eq!(execution_exit_domain(None, false), 0);
-        assert_eq!(execution_exit_domain(Some(&success), false), 0);
-        assert_eq!(execution_exit_domain(Some(&success), true), 1);
-        assert_eq!(execution_exit_domain(Some(&child_failure), false), 0);
-        assert_eq!(execution_exit_domain(Some(&timeout), false), 0);
-        assert_eq!(execution_exit_domain(Some(&child_failure), true), 1);
-        assert_eq!(execution_exit_domain(Some(&timeout), true), 1);
+        for (verify, exit) in [
+            (None, 0),
+            (Some("PASS"), 0),
+            (Some("FAIL"), 1),
+            (Some("REFUSAL"), 2),
+        ] {
+            for run in [None, Some(&success), Some(&child_failure), Some(&timeout)] {
+                assert_eq!(execution_exit_domain(run, verify), exit, "{verify:?}");
+            }
+        }
     }
 
     #[test]

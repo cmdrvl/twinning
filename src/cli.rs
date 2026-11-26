@@ -49,7 +49,7 @@ Output contract:
 Exit codes:
   0  READY / clean bootstrap, run_once, or serve
   1  live finalization completed but embedded verify reported FAIL
-  2  refusal, bootstrap failure, or CLI error
+  2  refusal (including a refused embedded verify check), bootstrap failure, or CLI error
 
 Example:
   twinning postgres --schema schema.sql --json";

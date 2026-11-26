@@ -245,7 +245,7 @@
       "domain": "negative"
     },
     "2": {
-      "meaning": "REFUSAL / CLI error",
+      "meaning": "REFUSAL / CLI error. A live run whose embedded verify check was refused also exits 2: its report has outcome REFUSAL and carries the engine's refusal in verify.refusal",
       "domain": "error"
     }
   },

@@ -53,8 +53,16 @@ read_until_ready(sock)
 sock.sendall(b"X" + struct.pack("!I", 4))
 "#;
 
-#[test]
-fn mcp_twin_with_verify_never_returns_row_data() {
+/// What one MCP session returned for a twin that was given one row and one verify rule.
+struct Session {
+    started: Value,
+    stopped: Value,
+    report: Value,
+    report_file: String,
+    stderr: String,
+}
+
+fn run_twin(check: Value) -> Session {
     let directory = tempdir().expect("MCP test directory");
     let workdir = directory.path().join("workdir");
     fs::create_dir_all(&workdir).expect("work directory");
@@ -70,8 +78,7 @@ fn mcp_twin_with_verify_never_returns_row_data() {
             "constraint_set_id": "mcp.redaction",
             "bindings": [{"name": "public.deals", "kind": "relation", "key_fields": ["deal_id"]}],
             "rules": [{"id": RULE_ID, "severity": "error", "portability": "portable",
-                "check": {"op": "predicate", "binding": "public.deals",
-                    "expr": {"eq": [{"column": "deal_name"}, "Alpha"]}}}]
+                "check": check}]
         })
         .to_string(),
     )
@@ -112,6 +119,50 @@ fn mcp_twin_with_verify_never_returns_row_data() {
 
     let stopped = mcp.tool("twin_stop", json!({"twin_id": twin_id}));
     let report = mcp.tool("twin_report", json!({"twin_id": twin_id}));
+    let report_file = report_files(&stopped, &report);
+    let stderr = mcp.finish();
+    Session {
+        started,
+        stopped,
+        report,
+        report_file,
+        stderr,
+    }
+}
+
+/// bd-0yjb through MCP: a twin whose check was refused exits 2. The client must still get
+/// the report with the refusal in it, not an unreadable-report error.
+#[test]
+fn mcp_returns_the_report_of_a_refused_check() {
+    let session = run_twin(json!({"op": "predicate", "binding": "public.deals",
+        "expr": {"gt": [{"column": "deal_name"}, 5]}}));
+
+    assert_eq!(session.stopped["outcome"], "REFUSAL", "{}", session.stopped);
+    assert_eq!(session.stopped["exit_code"], 2);
+    assert_eq!(session.report["outcome"], "REFUSAL");
+    assert_eq!(session.report["verify"]["outcome"], "REFUSAL");
+    assert_eq!(
+        session.report["verify"]["refusal"]["detail"]["key"],
+        json!({"deal_id": "redacted:ref:k1"})
+    );
+    // Control for the negative check: the key was committed, and the report is the payload.
+    for text in [session.report.to_string(), session.report_file] {
+        assert!(text.contains("E_BAD_EXPR"), "{text}");
+        assert!(!text.contains(ROW_KEY), "{text}");
+    }
+}
+
+#[test]
+fn mcp_twin_with_verify_never_returns_row_data() {
+    let Session {
+        started,
+        stopped,
+        report,
+        report_file,
+        stderr,
+    } = run_twin(json!({"op": "predicate", "binding": "public.deals",
+        "expr": {"eq": [{"column": "deal_name"}, "Alpha"]}}));
+
     assert_eq!(report["verify"]["outcome"], "FAIL", "{report}");
     assert_eq!(
         report["verify"]["results"][0]["affected"][0]["key"]["deal_id"],
@@ -121,8 +172,6 @@ fn mcp_twin_with_verify_never_returns_row_data() {
         report["verify"]["results"][0]["affected"][0]["value"],
         "redacted:ref:v1"
     );
-    let report_file = report_files(&stopped, &report);
-    let stderr = mcp.finish();
 
     for (surface, text) in [
         ("twin_report response", report.to_string()),
@@ -186,6 +235,8 @@ impl Mcp {
             .arg(twinning_binary())
             // The server passes its environment on to the twins it starts.
             .env_remove("VERIFY_REDACTION_KEY")
+            // Its own state root: servers that share one can race in the stale-state sweep.
+            .env("TMPDIR", workdir.parent().expect("test directory"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

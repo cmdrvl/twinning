@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::{
     errors::ToolError,
     registry::{TwinKind, TwinStatus},
-    supervisor::StopResult,
+    supervisor::{StopResult, is_refused_check},
 };
 
 const MAX_REPORT_RESPONSE_BYTES: usize = 256 * 1024;
@@ -34,10 +34,12 @@ pub fn validate_report(
         ));
     }
     let valid_outcome = match kind {
-        TwinKind::Postgres => matches!(
-            report["outcome"].as_str(),
-            Some("READY" | "VIOLATIONS" | "FAIL")
-        ),
+        TwinKind::Postgres => {
+            matches!(
+                report["outcome"].as_str(),
+                Some("READY" | "VIOLATIONS" | "FAIL")
+            ) || is_refused_check(report)
+        }
         TwinKind::Rest => matches!(
             report["outcome"].as_str(),
             Some("PASS" | "FAIL" | "VIOLATIONS" | "REFUSAL")

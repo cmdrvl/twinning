@@ -620,6 +620,14 @@ fn stop_with_shared(
     stop_locked(&shared, twin_id, expired)
 }
 
+/// A Postgres twin report whose embedded verify check was refused (the twin exits 2). This is
+/// not a process refusal, which has no `verify` section and is no report at all.
+pub fn is_refused_check(report: &Value) -> bool {
+    report["version"] == "twinning.v0" // ubs:ignore - schema version string, not a secret
+        && report["outcome"] == "REFUSAL"
+        && report["verify"]["outcome"] == "REFUSAL"
+}
+
 fn read_report(
     path: &Path,
     stderr_path: &Path,
@@ -627,27 +635,50 @@ fn read_report(
     twin_id: &str,
     kind: TwinKind,
 ) -> Result<Value, ToolError> {
-    if exit != 0 && exit != 1 {
-        return Err(report_error(
+    let bad_exit = || {
+        report_error(
             twin_id,
             format!("child exited with code {exit}"),
             path,
             stderr_path,
-        ));
+        )
+    };
+    // 2 is a report only when a Postgres twin's embedded check was refused (checked below).
+    let may_be_refused_check = exit == 2 && matches!(kind, TwinKind::Postgres);
+    if exit != 0 && exit != 1 && !may_be_refused_check {
+        return Err(bad_exit());
     }
+    let unreadable = |detail: String| {
+        if may_be_refused_check {
+            bad_exit()
+        } else {
+            report_error(twin_id, detail, path, stderr_path)
+        }
+    };
     let mut bytes = Vec::new();
     File::open(path)
         .and_then(|mut file| file.read_to_end(&mut bytes))
-        .map_err(|error| report_error(twin_id, error.to_string(), path, stderr_path))?;
-    let report: Value = serde_json::from_slice(&bytes)
-        .map_err(|error| report_error(twin_id, error.to_string(), path, stderr_path))?;
+        .map_err(|error| unreadable(error.to_string()))?;
+    let report: Value =
+        serde_json::from_slice(&bytes).map_err(|error| unreadable(error.to_string()))?;
+    let refused_check = is_refused_check(&report);
+    if may_be_refused_check && !refused_check {
+        return Err(bad_exit());
+    }
     let expected_version = match kind {
         TwinKind::Postgres => "twinning.v0",
         TwinKind::Rest => "twinning.rest-report.v0",
     };
     let outcome = report["outcome"].as_str();
     let valid_outcome = match kind {
-        TwinKind::Postgres => matches!(outcome, Some("READY" | "VIOLATIONS" | "FAIL")),
+        // A refused check goes with exit 2 and nothing else does.
+        TwinKind::Postgres => {
+            if refused_check {
+                may_be_refused_check
+            } else {
+                matches!(outcome, Some("READY" | "VIOLATIONS" | "FAIL"))
+            }
+        }
         TwinKind::Rest => matches!(outcome, Some("PASS" | "FAIL" | "VIOLATIONS" | "REFUSAL")),
     };
     let session = &report["session"];
@@ -866,4 +897,65 @@ fn reap_shared(shared: &Shared, twin_id: &str) -> Option<ExitStatus> {
         );
     }
     status
+}
+
+#[cfg(test)]
+mod read_report_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn exit_two_is_a_report_only_for_a_refused_embedded_check() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("report.json");
+        let stderr = directory.path().join("stderr.log");
+        fs::write(&stderr, "").expect("stderr");
+        let refused = json!({"version": "twinning.v0", "outcome": "REFUSAL",
+                             "verify": {"outcome": "REFUSAL"}});
+        // What a startup or output refusal prints: also exit 2, but not a report.
+        let process_refusal = json!({"version": "twinning.v0", "outcome": "REFUSAL",
+                                     "refusal": {"code": "E_IO_WRITE"}});
+        let passed_over = json!({"version": "twinning.v0", "outcome": "FAIL",
+                                 "verify": {"outcome": "REFUSAL"}});
+        let failed = json!({"version": "twinning.v0", "outcome": "FAIL",
+                            "verify": {"outcome": "FAIL"}});
+        let read = |report: &Value, exit: i32, kind: TwinKind| {
+            fs::write(&path, report.to_string()).expect("report");
+            read_report(&path, &stderr, exit, "tw_test", kind)
+        };
+
+        assert_eq!(
+            read(&refused, 2, TwinKind::Postgres).expect("report"),
+            refused
+        );
+        assert_eq!(
+            read(&failed, 1, TwinKind::Postgres).expect("report"),
+            failed
+        );
+        for (report, exit) in [
+            (&process_refusal, 2),
+            (&passed_over, 2),
+            (&failed, 2),
+            (&refused, 0),
+            (&refused, 1),
+            (&refused, 3),
+        ] {
+            assert!(
+                read(report, exit, TwinKind::Postgres).is_err(),
+                "exit {exit} with {report}"
+            );
+        }
+        assert!(read(&refused, 2, TwinKind::Rest).is_err());
+
+        // With no report, the message still names the exit code.
+        fs::remove_file(&path).expect("remove report");
+        let error =
+            read_report(&path, &stderr, 2, "tw_test", TwinKind::Postgres).expect_err("no report");
+        assert!(
+            error.message.contains("child exited with code 2"),
+            "{}",
+            error.message
+        );
+    }
 }

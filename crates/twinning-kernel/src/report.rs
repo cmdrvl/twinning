@@ -391,7 +391,14 @@ fn run_failed(run: &RunReport) -> bool {
     run.timed_out || run.signal.is_some() || run.exit_code != Some(0)
 }
 
+/// In order of precedence: a refused check, a failed child, then the checks' own result. A
+/// refused check was never evaluated, so nothing else in the run may stand in for it; the
+/// child's result stays in `run` and the engine's refusal in `verify`.
 fn report_outcome(run: Option<&RunReport>, verify: Option<&Value>) -> &'static str {
+    if verify_outcome(verify) == Some("REFUSAL") {
+        return "REFUSAL";
+    }
+
     if run.is_some_and(run_failed) {
         return "FAIL";
     }

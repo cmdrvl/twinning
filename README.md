@@ -675,9 +675,29 @@ Exit codes:
 
 | Exit | Meaning |
 |------|---------|
-| `0` | clean bootstrap, `run_once`, or `--serve` completion without embedded verify failure; `proof twin-pair` (and `orchestrate`) with outcome `PASS` |
+| `0` | clean bootstrap, or `run_once` / `--serve` completion where embedded verify neither failed nor refused; `proof twin-pair` (and `orchestrate`) with outcome `PASS` |
 | `1` | live finalization completed but embedded verify reported `FAIL`; `proof twin-pair` (and `orchestrate`) with outcome `FAIL` (the report is still written) |
-| `2` | refusal / bootstrap failure / CLI error |
+| `2` | refusal / bootstrap failure / CLI error, including an embedded verify check that was refused |
+
+A failed `--run` child does not by itself change the exit code: it is in the
+report's `run` section, and the top-level outcome is `FAIL`.
+
+When embedded verify refuses to evaluate a rule (`verify.outcome` is `REFUSAL`),
+the check was never made, so the run is not a success: the top-level outcome is
+`REFUSAL` and the exit code `2`, in `--run` and `--serve`, as standalone `verify`.
+The report, snapshot and `--report` file are still written, with the engine's
+refusal in `verify.refusal`. The engine returns no rule results with a refusal,
+even when another rule would have failed.
+
+When more than one thing goes wrong:
+
+1. A refusal that stops the run (bad input or key before it starts, or an output
+   that cannot be written at the end) is a process refusal: exit `2`, with a
+   top-level `refusal` and no report on stdout.
+2. A refused embedded check: exit `2`, outcome `REFUSAL`, whatever the child or
+   other rules did.
+3. A failing check: exit `1`, outcome `FAIL`.
+4. A failed child alone: exit `0`, outcome `FAIL`.
 
 ### Redaction of the embedded verify report
 
