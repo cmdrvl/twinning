@@ -1009,6 +1009,7 @@ fn s17_stop_requires_readable_report_but_accepts_exit_one_report() {
     let stopped =
         successful_tool(&exit_one.call_tool("twin_stop", json!({"twin_id":twin["twin_id"]})));
     assert_eq!(1, stopped["exit_code"]);
+    assert_eq!("FAIL", stopped["outcome"]);
     assert!(exit_one.finish("S17-exit-one").status.success());
 }
 

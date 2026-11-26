@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::{
     errors::ToolError,
     registry::{TwinKind, TwinStatus},
-    supervisor::{StopResult, is_refused_check},
+    supervisor::{StopResult, served_report_exit},
 };
 
 const MAX_REPORT_RESPONSE_BYTES: usize = 256 * 1024;
@@ -34,12 +34,8 @@ pub fn validate_report(
         ));
     }
     let valid_outcome = match kind {
-        TwinKind::Postgres => {
-            matches!(
-                report["outcome"].as_str(),
-                Some("READY" | "VIOLATIONS" | "FAIL")
-            ) || is_refused_check(report)
-        }
+        // The exit code was checked when the twin was stopped; here only the file is read.
+        TwinKind::Postgres => served_report_exit(report).is_some(),
         TwinKind::Rest => matches!(
             report["outcome"].as_str(),
             Some("PASS" | "FAIL" | "VIOLATIONS" | "REFUSAL")
@@ -452,6 +448,41 @@ mod tests {
         let error = validate_report(&refusal, TwinKind::Postgres, &path, &stderr).unwrap_err();
         assert_eq!("E_REPORT_UNREADABLE", error.code);
         assert!(error.message.contains("diagnostic tail"));
+    }
+
+    /// `twin_report` re-reads the file without an exit code. It must take exactly the four
+    /// report shapes `twin_stop` can have accepted.
+    #[test]
+    fn only_the_four_served_report_shapes_are_readable_afterwards() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("report.json");
+        let stderr = temp.path().join("stderr.log");
+        std::fs::write(&stderr, "").unwrap();
+
+        let mut readable = Vec::new();
+        for outcome in ["READY", "PASS", "FAIL", "REFUSAL", "VIOLATIONS", "OTHER"] {
+            for verify in [None, Some("PASS"), Some("FAIL"), Some("REFUSAL")] {
+                let mut report = json!({"version": "twinning.v0", "outcome": outcome});
+                if let Some(verify) = verify {
+                    report["verify"] = json!({"outcome": verify});
+                }
+                if validate_report(&report, TwinKind::Postgres, &path, &stderr).is_ok() {
+                    readable.push((outcome, verify));
+                }
+            }
+        }
+        assert_eq!(
+            readable,
+            [
+                ("READY", None),
+                ("PASS", Some("PASS")),
+                ("FAIL", Some("FAIL")),
+                ("REFUSAL", Some("REFUSAL")),
+            ]
+        );
+        // A verify section without an outcome is none of them.
+        let hollow = json!({"version": "twinning.v0", "outcome": "READY", "verify": {}});
+        assert!(validate_report(&hollow, TwinKind::Postgres, &path, &stderr).is_err());
     }
 
     #[test]

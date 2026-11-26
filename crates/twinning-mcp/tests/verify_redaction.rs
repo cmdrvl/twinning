@@ -1,6 +1,7 @@
 #![cfg(unix)]
-//! bd-uk5d through the MCP front end: a twin started by `twin_start` with `verify_path` must
-//! not hand raw row keys or cell values to the MCP client or leave them in its report file.
+//! Embedded verify through the MCP front end, with the real twin: it must not hand raw row
+//! keys or cell values to the MCP client or leave them in its report file (bd-uk5d), and the
+//! client must be able to read every way a served twin can end (bd-0yjb, bd-tgdr).
 
 use std::{
     env, fs,
@@ -62,7 +63,15 @@ struct Session {
     stderr: String,
 }
 
-fn run_twin(check: Value) -> Session {
+/// A server with a served twin that has committed one row and is waiting to be stopped.
+struct Running {
+    directory: tempfile::TempDir,
+    mcp: Mcp,
+    twin_id: String,
+    started: Value,
+}
+
+fn start_twin_with_row(check: Option<Value>, snapshot: bool) -> Running {
     let directory = tempdir().expect("MCP test directory");
     let workdir = directory.path().join("workdir");
     fs::create_dir_all(&workdir).expect("work directory");
@@ -71,18 +80,27 @@ fn run_twin(check: Value) -> Session {
         "CREATE TABLE public.deals (deal_id TEXT PRIMARY KEY, deal_name TEXT);\n",
     )
     .expect("schema");
-    fs::write(
-        workdir.join("verify.json"),
-        json!({
-            "version": "verify.constraint.v1",
-            "constraint_set_id": "mcp.redaction",
-            "bindings": [{"name": "public.deals", "kind": "relation", "key_fields": ["deal_id"]}],
-            "rules": [{"id": RULE_ID, "severity": "error", "portability": "portable",
-                "check": check}]
-        })
-        .to_string(),
-    )
-    .expect("verify artifact");
+    let mut arguments = json!({"kind": "postgres",
+        "schema_path": workdir.join("schema.sql").display().to_string()});
+    if let Some(check) = check {
+        fs::write(
+            workdir.join("verify.json"),
+            json!({
+                "version": "verify.constraint.v1",
+                "constraint_set_id": "mcp.redaction",
+                "bindings": [{"name": "public.deals", "kind": "relation",
+                              "key_fields": ["deal_id"]}],
+                "rules": [{"id": RULE_ID, "severity": "error", "portability": "portable",
+                           "check": check}]
+            })
+            .to_string(),
+        )
+        .expect("verify artifact");
+        arguments["verify_path"] = json!(workdir.join("verify.json").display().to_string());
+    }
+    if snapshot {
+        arguments["snapshot_path"] = json!(workdir.join("twin.snapshot").display().to_string());
+    }
 
     let mut mcp = Mcp::spawn(&workdir);
     mcp.request(
@@ -92,12 +110,7 @@ fn run_twin(check: Value) -> Session {
     );
     mcp.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
 
-    let started = mcp.tool(
-        "twin_start",
-        json!({"kind": "postgres",
-               "schema_path": workdir.join("schema.sql").display().to_string(),
-               "verify_path": workdir.join("verify.json").display().to_string()}),
-    );
+    let started = mcp.tool("twin_start", arguments);
     let twin_id = started["twin_id"].as_str().expect("twin id").to_owned();
     let connection = started["connection_string"].as_str().expect("connection");
     let port = connection
@@ -116,7 +129,21 @@ fn run_twin(check: Value) -> Session {
         "insert failed: {}",
         String::from_utf8_lossy(&child.stderr)
     );
+    Running {
+        directory,
+        mcp,
+        twin_id,
+        started,
+    }
+}
 
+fn run_twin(check: Option<Value>) -> Session {
+    let Running {
+        directory: _directory,
+        mut mcp,
+        twin_id,
+        started,
+    } = start_twin_with_row(check, false);
     let stopped = mcp.tool("twin_stop", json!({"twin_id": twin_id}));
     let report = mcp.tool("twin_report", json!({"twin_id": twin_id}));
     let report_file = report_files(&stopped, &report);
@@ -134,8 +161,8 @@ fn run_twin(check: Value) -> Session {
 /// the report with the refusal in it, not an unreadable-report error.
 #[test]
 fn mcp_returns_the_report_of_a_refused_check() {
-    let session = run_twin(json!({"op": "predicate", "binding": "public.deals",
-        "expr": {"gt": [{"column": "deal_name"}, 5]}}));
+    let session = run_twin(Some(json!({"op": "predicate", "binding": "public.deals",
+        "expr": {"gt": [{"column": "deal_name"}, 5]}})));
 
     assert_eq!(session.stopped["outcome"], "REFUSAL", "{}", session.stopped);
     assert_eq!(session.stopped["exit_code"], 2);
@@ -152,6 +179,62 @@ fn mcp_returns_the_report_of_a_refused_check() {
     }
 }
 
+/// bd-tgdr: every way a served twin can end, with the real binary. `twin_stop` and
+/// `twin_report` must both give the report.
+#[test]
+fn mcp_reads_every_way_a_served_twin_can_end() {
+    let not_null = json!({"op": "not_null", "binding": "public.deals", "columns": ["deal_id"]});
+    let fails = json!({"op": "predicate", "binding": "public.deals",
+        "expr": {"eq": [{"column": "deal_name"}, "Alpha"]}});
+    let refuses = json!({"op": "predicate", "binding": "public.deals",
+        "expr": {"gt": [{"column": "deal_name"}, 5]}});
+    for (check, outcome, exit_code, verify) in [
+        (None, "READY", 0, Value::Null),
+        (Some(not_null), "PASS", 0, json!("PASS")),
+        (Some(fails), "FAIL", 1, json!("FAIL")),
+        (Some(refuses), "REFUSAL", 2, json!("REFUSAL")),
+    ] {
+        let session = run_twin(check);
+
+        assert_eq!(session.stopped["outcome"], outcome, "{}", session.stopped);
+        assert_eq!(session.stopped["exit_code"], exit_code, "{outcome}");
+        assert_eq!(session.report["outcome"], outcome, "{}", session.report);
+        assert_eq!(session.report["verify"]["outcome"], verify, "{outcome}");
+    }
+}
+
+/// A twin that cannot write its output also exits 2 and prints `REFUSAL`, but wrote no
+/// report: through MCP that stays an error, whatever its checks would have said.
+#[test]
+fn mcp_keeps_a_process_refusal_an_error() {
+    let passes = json!({"op": "not_null", "binding": "public.deals", "columns": ["deal_id"]});
+    let Running {
+        directory,
+        mut mcp,
+        twin_id,
+        ..
+    } = start_twin_with_row(Some(passes), true);
+    // The snapshot is written when the twin stops; a directory in its place stops that.
+    fs::create_dir(directory.path().join("workdir/twin.snapshot")).expect("block snapshot");
+
+    for (tool, message) in [
+        ("twin_stop", "child exited with code 2"),
+        ("twin_report", "report unreadable"),
+    ] {
+        let response = mcp.request(
+            "tools/call",
+            json!({"name": tool, "arguments": {"twin_id": twin_id}}),
+        );
+        assert_eq!(response["result"]["isError"], true, "{tool}: {response}");
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("tool text");
+        assert!(text.contains("E_REPORT_UNREADABLE"), "{tool}: {text}");
+        assert!(text.contains(message), "{tool}: {text}");
+    }
+    mcp.finish();
+}
+
 #[test]
 fn mcp_twin_with_verify_never_returns_row_data() {
     let Session {
@@ -160,8 +243,8 @@ fn mcp_twin_with_verify_never_returns_row_data() {
         report,
         report_file,
         stderr,
-    } = run_twin(json!({"op": "predicate", "binding": "public.deals",
-        "expr": {"eq": [{"column": "deal_name"}, "Alpha"]}}));
+    } = run_twin(Some(json!({"op": "predicate", "binding": "public.deals",
+        "expr": {"eq": [{"column": "deal_name"}, "Alpha"]}})));
 
     assert_eq!(report["verify"]["outcome"], "FAIL", "{report}");
     assert_eq!(

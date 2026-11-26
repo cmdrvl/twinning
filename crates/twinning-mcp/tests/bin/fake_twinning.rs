@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 use signal_hook::iterator::Signals;
 
 const READY_REPORT: &str = include_str!("../fixtures/report_ready.json");
+/// A captured report of a failing check (outcome FAIL, verify FAIL): what goes with exit 1.
+const FAILED_REPORT: &str = include_str!("../fixtures/report_violations.json");
 
 fn main() {
     if let Err(error) = run() {
@@ -147,7 +149,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write_json(&path, &value)?;
         } else {
             let schema = value_after(&args, "--schema").unwrap_or_default();
-            let value: Value = serde_json::from_str(READY_REPORT)?;
+            // The report and the exit code have to belong together, as twinning's do.
+            let captured = if mode == "exit1_with_report" {
+                FAILED_REPORT
+            } else {
+                READY_REPORT
+            };
+            let value: Value = serde_json::from_str(captured)?;
             let mut value = value;
             substitute_report(
                 &mut value,
