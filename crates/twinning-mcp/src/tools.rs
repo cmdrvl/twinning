@@ -356,7 +356,7 @@ impl ToolService {
                 format!("report JSON invalid: {error}"),
             )
         })?;
-        report::twin_pair_proof_response(&proof, &report_path, &output.stderr)
+        report::twin_pair_proof_response(&proof, output.exit_code, &report_path, &output.stderr)
     }
 
     fn twin_list(&self, arguments: &Map<String, Value>) -> Result<Value, ToolError> {
@@ -885,6 +885,7 @@ fn resolve_argument_output(
 }
 
 struct ProofOutput {
+    exit_code: i32,
     stderr: String,
 }
 
@@ -975,20 +976,20 @@ fn run_twin_pair_proof(
     let stderr = stderr_reader
         .join()
         .unwrap_or_else(|_| "<unavailable>".into());
-    if !status.success() {
-        return Err(ToolError {
+    // A proof that reached a verdict exits 0 (PASS) or 1 (FAIL) with its report written.
+    // Anything else, a refusal's exit 2 included, never got that far.
+    match status.code() {
+        Some(exit_code @ (0 | 1)) => Ok(ProofOutput { exit_code, stderr }),
+        code => Err(ToolError {
             code: "E_INTERNAL",
             message: format!(
                 "twin-pair proof exited with {}; stderr_tail={}",
-                status
-                    .code()
-                    .map_or_else(|| "signal".into(), |code| code.to_string()),
+                code.map_or_else(|| "signal".into(), |code| code.to_string()),
                 stderr_tail_text(&stderr)
             ),
             hint: "Check the proof inputs and run twinning-mcp doctor",
-        });
+        }),
     }
-    Ok(ProofOutput { stderr })
 }
 
 fn read_stream_tail(mut reader: impl Read) -> String {

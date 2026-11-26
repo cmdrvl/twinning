@@ -186,6 +186,9 @@ fn fake_twin_pair_proof(args: &[String], mode: &str) -> Result<(), Box<dyn std::
         eprintln!("stub proof failure tail");
         std::process::exit(7);
     }
+    if let Ok(pair) = std::env::var("FAKE_TWINNING_PROOF_PAIR") {
+        return fake_proof_pair(args, &pair);
+    }
     let report = value_after(args, "--report").map(PathBuf::from);
     let count = if mode == "proof_many" { 201 } else { 1 };
     let verdict = if mode == "proof_fail" { "fail" } else { "pass" };
@@ -212,7 +215,54 @@ fn fake_twin_pair_proof(args: &[String], mode: &str) -> Result<(), Box<dyn std::
         fs::write(path, serde_json::to_vec(&value)?)?;
     }
     println!("{}", serde_json::to_string(&value)?);
+    if verdict == "fail" {
+        std::process::exit(1);
+    }
     Ok(())
+}
+
+/// `<report shape>:<how to end>`: any report shape with any exit, including the pairs real
+/// twinning cannot produce.
+fn fake_proof_pair(args: &[String], pair: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let (shape, end) = pair.split_once(':').ok_or("pair is <shape>:<end>")?;
+    let report = |outcome: &str, verdicts: &[&str]| {
+        let cases = verdicts
+            .iter()
+            .enumerate()
+            .map(|(index, verdict)| json!({"case_id": format!("case_{index}"), "verdict": verdict}))
+            .collect::<Vec<_>>();
+        json!({
+            "version": "twinning.twin-pair-proof.v0",
+            "proof_id": "stub-proof",
+            "outcome": outcome,
+            "endpoints": [],
+            "cases": cases
+        })
+        .to_string()
+    };
+    let text = match shape {
+        "pass" => Some(report("PASS", &["pass", "skip"])),
+        "pass_all_skipped" => Some(report("PASS", &["skip"])),
+        "fail" => Some(report("FAIL", &["fail"])),
+        "fail_mixed" => Some(report("FAIL", &["pass", "fail", "skip"])),
+        "pass_with_failed_case" => Some(report("PASS", &["pass", "fail"])),
+        "fail_without_failed_case" => Some(report("FAIL", &["pass", "skip"])),
+        "refusal_outcome" => Some(report("REFUSAL", &["pass"])),
+        "ready_outcome" => Some(report("READY", &["pass"])),
+        "garbage" => Some(String::from("not json")),
+        "no_report" => None,
+        _ => return Err("unknown report shape".into()),
+    };
+    if let (Some(text), Some(path)) = (text, value_after(args, "--report").map(PathBuf::from)) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, text)?;
+    }
+    match end {
+        "abort" => std::process::abort(),
+        code => std::process::exit(code.parse()?),
+    }
 }
 
 fn rest_argv_summary(args: &[String]) -> Value {

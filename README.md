@@ -161,7 +161,8 @@ The stdio MCP server exposes seven tools:
 For Postgres twins, `snapshot_path` writes a snapshot when the twin stops, and
 `declaration_path` supplies the declared catalog identity. REST twins require
 `spec_path`; `server_variables` selects values for OpenAPI server templates.
-`twin_pair_proof` reads Postgres snapshots and a replay query file.
+`twin_pair_proof` reads Postgres snapshots and a replay query file. A `FAIL`
+proof is a result, not a tool error; a proof that could not run is an error.
 
 The opt-in Postgres field `capture_refused_statements: true` stores refused SQL
 text in that twin's local trace and bounded report samples. Refused SQL can

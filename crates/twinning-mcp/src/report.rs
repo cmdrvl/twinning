@@ -159,6 +159,7 @@ pub fn full_rest_report(report: &Value, report_path: &Path) -> Value {
 
 pub fn twin_pair_proof_response(
     proof: &Value,
+    exit_code: i32,
     report_path: &Path,
     stderr_tail: &str,
 ) -> Result<Value, ToolError> {
@@ -195,6 +196,21 @@ pub fn twin_pair_proof_response(
         {
             return Err(invalid("case has an unsupported shape"));
         }
+    }
+    // `proof twin-pair` writes exactly two pairs: FAIL, exit 1, when some case failed;
+    // otherwise PASS, exit 0.
+    let (outcome, expected_exit) = if cases.iter().any(|case| case["verdict"] == "fail") {
+        ("FAIL", 1)
+    } else {
+        ("PASS", 0)
+    };
+    if proof["outcome"] != outcome {
+        return Err(invalid("outcome does not match the case verdicts"));
+    }
+    if exit_code != expected_exit {
+        return Err(invalid(&format!(
+            "a {outcome} proof does not exit {exit_code}"
+        )));
     }
     let truncated = cases.len() > 200;
     let response_cases = cases

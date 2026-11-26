@@ -1879,7 +1879,7 @@ fn pp02_twin_pair_proof_returns_validated_happy_report() {
 }
 
 #[test]
-fn pp03_twin_pair_proof_preserves_fail_outcome_when_child_exit_is_zero() {
+fn pp03_twin_pair_proof_returns_a_fail_proof_from_exit_one() {
     let temp = test_tempdir();
     let workdir = create_workdir(
         temp.path(),
@@ -1893,6 +1893,76 @@ fn pp03_twin_pair_proof_preserves_fail_outcome_when_child_exit_is_zero() {
     assert_eq!("fail", result["cases"][0]["verdict"]);
     assert_eq!(json!(["result_hash"]), result["cases"][0]["mismatches"]);
     assert!(server.finish("PP03").status.success());
+}
+
+/// bd-m9v2: every report shape with every way the child can end. Only the two pairs
+/// `proof twin-pair` produces are a proof; a report is read only after exit 0 or 1.
+#[test]
+fn pp09_twin_pair_proof_accepts_only_the_pairs_proof_can_produce() {
+    const SHAPES: [&str; 10] = [
+        "pass",
+        "pass_all_skipped",
+        "fail",
+        "fail_mixed",
+        "pass_with_failed_case",
+        "fail_without_failed_case",
+        "refusal_outcome",
+        "ready_outcome",
+        "garbage",
+        "no_report",
+    ];
+    const ENDS: [&str; 6] = ["0", "1", "2", "3", "101", "abort"];
+
+    let mut accepted = Vec::new();
+    for shape in SHAPES {
+        for end in ENDS {
+            let temp = test_tempdir();
+            let workdir = create_workdir(
+                temp.path(),
+                "CREATE TABLE public.deals (id INT PRIMARY KEY);",
+            );
+            let (left, right, queries) = proof_inputs(&workdir);
+            let mut server = TestServer::new(
+                &temp,
+                LaunchOptions {
+                    workdir: Some(workdir.clone()),
+                    fake_mode: Some("proof_pass"),
+                    env: vec![("FAKE_TWINNING_PROOF_PAIR".into(), format!("{shape}:{end}"))],
+                    ..LaunchOptions::default()
+                },
+            );
+            let response = server.call_tool("twin_pair_proof", proof_args(&left, &right, &queries));
+            if response["result"]["isError"] == false {
+                let proof = successful_tool(&response);
+                accepted.push((shape, end, proof["outcome"].as_str().unwrap().to_owned()));
+            } else {
+                // A child that did not end as a finished proof is an internal error, as
+                // before; one that did, with the wrong report, is an unreadable report.
+                let code = if matches!(end, "0" | "1") {
+                    "E_REPORT_UNREADABLE"
+                } else {
+                    "E_INTERNAL"
+                };
+                let error = failed_tool(&response, code);
+                let message = error["error"]["message"].as_str().unwrap();
+                assert!(message.contains("stderr_tail"), "{shape}:{end}: {message}");
+            }
+            assert!(server.finish("PP09").status.success());
+        }
+    }
+    let accepted = accepted
+        .iter()
+        .map(|(shape, end, outcome)| (*shape, *end, outcome.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        accepted,
+        [
+            ("pass", "0", "PASS"),
+            ("pass_all_skipped", "0", "PASS"),
+            ("fail", "1", "FAIL"),
+            ("fail_mixed", "1", "FAIL"),
+        ]
+    );
 }
 
 #[test]
