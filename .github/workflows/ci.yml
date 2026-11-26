@@ -85,8 +85,10 @@ jobs:
             twinning -> target
       - name: Install uv (real-driver compat tests shell out to uv)
         uses: astral-sh/setup-uv@v5
+      # --workspace: without it cargo tests only the root package, and no crate's tests run
+      # (twinning-mcp's among them). --no-fail-fast so one failure does not hide the rest.
       - name: Run tests
-        run: cargo test
+        run: cargo test --workspace --no-fail-fast
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.name }})
