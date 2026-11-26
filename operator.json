@@ -231,11 +231,11 @@
   },
   "exit_codes": {
     "0": {
-      "meaning": "READY",
+      "meaning": "READY (bootstrap/run_once clean) or twin-pair proof PASS",
       "domain": "positive"
     },
     "1": {
-      "meaning": "VIOLATIONS",
+      "meaning": "VIOLATIONS (embedded verify failed in run_once) or twin-pair proof FAIL",
       "domain": "negative"
     },
     "2": {

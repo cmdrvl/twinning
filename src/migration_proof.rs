@@ -377,7 +377,7 @@ fn execute_twin_pair_snapshots(
     };
 
     Ok(Execution {
-        exit_code: 0,
+        exit_code: proof_exit_code(&report),
         stdout,
     })
 }
@@ -458,9 +458,18 @@ fn execute_twin_pair_orchestrate(
     };
 
     Ok(Execution {
-        exit_code: 0,
+        exit_code: proof_exit_code(&report),
         stdout,
     })
+}
+
+/// Spine exit contract for a proof that ran to a verdict: `0` PASS, `1` FAIL. Refusals and CLI
+/// errors never reach this point; they exit `2` through [`execute`].
+fn proof_exit_code(report: &TwinPairProofReport) -> u8 {
+    match report.outcome {
+        TwinPairProofOutcome::Pass => 0,
+        TwinPairProofOutcome::Fail => 1,
+    }
 }
 
 struct EndpointReportSpec<'a> {

@@ -473,6 +473,199 @@ fn proof_cli_orchestrate_refuses_unsupported_schema_load_statement() {
     assert!(!right_output.exists());
 }
 
+// ---------------------------------------------------------------------------
+// bd-lvla: spine exit-code contract for the proof outcome. PASS = 0, FAIL = 1, refusal / CLI
+// error = 2, for `proof twin-pair` and `proof twin-pair orchestrate`, in JSON and human mode.
+// ---------------------------------------------------------------------------
+
+fn twin_pair_command(left: &Path, right: &Path) -> Command {
+    let mut command = Command::new(twinning_bin());
+    command
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("--left")
+        .arg(left)
+        .arg("--right")
+        .arg(right)
+        .arg("--queries")
+        .arg(fixture_dir().join("cases.json"));
+    command
+}
+
+#[test]
+fn proof_cli_exits_one_when_the_proof_outcome_is_fail() {
+    let workspace = tempdir().expect("workspace");
+    let left_snapshot = workspace.path().join("left.twin");
+    let right_snapshot = workspace.path().join("right.twin");
+    let report_path = workspace.path().join("proof.json");
+    write_fixture_snapshot(&left_snapshot, "relations-pass-left.json", true);
+    write_fixture_snapshot(&right_snapshot, "relations-diverged-right.json", true);
+
+    let output = twin_pair_command(&left_snapshot, &right_snapshot)
+        .arg("--json")
+        .arg("--report")
+        .arg(&report_path)
+        .output()
+        .expect("run proof cli");
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf-8");
+
+    // The report still records the FAIL; the exit code must say so too.
+    let report: Value = serde_json::from_str(&stdout).expect("parse proof stdout");
+    assert_eq!(report["outcome"], "FAIL", "stdout={stdout}");
+    let written: Value =
+        serde_json::from_str(&fs::read_to_string(&report_path).expect("read report"))
+            .expect("parse written report");
+    assert_eq!(written["outcome"], "FAIL");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a FAIL proof must exit 1; stdout={stdout}; stderr={stderr}"
+    );
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+}
+
+#[test]
+fn proof_cli_exits_one_on_fail_in_human_mode_too() {
+    let workspace = tempdir().expect("workspace");
+    let left_snapshot = workspace.path().join("left.twin");
+    let right_snapshot = workspace.path().join("right.twin");
+    write_fixture_snapshot(&left_snapshot, "relations-pass-left.json", true);
+    write_fixture_snapshot(&right_snapshot, "relations-diverged-right.json", true);
+
+    let output = twin_pair_command(&left_snapshot, &right_snapshot)
+        .output()
+        .expect("run proof cli");
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    assert!(
+        stdout.to_lowercase().contains("fail"),
+        "human output must say fail: {stdout}"
+    );
+    assert_eq!(output.status.code(), Some(1), "stdout={stdout}");
+}
+
+#[test]
+fn proof_cli_exits_zero_on_pass_in_json_and_human_mode() {
+    let workspace = tempdir().expect("workspace");
+    let left_snapshot = workspace.path().join("left.twin");
+    let right_snapshot = workspace.path().join("right.twin");
+    write_fixture_snapshot(&left_snapshot, "relations-pass-left.json", true);
+    write_fixture_snapshot(&right_snapshot, "relations-pass-right.json", true);
+
+    for json_flag in [true, false] {
+        let mut command = twin_pair_command(&left_snapshot, &right_snapshot);
+        if json_flag {
+            command.arg("--json");
+        }
+        let output = command.output().expect("run proof cli");
+        let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+        assert!(
+            stdout.to_lowercase().contains("pass"),
+            "json={json_flag}: {stdout}"
+        );
+        assert_eq!(output.status.code(), Some(0), "json={json_flag}: {stdout}");
+    }
+}
+
+#[test]
+fn proof_cli_orchestrate_exits_one_when_the_proof_outcome_is_fail() {
+    let workspace = tempdir().expect("workspace");
+    let left_input = workspace.path().join("input-left.twin");
+    let right_input = workspace.path().join("input-right.twin");
+    let left_output = workspace.path().join("out").join("legacy.twin");
+    let right_output = workspace.path().join("out").join("candidate.twin");
+    let report_path = workspace.path().join("out").join("proof.json");
+    let bundle_dir = workspace.path().join("bundle");
+    let manifest_path = workspace.path().join("manifest.json");
+    write_fixture_snapshot(&left_input, "relations-pass-left.json", true);
+    write_fixture_snapshot(&right_input, "relations-diverged-right.json", true);
+    write_json(
+        &manifest_path,
+        &restore_orchestration_manifest(
+            &left_input,
+            &right_input,
+            &report_path,
+            &left_output,
+            &right_output,
+            &bundle_dir,
+        ),
+    );
+
+    let output = Command::new(twinning_bin())
+        .arg("--json")
+        .arg("proof")
+        .arg("twin-pair")
+        .arg("orchestrate")
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .output()
+        .expect("run proof orchestrator");
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf-8");
+    let report: Value = serde_json::from_str(&stdout).expect("parse proof stdout");
+    assert_eq!(report["outcome"], "FAIL", "stdout={stdout}");
+    // The artifacts are still written for a FAIL proof, so the evidence can be inspected.
+    assert!(report_path.exists() && left_output.exists() && right_output.exists());
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a FAIL orchestrated proof must exit 1; stdout={stdout}; stderr={stderr}"
+    );
+}
+
+#[test]
+fn proof_cli_refusals_and_usage_errors_exit_two_in_both_subcommands() {
+    let workspace = tempdir().expect("workspace");
+    let missing = workspace.path().join("does-not-exist.twin");
+    let present = workspace.path().join("present.twin");
+    write_fixture_snapshot(&present, "relations-pass-left.json", true);
+
+    // A missing snapshot file is a refusal.
+    let output = twin_pair_command(&missing, &present)
+        .arg("--json")
+        .output()
+        .expect("run proof cli");
+    assert_eq!(output.status.code(), Some(2), "missing file");
+    let refusal: Value = serde_json::from_slice(&output.stdout).expect("parse refusal");
+    assert_eq!(refusal["outcome"], "REFUSAL");
+
+    // A missing required option is a refusal.
+    let output = Command::new(twinning_bin())
+        .args(["--json", "proof", "twin-pair", "--left"])
+        .arg(&present)
+        .output()
+        .expect("run proof cli");
+    assert_eq!(output.status.code(), Some(2), "missing --right/--queries");
+
+    // An unknown flag is a usage error.
+    let output = Command::new(twinning_bin())
+        .args(["proof", "twin-pair", "--no-such-flag"])
+        .output()
+        .expect("run proof cli");
+    assert_eq!(output.status.code(), Some(2), "unknown flag");
+
+    // Orchestrate: a manifest that does not exist is a refusal.
+    let output = Command::new(twinning_bin())
+        .args(["--json", "proof", "twin-pair", "orchestrate", "--manifest"])
+        .arg(workspace.path().join("no-manifest.json"))
+        .output()
+        .expect("run proof orchestrator");
+    assert_eq!(output.status.code(), Some(2), "missing manifest");
+    let refusal: Value = serde_json::from_slice(&output.stdout).expect("parse refusal");
+    assert_eq!(refusal["outcome"], "REFUSAL");
+
+    // Orchestrate: missing --manifest is a usage error.
+    let output = Command::new(twinning_bin())
+        .args(["proof", "twin-pair", "orchestrate"])
+        .output()
+        .expect("run proof orchestrator");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "orchestrate without --manifest"
+    );
+}
+
 fn write_fixture_snapshot(path: &Path, relations_file: &str, attach_declaration: bool) {
     let schema_bytes = fs::read(schema_path()).expect("read schema");
     let schema_hash = sha256_prefixed(&schema_bytes);
@@ -611,6 +804,11 @@ fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_ROOT)
 }
 
+/// The binary under test. `TWINNING_BIN` points the same tests at another build (for
+/// example a released binary, to reproduce a bug before fixing it).
 fn twinning_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_twinning"))
+    match std::env::var_os("TWINNING_BIN") {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => PathBuf::from(env!("CARGO_BIN_EXE_twinning")),
+    }
 }

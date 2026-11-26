@@ -437,7 +437,13 @@ pub struct ProofArgs {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum ProofCommand {
-    #[command(name = "twin-pair", about = "Compare two Postgres twin snapshots")]
+    #[command(
+        name = "twin-pair",
+        about = "Compare two Postgres twin snapshots",
+        long_about = "Compare two Postgres twin snapshots over one proof query fixture. \
+Exit codes: 0 = proof PASS, 1 = proof FAIL (the report is still written), 2 = refusal or CLI error. \
+The same mapping applies to `twin-pair orchestrate`."
+    )]
     TwinPair(TwinPairProofArgs),
 }
 

@@ -671,8 +671,8 @@ Exit codes:
 
 | Exit | Meaning |
 |------|---------|
-| `0` | clean bootstrap, `run_once`, or `--serve` completion without embedded verify failure |
-| `1` | live finalization completed but embedded verify reported `FAIL` |
+| `0` | clean bootstrap, `run_once`, or `--serve` completion without embedded verify failure; `proof twin-pair` (and `orchestrate`) with outcome `PASS` |
+| `1` | live finalization completed but embedded verify reported `FAIL`; `proof twin-pair` (and `orchestrate`) with outcome `FAIL` (the report is still written) |
 | `2` | refusal / bootstrap failure / CLI error |
 
 Live-shape discipline:
