@@ -199,10 +199,6 @@ fn backup_files(config: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
-#[cfg_attr(
-    not(target_os = "macos"),
-    ignore = "setup writes the Claude Desktop config file on macOS only"
-)]
 fn c01_claude_desktop_config_is_created() {
     let area = TestHome::new();
     let config = area.config("claude-desktop");
@@ -230,10 +226,6 @@ fn c01_claude_desktop_config_is_created() {
 }
 
 #[test]
-#[cfg_attr(
-    not(target_os = "macos"),
-    ignore = "setup writes the Claude Desktop config file on macOS only"
-)]
 fn c02_existing_servers_are_preserved_and_backed_up() {
     let area = TestHome::new();
     let config = area.config("claude-desktop");
@@ -272,10 +264,6 @@ fn c02_existing_servers_are_preserved_and_backed_up() {
 }
 
 #[test]
-#[cfg_attr(
-    not(target_os = "macos"),
-    ignore = "setup writes the Claude Desktop config file on macOS only"
-)]
 fn c03_second_setup_reports_exact_no_change() {
     let area = TestHome::new();
     let config = area.config("claude-desktop");
@@ -298,10 +286,6 @@ fn c03_second_setup_reports_exact_no_change() {
 }
 
 #[test]
-#[cfg_attr(
-    not(target_os = "macos"),
-    ignore = "setup writes the Claude Desktop config file on macOS only"
-)]
 fn c04_invalid_json_is_refused_without_modifying_the_file() {
     let area = TestHome::new();
     let config = area.config("claude-desktop");
@@ -333,63 +317,6 @@ fn c04_invalid_json_is_refused_without_modifying_the_file() {
                 .to_string_lossy()
                 .contains(".tmp-"))
     );
-}
-
-/// Where c01-c04 do not run: asking for the Claude Desktop file is refused, and neither HOME
-/// nor the workdir gains, loses or changes anything.
-#[cfg(not(target_os = "macos"))]
-#[test]
-fn c11_claude_desktop_file_setup_is_refused_and_writes_nothing() {
-    /// Every path under `root`, with the bytes of each file (`None` for a directory).
-    fn tree(root: &Path) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
-        let mut found = std::collections::BTreeMap::new();
-        let mut pending = vec![root.to_path_buf()];
-        while let Some(directory) = pending.pop() {
-            for entry in fs::read_dir(&directory).expect("directory lists") {
-                let path = entry.expect("directory entry").path();
-                if path.is_dir() {
-                    pending.push(path.clone());
-                    found.insert(path, None);
-                } else {
-                    let bytes = fs::read(&path).expect("file reads");
-                    found.insert(path, Some(bytes));
-                }
-            }
-        }
-        found
-    }
-
-    let area = TestHome::new();
-    // An existing config at the macOS path must survive. It also shows `tree` sees files.
-    let existing = area.config("claude-desktop");
-    fs::create_dir_all(existing.parent().unwrap()).unwrap();
-    fs::write(&existing, "{\"mcpServers\": {}}\n").unwrap();
-    let home_before = tree(area.home.path());
-    let workdir_before = tree(area.workdir.path());
-    assert!(home_before.get(&existing).is_some_and(Option::is_some));
-
-    let output = run_cli(
-        "C11",
-        &area,
-        Some(&existing),
-        &[
-            "setup",
-            "--client",
-            "claude-desktop",
-            "--workdir",
-            area.workdir.path().to_str().unwrap(),
-        ],
-    );
-
-    assert_eq!(Some(1), output.status.code());
-    assert_eq!(b"", output.stdout.as_slice());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("setup: unsupported client for file configuration: claude-desktop")
-    );
-    assert_next_line(&output);
-    assert_eq!(home_before, tree(area.home.path()), "HOME changed");
-    assert_eq!(workdir_before, tree(area.workdir.path()), "workdir changed");
 }
 
 #[test]

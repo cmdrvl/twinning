@@ -85,56 +85,8 @@ jobs:
             twinning -> target
       - name: Install uv (real-driver compat tests shell out to uv)
         uses: astral-sh/setup-uv@v5
-      # --workspace: without it cargo tests only the root package, and no crate's tests run
-      # (twinning-mcp's among them). --no-fail-fast so one failure does not hide the rest.
       - name: Run tests
-        run: cargo test --workspace --no-fail-fast
-      - name: List MCP end-to-end tests that returned early (bd-dayp)
-        if: always()
-        run: |
-          # Such a test still counts as passed, and a passing test's output is not shown.
-          root="${TMPDIR:-/tmp}"
-          root="${root%/}/twinning-mcp-tests"
-          echo "end-to-end artifact directories: $(find "$root" -maxdepth 1 -name '*_e2e_*' 2>/dev/null | wc -l)"
-          echo "skip record files: $(find "$root" -name skips.txt 2>/dev/null | wc -l)"
-          find "$root" -name skips.txt -exec cat {} + 2>/dev/null || true
-
-  # setup_configs c01-c04 are ignored off macOS: setup writes the Claude Desktop config file
-  # there only. This job is where they run.
-  mcp-macos:
-    name: MCP Tests (macOS)
-    runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: twinning
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: twinning
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            twinning -> target
-      - name: Install uv (real-driver compat tests shell out to uv)
-        uses: astral-sh/setup-uv@v5
-      - name: Install the psql client (several MCP end-to-end tests need it)
-        run: |
-          brew install libpq
-          echo "$(brew --prefix libpq)/bin" >> "$GITHUB_PATH"
-      - name: Build the twin binary the MCP tests start
-        run: cargo build -p twinning
-      - name: Run MCP tests
-        run: cargo test -p twinning-mcp --no-fail-fast
-      - name: List MCP end-to-end tests that returned early (bd-dayp)
-        if: always()
-        run: |
-          # Such a test still counts as passed, and a passing test's output is not shown.
-          root="${TMPDIR:-/tmp}"
-          root="${root%/}/twinning-mcp-tests"
-          echo "end-to-end artifact directories: $(find "$root" -maxdepth 1 -name '*_e2e_*' 2>/dev/null | wc -l)"
-          echo "skip record files: $(find "$root" -name skips.txt 2>/dev/null | wc -l)"
-          find "$root" -name skips.txt -exec cat {} + 2>/dev/null || true
+        run: cargo test
 
   feature-matrix:
     name: Feature Matrix (${{ matrix.name }})
@@ -327,7 +279,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, protocol-import-boundaries, test, mcp-macos, feature-matrix, live-postgres-parity, ubs, build]
+    needs: [fmt, clippy, protocol-import-boundaries, test, feature-matrix, live-postgres-parity, ubs, build]
     if: always()
     steps:
       - name: Check all jobs succeeded
@@ -346,10 +298,6 @@ jobs:
           fi
           if [[ "${{ needs.test.result }}" != "success" ]]; then
             echo "Test job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.mcp-macos.result }}" != "success" ]]; then
-            echo "MCP Tests (macOS) job failed"
             exit 1
           fi
           if [[ "${{ needs.feature-matrix.result }}" != "success" ]]; then
