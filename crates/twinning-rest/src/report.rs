@@ -3,6 +3,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use twinning_kernel::report::RunReport;
 
 use super::{
     canary::RestCanaryReport,
@@ -23,6 +24,10 @@ pub struct RestReport {
     pub session: RestSessionSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canary: Option<RestCanaryReport>,
+    /// The `--run` child's result, present only when it failed; same shape as the Postgres
+    /// report's `run`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunReport>,
     pub next_step: String,
 }
 
@@ -53,9 +58,18 @@ impl RestReport {
             spec,
             session,
             canary,
+            run: None,
             next_step: String::from(
                 "Inspect the REST session coverage and canary failures before relying on this twin for client migration proof.",
             ),
+        }
+    }
+
+    /// A failed child makes the outcome FAIL and is recorded. A successful one changes nothing.
+    pub fn record_child(&mut self, child: &RunReport) {
+        if child.failed() {
+            self.outcome = String::from("FAIL");
+            self.run = Some(child.clone());
         }
     }
 

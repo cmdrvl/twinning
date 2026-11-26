@@ -29,6 +29,7 @@ use signal_hook::{
     iterator::Signals,
 };
 use tokio::{net::TcpListener, runtime::Builder as TokioRuntimeBuilder};
+use twinning_kernel::report::RunReport;
 
 use crate::{
     backend::BaseSnapshotBackend,
@@ -124,7 +125,7 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
         let server = start_server(&config)?;
         wait_for_shutdown_signal()?;
         let state = shutdown_and_join(server)?;
-        write_rest_report_if_requested(&config, &state)?;
+        write_rest_report_if_requested(&config, &state, None)?;
         return Ok(Execution {
             exit_code: 0,
             stdout: String::from("REST twin stopped.\n"),
@@ -134,8 +135,15 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
     let server = start_server(&config)?;
     let base_url = format!("http://{}", server.addr);
     let child = run_child_with_base_url(&run_command, &base_url)?;
+    // These twins give the child no time limit, so it cannot have timed out.
+    let child_report = RunReport {
+        command: run_command.clone(),
+        exit_code: child.code(),
+        signal: exit_signal(&child),
+        timed_out: false,
+    };
     let state = shutdown_and_join(server)?;
-    write_rest_report_if_requested(&config, &state)?;
+    write_rest_report_if_requested(&config, &state, Some(&child_report))?;
 
     let mut stdout = format!(
         "REST twin child command completed: exit_code={:?} signal={:?} timed_out=false\n",
@@ -145,7 +153,7 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
     if json_mode {
         stdout = serde_json::to_string_pretty(&json!({
             "version": "twinning.rest-run.v0",
-            "outcome": "PASS",
+            "outcome": if child_report.failed() { "FAIL" } else { "PASS" },
             "child": {
                 "command": run_command,
                 "exit_code": child.code(),
@@ -174,7 +182,7 @@ pub fn start_test_server(config: RestConfig) -> (SocketAddr, mpsc::Sender<()>) {
         let _ = shutdown_rx.recv();
         match shutdown_and_join(server) {
             Ok(state) => {
-                if let Err(error) = write_rest_report_if_requested(&config, &state) {
+                if let Err(error) = write_rest_report_if_requested(&config, &state, None) {
                     eprintln!("failed to write REST test report: {error:?}");
                 }
             }
@@ -1368,6 +1376,7 @@ fn shutdown_and_join(server: RunningRestServer) -> RefusalResult<Arc<RestSharedS
 fn write_rest_report_if_requested(
     config: &RestConfig,
     state: &RestSharedState,
+    child: Option<&RunReport>,
 ) -> RefusalResult<()> {
     let Some(path) = &config.report_path else {
         return Ok(());
@@ -1393,7 +1402,7 @@ fn write_rest_report_if_requested(
         ),
         None => None,
     };
-    let report = RestReport::new(
+    let mut report = RestReport::new(
         RestSpecReport {
             source: config.spec_path.display().to_string(),
             hash: state.catalog.spec_hash.clone(),
@@ -1404,6 +1413,9 @@ fn write_rest_report_if_requested(
         session,
         canary,
     );
+    if let Some(child) = child {
+        report.record_child(child);
+    }
     write_json_report(path, &report)
 }
 
@@ -1780,7 +1792,8 @@ paths:
         shape_config.auth_mode = Some(RestAuthMode::Shape);
         shape_config.report_path = Some(shape_report_path.clone());
         let shape_state = build_shared_state(&shape_config).expect("build shape state");
-        write_rest_report_if_requested(&shape_config, &shape_state).expect("write shape report");
+        write_rest_report_if_requested(&shape_config, &shape_state, None)
+            .expect("write shape report");
         let shape_report: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(&shape_report_path).expect("read shape report"),
         )
@@ -1792,7 +1805,8 @@ paths:
         bypass_config.auth_mode = Some(RestAuthMode::Bypass);
         bypass_config.report_path = Some(bypass_report_path.clone());
         let bypass_state = build_shared_state(&bypass_config).expect("build bypass state");
-        write_rest_report_if_requested(&bypass_config, &bypass_state).expect("write bypass report");
+        write_rest_report_if_requested(&bypass_config, &bypass_state, None)
+            .expect("write bypass report");
         let bypass_report: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(&bypass_report_path).expect("read bypass report"),
         )
@@ -1991,7 +2005,7 @@ paths:
                 refusal: None,
             });
 
-        write_rest_report_if_requested(&config, &state).expect("write report");
+        write_rest_report_if_requested(&config, &state, None).expect("write report");
 
         let rendered = fs::read_to_string(&report_path).expect("read report");
         let report: serde_json::Value = serde_json::from_str(&rendered).expect("parse report");

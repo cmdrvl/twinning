@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
+use twinning_kernel::report::RunReport;
 
 use crate::catalog::SnowflakeCatalog;
 
@@ -35,6 +36,15 @@ impl SnowflakeSessionMetrics {
 
     pub fn record_error(&mut self) {
         self.error_count += 1;
+    }
+}
+
+/// A failed `--run` child makes the report's outcome FAIL and is recorded under `run`, with
+/// the Postgres report's shape. A successful child changes nothing.
+pub fn record_child(report: &mut JsonValue, child: &RunReport) {
+    if child.failed() {
+        report["outcome"] = json!("FAIL");
+        report["run"] = json!(child);
     }
 }
 

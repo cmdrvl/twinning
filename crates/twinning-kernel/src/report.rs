@@ -181,6 +181,14 @@ pub struct RunReport {
     pub timed_out: bool,
 }
 
+impl RunReport {
+    /// Did the `--run` child fail? One rule for every twin: it timed out, a signal ended it,
+    /// or it did not exit 0.
+    pub fn failed(&self) -> bool {
+        self.timed_out || self.signal.is_some() || self.exit_code != Some(0)
+    }
+}
+
 pub type RatioMap = BTreeMap<String, f64>;
 
 pub struct TwinReportSeed<'a> {
@@ -387,10 +395,6 @@ fn optional_ratio_map_is_absent(value: &Option<RatioMap>) -> bool {
     }
 }
 
-fn run_failed(run: &RunReport) -> bool {
-    run.timed_out || run.signal.is_some() || run.exit_code != Some(0)
-}
-
 /// In order of precedence: a refused check, a failed child, then the checks' own result. A
 /// refused check was never evaluated, so nothing else in the run may stand in for it; the
 /// child's result stays in `run` and the engine's refusal in `verify`.
@@ -399,7 +403,7 @@ fn report_outcome(run: Option<&RunReport>, verify: Option<&Value>) -> &'static s
         return "REFUSAL";
     }
 
-    if run.is_some_and(run_failed) {
+    if run.is_some_and(RunReport::failed) {
         return "FAIL";
     }
 

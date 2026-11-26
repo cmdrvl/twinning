@@ -12,6 +12,26 @@
     "outcome": {
       "enum": ["PASS", "FAIL"]
     },
+    "run": {
+      "description": "The --run child, present only when it failed (the outcome is then FAIL). An exit code or signal that does not apply is left out.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "timed_out"],
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "signal": {
+          "type": "integer"
+        },
+        "timed_out": {
+          "type": "boolean"
+        }
+      }
+    },
     "spec": {
       "type": "object",
       "additionalProperties": false,

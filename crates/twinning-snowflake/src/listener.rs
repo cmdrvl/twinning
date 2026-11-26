@@ -30,6 +30,7 @@ use signal_hook::{
 use tokio::{net::TcpListener, runtime::Builder as TokioRuntimeBuilder};
 use twinning_kernel::{
     refusal::{self, RefusalEnvelope, RefusalResult},
+    report::RunReport,
     runtime::Execution,
 };
 use uuid::Uuid;
@@ -39,7 +40,7 @@ use crate::{
     config::SnowflakeConfig,
     materialize::apply_source_materialization,
     query::{query_request, query_result},
-    report::NEXT_STEP,
+    report::{NEXT_STEP, record_child},
     session::{SnowflakeSession, SnowflakeSharedState},
 };
 
@@ -134,8 +135,15 @@ fn run_inner(config: SnowflakeConfig) -> RefusalResult<Execution> {
     let server = start_server(&config)?;
     let base_url = format!("http://{}", server.addr);
     let child = run_child_with_base_url(&run_command, &base_url)?;
+    // These twins give the child no time limit, so it cannot have timed out.
+    let child_report = RunReport {
+        command: run_command.clone(),
+        exit_code: child.code(),
+        signal: exit_signal(&child),
+        timed_out: false,
+    };
     let state = shutdown_and_join(server)?;
-    write_report_if_requested(&config, &state)?;
+    write_report_if_requested_path(config.report_path.as_ref(), &state, Some(&child_report))?;
 
     let mut stdout = format!(
         "Snowflake twin child command completed: exit_code={:?} signal={:?} timed_out=false\n",
@@ -145,7 +153,7 @@ fn run_inner(config: SnowflakeConfig) -> RefusalResult<Execution> {
     if json_mode {
         stdout = serde_json::to_string_pretty(&json!({
             "version": "twinning.snowflake-run.v0",
-            "outcome": "PASS",
+            "outcome": if child_report.failed() { "FAIL" } else { "PASS" },
             "child": {
                 "command": run_command,
                 "exit_code": child.code(),
@@ -194,7 +202,7 @@ impl EmbeddedSnowflakeServer {
             .expect("embedded Snowflake server should only shut down once");
         let addr = server.addr;
         let state = shutdown_and_join(server)?;
-        write_report_if_requested_path(self.report_path.as_ref(), &state)?;
+        write_report_if_requested_path(self.report_path.as_ref(), &state, None)?;
         snowflake_server_session(addr, &state)
     }
 }
@@ -800,17 +808,22 @@ fn write_report_if_requested(
     config: &SnowflakeConfig,
     state: &SnowflakeSharedState,
 ) -> RefusalResult<()> {
-    write_report_if_requested_path(config.report_path.as_ref(), state)
+    write_report_if_requested_path(config.report_path.as_ref(), state, None)
 }
 
 fn write_report_if_requested_path(
     path: Option<&PathBuf>,
     state: &SnowflakeSharedState,
+    child: Option<&RunReport>,
 ) -> RefusalResult<()> {
     let Some(path) = path else {
         return Ok(());
     };
-    let rendered = serde_json::to_string_pretty(&state.report_value()).map_err(|error| {
+    let mut report = state.report_value();
+    if let Some(child) = child {
+        record_child(&mut report, child);
+    }
+    let rendered = serde_json::to_string_pretty(&report).map_err(|error| {
         Box::new(refusal::runtime_io(
             "snowflake_report_render",
             error.to_string(),
