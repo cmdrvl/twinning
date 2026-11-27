@@ -147,7 +147,10 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
         timed_out: false,
     };
     let state = shutdown_and_join(server)?;
-    write_rest_report_if_requested(&config, &state, Some(&child_report))?;
+    let reported = write_rest_report_if_requested(&config, &state, Some(&child_report))?;
+    // The summary must not say PASS over a report that says FAIL: a canary can fail a report
+    // whose child succeeded. Without --report there is none, and the child alone decides.
+    let failed = child_report.failed() || reported.as_deref() == Some("FAIL");
 
     let mut stdout = format!(
         "REST twin child command completed: exit_code={:?} signal={:?} timed_out=false\n",
@@ -157,7 +160,7 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
     if json_mode {
         stdout = serde_json::to_string_pretty(&json!({
             "version": "twinning.rest-run.v0",
-            "outcome": if child_report.failed() { "FAIL" } else { "PASS" },
+            "outcome": if failed { "FAIL" } else { "PASS" },
             "child": {
                 "command": run_command,
                 "exit_code": child.code(),
@@ -1395,13 +1398,14 @@ fn shutdown_and_join(server: RunningRestServer) -> RefusalResult<Arc<RestSharedS
     }
 }
 
+/// Writes the `--report` file, if one was asked for, and returns the outcome it says.
 fn write_rest_report_if_requested(
     config: &RestConfig,
     state: &RestSharedState,
     child: Option<&RunReport>,
-) -> RefusalResult<()> {
+) -> RefusalResult<Option<String>> {
     let Some(path) = &config.report_path else {
-        return Ok(());
+        return Ok(None);
     };
 
     let log = state
@@ -1438,7 +1442,8 @@ fn write_rest_report_if_requested(
     if let Some(child) = child {
         report.record_child(child);
     }
-    write_json_report(path, &report)
+    write_json_report(path, &report)?;
+    Ok(Some(report.outcome))
 }
 
 fn security_schemes_bypassed(state: &RestSharedState) -> Vec<String> {
