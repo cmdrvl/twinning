@@ -49,7 +49,7 @@ jobs:
             strip: macos
             use_cross: false
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
             archive_ext: tar.gz
             bin: twinning
             strip: macos
