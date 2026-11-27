@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "twinning"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "twinning-kernel"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "chrono",
  "hmac",
@@ -1536,7 +1536,7 @@ dependencies = [
 
 [[package]]
 name = "twinning-postgres"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "serde_json",
  "signal-hook",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "twinning-rest"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "axum",
  "base64",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "twinning-snowflake"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
