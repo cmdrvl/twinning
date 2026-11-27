@@ -705,13 +705,12 @@ When more than one thing goes wrong:
 3. A failing check: exit `1`, outcome `FAIL`.
 4. A failed child alone: exit `0`, outcome `FAIL`.
 
-`rest --run` and `snowflake --run` treat a failed child the same way (it did not
-exit 0, or a signal ended it). The `*-run.v0` summary on stdout and the
-`--report` file both say `FAIL`, and the report records the child under `run`,
+`rest --run`, `snowflake --run` and `mcp --run` treat a failed child the same way
+(it did not exit 0, or a signal ended it). The `*-run.v0` summary on stdout and
+the `--report` file both say `FAIL`, and the report records the child under `run`,
 which is there only when it failed. The exit code stays `0`, so read the outcome,
-not just the exit code. These two give the child no time limit: `timed_out` is
+not just the exit code. These three give the child no time limit: `timed_out` is
 always `false`, and a child that never ends keeps `twinning` running.
-`mcp --run` does not follow this yet and still reports `PASS`.
 
 In `rest --run`, a failed `--canary` assertion also makes both say `FAIL`, even
 when the child succeeded, again with exit code `0`. The canary is evaluated only

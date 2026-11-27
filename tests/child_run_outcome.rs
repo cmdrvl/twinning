@@ -1,11 +1,12 @@
-//! bd-98je: `rest --run` and `snowflake --run` must not say PASS when the child failed.
+//! bd-98je, bd-w32d: `rest --run`, `snowflake --run` and `mcp --run` must not say PASS when
+//! the child failed.
 //!
 //! As the Postgres twin does, the outcome becomes FAIL and the child's result is kept, while
 //! twinning's own exit code stays in its usual domain: a failed child alone still exits 0
-//! (docs/PLAN_TWINNING.md, `--run` mode semantics). Neither mode has a child timeout, so
+//! (docs/PLAN_TWINNING.md, `--run` mode semantics). None of the three has a child timeout, so
 //! `timed_out` has no true case to test here.
 
-#![cfg(all(unix, any(feature = "rest", feature = "snowflake")))]
+#![cfg(all(unix, any(feature = "rest", feature = "snowflake", feature = "mcp")))]
 
 use std::{fs, path::Path, process::Command};
 
@@ -40,21 +41,7 @@ fn run(mode: &str, child: &str, json_output: bool) -> Finished {
 fn run_with_canary(mode: &str, child: &str, json_output: bool, canary: Option<&Value>) -> Finished {
     let dir = tempdir().expect("tempdir");
     let report = dir.path().join("report.json");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_twinning"));
-    command.arg(mode);
-    match mode {
-        "rest" => command.arg("--spec").arg(write(
-            dir.path(),
-            "api.yaml",
-            "openapi: 3.0.3\ninfo: {title: t, version: \"1\"}\npaths:\n  /things:\n    get:\n      \
-             responses:\n        \"200\": {description: ok}\n",
-        )),
-        _ => command.arg("--schema").arg(write(
-            dir.path(),
-            "schema.sql",
-            "CREATE TABLE t (id INT);\n",
-        )),
-    };
+    let mut command = twin_command(mode, dir.path());
     command
         .args(["--port", "0", "--run", child, "--report"])
         .arg(&report);
@@ -75,6 +62,30 @@ fn run_with_canary(mode: &str, child: &str, json_output: bool, canary: Option<&V
         stdout,
         report: serde_json::from_str(&written.expect("checked above")).expect("report JSON"),
     }
+}
+
+/// `twinning <mode>` with the least it needs to start.
+fn twin_command(mode: &str, dir: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_twinning"));
+    command.arg(mode);
+    match mode {
+        "rest" => command.arg("--spec").arg(write(
+            dir,
+            "api.yaml",
+            "openapi: 3.0.3\ninfo: {title: t, version: \"1\"}\npaths:\n  /things:\n    get:\n      \
+             responses:\n        \"200\": {description: ok}\n",
+        )),
+        "mcp" => command
+            .args(["--auth-mode", "bypass", "--manifest"])
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/mcp/http_manifest.json"
+            )),
+        _ => command
+            .arg("--schema")
+            .arg(write(dir, "schema.sql", "CREATE TABLE t (id INT);\n")),
+    };
+    command
 }
 
 fn write(dir: &Path, name: &str, text: &str) -> std::path::PathBuf {
@@ -272,4 +283,41 @@ fn snowflake_run_reports_a_failed_child() {
 #[test]
 fn snowflake_run_with_a_successful_child_is_unchanged() {
     assert_successful_child_is_unchanged("snowflake");
+}
+
+#[cfg(feature = "mcp")]
+#[test]
+fn mcp_run_reports_a_failed_child() {
+    assert_failed_child_is_reported("mcp", "twinning.mcp-run.v0", "twinning.mcp-report.v0");
+}
+
+#[cfg(feature = "mcp")]
+#[test]
+fn mcp_run_with_a_successful_child_is_unchanged() {
+    assert_successful_child_is_unchanged("mcp");
+}
+
+/// With no report there is nothing but the child to say it failed.
+#[cfg(feature = "mcp")]
+#[test]
+fn mcp_run_without_a_report_still_says_fail_for_a_failed_child() {
+    for (child, exit_code, signal) in FAILED_CHILDREN.into_iter().chain([("true", Some(0), None)]) {
+        let dir = tempdir().expect("tempdir");
+        let output = twin_command("mcp", dir.path())
+            .args(["--port", "0", "--run", child, "--json"])
+            .output()
+            .expect("run twinning");
+        let finished = Finished {
+            exit_code: output.status.code(),
+            stdout: String::from_utf8(output.stdout).expect("stdout utf-8"),
+            report: Value::Null,
+        };
+
+        assert_eq!(finished.exit_code, Some(0), "{child}: {}", finished.stdout);
+        let summary = finished.summary();
+        let expected = if exit_code == Some(0) { "PASS" } else { "FAIL" };
+        assert_eq!(summary["outcome"], expected, "{child}: {summary}");
+        assert_eq!(summary["child"]["exit_code"], json!(exit_code), "{child}");
+        assert_eq!(summary["child"]["signal"], json!(signal), "{child}");
+    }
 }

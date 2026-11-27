@@ -25,6 +25,7 @@ use signal_hook::{
     iterator::Signals,
 };
 use tokio::{net::TcpListener, runtime::Builder as TokioRuntimeBuilder};
+use twinning_kernel::report::RunReport;
 
 use crate::{
     auth::{AuthExtract, RestAuthMode, check_auth},
@@ -97,7 +98,7 @@ fn run_inner(config: McpConfig) -> RefusalResult<Execution> {
         let server = listen(&config, state)?;
         wait_for_shutdown_signal(signals);
         let state = shutdown_and_join(server)?;
-        write_mcp_report_if_requested(&config, &state)?;
+        write_mcp_report_if_requested(&config, &state, None)?;
         return Ok(Execution {
             exit_code: 0,
             stdout: String::from("MCP twin stopped.\n"),
@@ -107,8 +108,15 @@ fn run_inner(config: McpConfig) -> RefusalResult<Execution> {
     let server = start_server(&config)?;
     let base_url = format!("http://{}", server.addr);
     let child = run_child_with_base_url(&run_command, &base_url)?;
+    // This twin gives the child no time limit, so it cannot have timed out.
+    let child_report = RunReport {
+        command: run_command.clone(),
+        exit_code: child.code(),
+        signal: exit_signal(&child),
+        timed_out: false,
+    };
     let state = shutdown_and_join(server)?;
-    write_mcp_report_if_requested(&config, &state)?;
+    write_mcp_report_if_requested(&config, &state, Some(&child_report))?;
 
     let mut stdout = format!(
         "MCP twin child command completed: exit_code={:?} signal={:?} timed_out=false\n",
@@ -118,7 +126,7 @@ fn run_inner(config: McpConfig) -> RefusalResult<Execution> {
     if config.json {
         stdout = serde_json::to_string_pretty(&json!({
             "version": "twinning.mcp-run.v0",
-            "outcome": "PASS",
+            "outcome": if child_report.failed() { "FAIL" } else { "PASS" },
             "child": {
                 "command": run_command,
                 "exit_code": child.code(),
@@ -147,7 +155,7 @@ pub fn start_test_server(config: McpConfig) -> (SocketAddr, mpsc::Sender<()>) {
         let _ = shutdown_rx.recv();
         match shutdown_and_join(server) {
             Ok(state) => {
-                if let Err(error) = write_mcp_report_if_requested(&config, &state) {
+                if let Err(error) = write_mcp_report_if_requested(&config, &state, None) {
                     eprintln!("failed to write MCP test report: {error:?}");
                 }
             }
@@ -477,7 +485,11 @@ fn shutdown_and_join(server: RunningMcpServer) -> RefusalResult<Arc<McpSharedSta
     }
 }
 
-fn write_mcp_report_if_requested(config: &McpConfig, state: &McpSharedState) -> RefusalResult<()> {
+fn write_mcp_report_if_requested(
+    config: &McpConfig,
+    state: &McpSharedState,
+    child: Option<&RunReport>,
+) -> RefusalResult<()> {
     let Some(path) = &config.report_path else {
         return Ok(());
     };
@@ -492,7 +504,10 @@ fn write_mcp_report_if_requested(config: &McpConfig, state: &McpSharedState) -> 
             ))
         })?
         .clone();
-    let report = McpReport::new(&state.catalog, log.summary());
+    let mut report = McpReport::new(&state.catalog, log.summary());
+    if let Some(child) = child {
+        report.record_child(child);
+    }
     write_json_report(path, &report)
 }
 
