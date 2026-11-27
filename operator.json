@@ -155,7 +155,7 @@
       "name": "canary",
       "flag": "--canary",
       "type": "file_path",
-      "description": "Assert REST session report against canary expectations"
+      "description": "Assert the REST session against a canary manifest, with or without --report. Read once before the port opens or --run starts (unreadable, no assertions or an unknown top-level key: exit 2); checked when the run or server ends; a failed assertion exits 1"
     },
     {
       "name": "routing",
@@ -241,7 +241,7 @@
       "domain": "positive"
     },
     "1": {
-      "meaning": "VIOLATIONS (embedded verify failed in run_once) or twin-pair proof FAIL",
+      "meaning": "VIOLATIONS (embedded verify failed in run_once), a failed rest --canary assertion, or twin-pair proof FAIL",
       "domain": "negative"
     },
     "2": {

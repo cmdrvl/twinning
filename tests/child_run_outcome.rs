@@ -182,14 +182,14 @@ fn things_was_called() -> Value {
 }
 
 /// A failed canary fails the report, so the summary must not say PASS, whatever the child did.
-/// The exit code stays 0.
+/// Since bd-ocu0 a failed canary also exits 1; a failed child alone still does not.
 #[cfg(feature = "rest")]
 #[test]
 fn rest_run_summary_says_fail_when_a_canary_fails_the_report() {
     for (child, child_exit) in [("true", 0), ("exit 7", 7)] {
         let finished = run_with_canary("rest", child, true, Some(&things_was_called()));
 
-        assert_eq!(finished.exit_code, Some(0), "{child}: {}", finished.stdout);
+        assert_eq!(finished.exit_code, Some(1), "{child}: {}", finished.stdout);
         assert_eq!(finished.report["canary"]["failed"], 1, "{child}");
         assert_eq!(finished.report["outcome"], "FAIL", "{child}");
         assert_eq!(finished.report.get("run").is_some(), child_exit != 0);
@@ -218,13 +218,21 @@ fn rest_run_with_a_passing_canary_is_pass() {
     assert_eq!(finished.summary()["child"]["exit_code"], 0);
 }
 
-/// Guard, true before and after: the human output names no outcome, so it cannot say PASS.
+/// The human output never says PASS for a failed canary, and since bd-ocu0 names the
+/// failure and exits 1.
 #[cfg(feature = "rest")]
 #[test]
 fn rest_run_human_output_never_says_pass_for_a_failed_canary() {
     let finished = run_with_canary("rest", "true", false, Some(&things_was_called()));
 
-    assert_eq!(finished.exit_code, Some(0), "{}", finished.stdout);
+    assert_eq!(finished.exit_code, Some(1), "{}", finished.stdout);
+    assert!(
+        finished
+            .stdout
+            .contains("REST canary FAILED: 1 of 1 assertions"),
+        "{}",
+        finished.stdout
+    );
     assert_eq!(finished.report["outcome"], "FAIL");
     assert!(
         finished.stdout.contains("child command completed"),

@@ -48,7 +48,7 @@ use crate::{
 
 use super::{
     auth::{AuthExtract, RestAuthMode, check_auth},
-    canary::RestCanaryManifest,
+    canary::{RestCanaryManifest, RestCanaryReport},
     encode::{encode, encode_rest_refusal},
     normalize::{IrOp, NormalizeRequest, RestRefusal, normalize_request},
     policy::{RoutingConfig, RoutingPolicy, resolve_routing_config},
@@ -121,6 +121,9 @@ pub fn run(config: RestConfig) -> Result<Execution, Box<dyn std::error::Error>> 
 
 fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
     let json_mode = config.json;
+    // First, and only here: a manifest that cannot assert anything refuses before the
+    // port opens or the child runs, and later changes to the file are not read.
+    let canary = load_canary(&config)?;
     let Some(run_command) = config.run_command.clone() else {
         let state = build_shared_state(&config)?;
         // Before the port opens: a client that sees it may stop the twin at once. After the
@@ -129,11 +132,13 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
         let server = listen(&config, state)?;
         wait_for_shutdown_signal(signals);
         let state = shutdown_and_join(server)?;
-        write_rest_report_if_requested(&config, &state, None)?;
-        return Ok(Execution {
-            exit_code: 0,
-            stdout: String::from("REST twin stopped.\n"),
-        });
+        let canary = evaluate_canary(canary.as_ref(), &state)?;
+        write_rest_report_if_requested(&config, &state, None, canary.clone())?;
+        let mut stdout = String::from("REST twin stopped.\n");
+        let failure = canary.as_ref().and_then(canary_failure_text);
+        let exit_code = u8::from(failure.is_some());
+        stdout.extend(failure);
+        return Ok(Execution { exit_code, stdout });
     };
 
     let server = start_server(&config)?;
@@ -147,10 +152,13 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
         timed_out: false,
     };
     let state = shutdown_and_join(server)?;
-    let reported = write_rest_report_if_requested(&config, &state, Some(&child_report))?;
-    // The summary must not say PASS over a report that says FAIL: a canary can fail a report
-    // whose child succeeded. Without --report there is none, and the child alone decides.
-    let failed = child_report.failed() || reported.as_deref() == Some("FAIL");
+    let canary = evaluate_canary(canary.as_ref(), &state)?;
+    write_rest_report_if_requested(&config, &state, Some(&child_report), canary.clone())?;
+    let canary_failure = canary.filter(|canary| canary.failed > 0);
+    // A failed canary fails the run, with or without --report. A failed child alone still
+    // exits 0.
+    let failed = child_report.failed() || canary_failure.is_some();
+    let exit_code = u8::from(canary_failure.is_some());
 
     let mut stdout = format!(
         "REST twin child command completed: exit_code={:?} signal={:?} timed_out=false\n",
@@ -158,7 +166,7 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
         exit_signal(&child)
     );
     if json_mode {
-        stdout = serde_json::to_string_pretty(&json!({
+        let mut summary = json!({
             "version": "twinning.rest-run.v0",
             "outcome": if failed { "FAIL" } else { "PASS" },
             "child": {
@@ -167,21 +175,26 @@ fn run_inner(config: RestConfig) -> RefusalResult<Execution> {
                 "signal": exit_signal(&child),
                 "timed_out": false
             }
-        }))
-        .map(|mut rendered| {
-            rendered.push('\n');
-            rendered
-        })
-        .map_err(|error| Box::new(refusal::runtime_io("rest_run_render", error.to_string())))?;
+        });
+        // Only on failure, so that every other summary stays as it was.
+        if let Some(canary) = &canary_failure {
+            summary["canary"] = json!(canary);
+        }
+        stdout = serde_json::to_string_pretty(&summary)
+            .map(|mut rendered| {
+                rendered.push('\n');
+                rendered
+            })
+            .map_err(|error| Box::new(refusal::runtime_io("rest_run_render", error.to_string())))?;
+    } else {
+        stdout.extend(canary_failure.as_ref().and_then(canary_failure_text));
     }
 
-    Ok(Execution {
-        exit_code: 0,
-        stdout,
-    })
+    Ok(Execution { exit_code, stdout })
 }
 
 pub fn start_test_server(config: RestConfig) -> (SocketAddr, mpsc::Sender<()>) {
+    let canary = load_canary(&config).expect("REST canary manifest should load");
     let server = start_server(&config).expect("REST test server should start");
     let addr = server.addr;
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
@@ -189,7 +202,9 @@ pub fn start_test_server(config: RestConfig) -> (SocketAddr, mpsc::Sender<()>) {
         let _ = shutdown_rx.recv();
         match shutdown_and_join(server) {
             Ok(state) => {
-                if let Err(error) = write_rest_report_if_requested(&config, &state, None) {
+                if let Err(error) = evaluate_canary(canary.as_ref(), &state).and_then(|canary| {
+                    write_rest_report_if_requested(&config, &state, None, canary)
+                }) {
                     eprintln!("failed to write REST test report: {error:?}");
                 }
             }
@@ -1398,14 +1413,64 @@ fn shutdown_and_join(server: RunningRestServer) -> RefusalResult<Arc<RestSharedS
     }
 }
 
-/// Writes the `--report` file, if one was asked for, and returns the outcome it says.
+/// Reads the `--canary` manifest, if one was asked for.
+fn load_canary(config: &RestConfig) -> RefusalResult<Option<RestCanaryManifest>> {
+    config
+        .canary_path
+        .as_deref()
+        .map(|path| {
+            RestCanaryManifest::load(path)
+                .map_err(|error| Box::new(refusal::runtime_io("rest_canary", error.to_string())))
+        })
+        .transpose()
+}
+
+/// Checks the assertions against the whole session.
+fn evaluate_canary(
+    canary: Option<&RestCanaryManifest>,
+    state: &RestSharedState,
+) -> RefusalResult<Option<RestCanaryReport>> {
+    let Some(canary) = canary else {
+        return Ok(None);
+    };
+    let log = state.session_log.lock().map_err(|_| {
+        Box::new(refusal::runtime_io(
+            "rest_canary",
+            "session log lock poisoned",
+        ))
+    })?;
+    Ok(Some(canary.evaluate(&log)))
+}
+
+/// What stdout says about a failed canary, or nothing when every assertion held. Each
+/// line is made of the manifest's own expectations and fixed text, never of
+/// requests or data seen in the session.
+fn canary_failure_text(canary: &RestCanaryReport) -> Option<String> {
+    if canary.failed == 0 {
+        return None;
+    }
+    let mut text = format!(
+        "REST canary FAILED: {} of {} assertions\n",
+        canary.failed, canary.total
+    );
+    for failure in &canary.failures {
+        text.push_str(&format!(
+            "  {} {}: {}\n",
+            failure.assertion, failure.expected, failure.detail
+        ));
+    }
+    Some(text)
+}
+
+/// Writes the `--report` file, if one was asked for.
 fn write_rest_report_if_requested(
     config: &RestConfig,
     state: &RestSharedState,
     child: Option<&RunReport>,
-) -> RefusalResult<Option<String>> {
+    canary: Option<RestCanaryReport>,
+) -> RefusalResult<()> {
     let Some(path) = &config.report_path else {
-        return Ok(None);
+        return Ok(());
     };
 
     let log = state
@@ -1420,14 +1485,6 @@ fn write_rest_report_if_requested(
         .clone();
     let declared = declared_endpoints(&state.routes);
     let session = log.summary(&declared);
-    let canary = match &config.canary_path {
-        Some(path) => Some(
-            RestCanaryManifest::load(path)
-                .map_err(|error| Box::new(refusal::runtime_io("rest_canary", error.to_string())))?
-                .evaluate(&log),
-        ),
-        None => None,
-    };
     let mut report = RestReport::new(
         RestSpecReport {
             source: config.spec_path.display().to_string(),
@@ -1442,8 +1499,7 @@ fn write_rest_report_if_requested(
     if let Some(child) = child {
         report.record_child(child);
     }
-    write_json_report(path, &report)?;
-    Ok(Some(report.outcome))
+    write_json_report(path, &report)
 }
 
 fn security_schemes_bypassed(state: &RestSharedState) -> Vec<String> {
@@ -1819,7 +1875,7 @@ paths:
         shape_config.auth_mode = Some(RestAuthMode::Shape);
         shape_config.report_path = Some(shape_report_path.clone());
         let shape_state = build_shared_state(&shape_config).expect("build shape state");
-        write_rest_report_if_requested(&shape_config, &shape_state, None)
+        write_rest_report_if_requested(&shape_config, &shape_state, None, None)
             .expect("write shape report");
         let shape_report: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(&shape_report_path).expect("read shape report"),
@@ -1832,7 +1888,7 @@ paths:
         bypass_config.auth_mode = Some(RestAuthMode::Bypass);
         bypass_config.report_path = Some(bypass_report_path.clone());
         let bypass_state = build_shared_state(&bypass_config).expect("build bypass state");
-        write_rest_report_if_requested(&bypass_config, &bypass_state, None)
+        write_rest_report_if_requested(&bypass_config, &bypass_state, None, None)
             .expect("write bypass report");
         let bypass_report: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(&bypass_report_path).expect("read bypass report"),
@@ -2032,7 +2088,9 @@ paths:
                 refusal: None,
             });
 
-        write_rest_report_if_requested(&config, &state, None).expect("write report");
+        let canary = load_canary(&config).expect("load canary");
+        let canary = evaluate_canary(canary.as_ref(), &state).expect("evaluate canary");
+        write_rest_report_if_requested(&config, &state, None, canary).expect("write report");
 
         let rendered = fs::read_to_string(&report_path).expect("read report");
         let report: serde_json::Value = serde_json::from_str(&rendered).expect("parse report");

@@ -7,7 +7,10 @@ use thiserror::Error;
 
 use super::session_log::RestSessionLog;
 
+/// A misspelled or extra top-level key is refused, so that it cannot silently
+/// leave a manifest with nothing to assert.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RestCanaryManifest {
     #[serde(default)]
     pub assertions: Vec<RestCanaryAssertion>,
@@ -61,18 +64,28 @@ pub enum RestCanaryError {
         path: String,
         source: serde_json::Error,
     },
+    #[error("REST canary manifest `{path}` has no assertions")]
+    NoAssertions { path: String },
 }
 
 impl RestCanaryManifest {
+    /// Reads a manifest that asserts something.
     pub fn load(path: &Path) -> Result<Self, RestCanaryError> {
         let bytes = fs::read(path).map_err(|source| RestCanaryError::Read {
             path: path.display().to_string(),
             source,
         })?;
-        serde_json::from_slice(&bytes).map_err(|source| RestCanaryError::Parse {
-            path: path.display().to_string(),
-            source,
-        })
+        let manifest: Self =
+            serde_json::from_slice(&bytes).map_err(|source| RestCanaryError::Parse {
+                path: path.display().to_string(),
+                source,
+            })?;
+        if manifest.assertions.is_empty() {
+            return Err(RestCanaryError::NoAssertions {
+                path: path.display().to_string(),
+            });
+        }
+        Ok(manifest)
     }
 
     pub fn evaluate(&self, log: &RestSessionLog) -> RestCanaryReport {

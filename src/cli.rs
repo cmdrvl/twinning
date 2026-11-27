@@ -266,7 +266,9 @@ pub struct RestArgs {
     #[arg(long, value_name = "FILE")]
     pub report: Option<PathBuf>,
 
-    /// Assert the REST session report against canary expectations
+    /// Assert the REST session against a canary manifest, with or without --report. Read once
+    /// before the port opens or --run starts (unusable: exit 2); checked when the run or server
+    /// ends; a failed assertion exits 1
     #[arg(long, value_name = "FILE")]
     pub canary: Option<PathBuf>,
 

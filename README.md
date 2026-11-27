@@ -682,7 +682,7 @@ Exit codes:
 | Exit | Meaning |
 |------|---------|
 | `0` | clean bootstrap, or `run_once` / `--serve` completion where embedded verify neither failed nor refused; `proof twin-pair` (and `orchestrate`) with outcome `PASS` |
-| `1` | live finalization completed but embedded verify reported `FAIL`; `proof twin-pair` (and `orchestrate`) with outcome `FAIL` (the report is still written) |
+| `1` | live finalization completed but embedded verify reported `FAIL`; a failed `rest --canary` assertion; `proof twin-pair` (and `orchestrate`) with outcome `FAIL` (the report is still written) |
 | `2` | refusal / bootstrap failure / CLI error, including an embedded verify check that was refused |
 
 A failed `--run` child does not by itself change the exit code: it is in the
@@ -712,10 +712,33 @@ which is there only when it failed. The exit code stays `0`, so read the outcome
 not just the exit code. These three give the child no time limit: `timed_out` is
 always `false`, and a child that never ends keeps `twinning` running.
 
-In `rest --run`, a failed `--canary` assertion also makes both say `FAIL`, even
-when the child succeeded, again with exit code `0`. The canary is evaluated only
-while the report is written: without `--report`, the canary file is not read and
-the summary reflects the child alone.
+### REST canary (`rest --canary <FILE>`)
+
+A canary is a JSON object with one key, `assertions`, holding at least one
+assertion. It is checked whether or not `--report` is given, in `--run` and in
+`--serve`.
+
+- **When it is read:** once, at startup, before the port opens or the `--run`
+  command starts. A file that cannot be read or parsed, has no assertions, or has
+  any other top-level key refuses with exit `2` (`E_RUNTIME_IO`, stage
+  `rest_canary`): nothing is served, the command does not run, and no report is
+  written. Changing the file after startup has no effect.
+- **When it is checked:** once, over the whole session, when the `--run` command
+  exits, or when a served twin is stopped with SIGINT or SIGTERM. A served twin
+  says nothing about the canary until it is stopped.
+- **A failed assertion:** exit `1`, whether or not the child also failed. Stdout
+  names each failure; a `--report` file says `FAIL` and lists them under
+  `canary`.
+  - `--run --json`: the summary says `FAIL` and gains a `canary` object, only on
+    failure.
+  - `--run` without `--json`, and `--serve` with or without it: after the usual
+    line, `REST canary FAILED: <n> of <total> assertions`, then one line for each.
+    `--serve` does not print JSON on stdout.
+- **All assertions held:** output and exit code are what they would be without
+  `--canary`, apart from the `canary` section of the report.
+
+The failure lines repeat the manifest's own expectations and nothing seen in the
+session.
 
 ### Redaction of the embedded verify report
 
