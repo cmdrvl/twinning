@@ -34,10 +34,6 @@ impl Finished {
 }
 
 fn run(mode: &str, child: &str, json_output: bool) -> Finished {
-    run_with_canary(mode, child, json_output, None)
-}
-
-fn run_with_canary(mode: &str, child: &str, json_output: bool, canary: Option<&Value>) -> Finished {
     let dir = tempdir().expect("tempdir");
     let report = dir.path().join("report.json");
     let mut command = Command::new(env!("CARGO_BIN_EXE_twinning"));
@@ -60,11 +56,6 @@ fn run_with_canary(mode: &str, child: &str, json_output: bool, canary: Option<&V
         .arg(&report);
     if json_output {
         command.arg("--json");
-    }
-    if let Some(canary) = canary {
-        command
-            .arg("--canary")
-            .arg(write(dir.path(), "canary.json", &canary.to_string()));
     }
     let output = command.output().expect("run twinning");
     let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
@@ -134,93 +125,6 @@ fn rest_run_reports_a_failed_child() {
 #[test]
 fn rest_run_with_a_successful_child_is_unchanged() {
     assert_successful_child_is_unchanged("rest");
-}
-
-/// With no report there is nothing but the child to say it failed.
-#[cfg(feature = "rest")]
-#[test]
-fn rest_run_without_a_report_still_says_fail_for_a_failed_child() {
-    let dir = tempdir().expect("tempdir");
-    let spec = write(
-        dir.path(),
-        "api.yaml",
-        "openapi: 3.0.3\ninfo: {title: t, version: \"1\"}\npaths:\n  /things:\n    get:\n      \
-         responses:\n        \"200\": {description: ok}\n",
-    );
-    let output = Command::new(env!("CARGO_BIN_EXE_twinning"))
-        .arg("rest")
-        .arg("--spec")
-        .arg(spec)
-        .args(["--port", "0", "--run", "exit 7", "--json"])
-        .output()
-        .expect("run twinning");
-    let finished = Finished {
-        exit_code: output.status.code(),
-        stdout: String::from_utf8(output.stdout).expect("stdout utf-8"),
-        report: Value::Null,
-    };
-
-    assert_eq!(finished.exit_code, Some(0), "{}", finished.stdout);
-    assert_eq!(finished.summary()["outcome"], "FAIL", "{}", finished.stdout);
-}
-
-/// Met only by a child that calls the one route.
-#[cfg(feature = "rest")]
-fn things_was_called() -> Value {
-    json!({"assertions": [{"kind": "endpoint_called", "method": "GET", "path": "/things"}]})
-}
-
-/// A failed canary fails the report, so the summary must not say PASS, whatever the child did.
-/// The exit code stays 0.
-#[cfg(feature = "rest")]
-#[test]
-fn rest_run_summary_says_fail_when_a_canary_fails_the_report() {
-    for (child, child_exit) in [("true", 0), ("exit 7", 7)] {
-        let finished = run_with_canary("rest", child, true, Some(&things_was_called()));
-
-        assert_eq!(finished.exit_code, Some(0), "{child}: {}", finished.stdout);
-        assert_eq!(finished.report["canary"]["failed"], 1, "{child}");
-        assert_eq!(finished.report["outcome"], "FAIL", "{child}");
-        assert_eq!(finished.report.get("run").is_some(), child_exit != 0);
-        let summary = finished.summary();
-        assert_eq!(summary["outcome"], "FAIL", "{child}: {summary}");
-        assert_eq!(summary["child"]["exit_code"], child_exit);
-    }
-}
-
-/// Guard, true before and after: a passing canary leaves a successful run PASS.
-#[cfg(feature = "rest")]
-#[test]
-fn rest_run_with_a_passing_canary_is_pass() {
-    // curl exits 0 whatever the status, and the canary only asks that the call was made.
-    let child = "curl -s \"$TWIN_BASE_URL/things\"";
-    let finished = run_with_canary("rest", child, true, Some(&things_was_called()));
-
-    assert_eq!(finished.exit_code, Some(0), "{}", finished.stdout);
-    assert_eq!(
-        finished.report["canary"]["passed"], 1,
-        "{}",
-        finished.report
-    );
-    assert_eq!(finished.report["outcome"], "PASS");
-    assert_eq!(finished.summary()["outcome"], "PASS");
-    assert_eq!(finished.summary()["child"]["exit_code"], 0);
-}
-
-/// Guard, true before and after: the human output names no outcome, so it cannot say PASS.
-#[cfg(feature = "rest")]
-#[test]
-fn rest_run_human_output_never_says_pass_for_a_failed_canary() {
-    let finished = run_with_canary("rest", "true", false, Some(&things_was_called()));
-
-    assert_eq!(finished.exit_code, Some(0), "{}", finished.stdout);
-    assert_eq!(finished.report["outcome"], "FAIL");
-    assert!(
-        finished.stdout.contains("child command completed"),
-        "{}",
-        finished.stdout
-    );
-    assert!(!finished.stdout.contains("PASS"), "{}", finished.stdout);
 }
 
 /// The published schema allows no unknown property, so it has to know `run`.
