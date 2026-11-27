@@ -110,7 +110,11 @@ fn run_inner(config: SnowflakeConfig) -> RefusalResult<Execution> {
     }
 
     let Some(run_command) = config.run_command.clone() else {
-        let server = start_server(&config)?;
+        let state = build_state(&config)?;
+        // Before the port opens: a client that sees it may stop the twin at once. After the
+        // state is built, so that a signal still ends a slow startup.
+        let signals = install_shutdown_signals()?;
+        let server = listen(&config, state)?;
         eprintln!(
             "Snowflake twin ready - {} tables, {} rows materialized",
             server.state.catalog.table_count(),
@@ -123,7 +127,7 @@ fn run_inner(config: SnowflakeConfig) -> RefusalResult<Execution> {
             server.addr.port()
         );
         eprintln!("{NEXT_STEP}");
-        wait_for_shutdown_signal()?;
+        wait_for_shutdown_signal(signals);
         let state = shutdown_and_join(server)?;
         write_report_if_requested(&config, &state)?;
         return Ok(Execution {
@@ -255,7 +259,14 @@ fn build_state(config: &SnowflakeConfig) -> RefusalResult<Arc<SnowflakeSharedSta
 }
 
 fn start_server(config: &SnowflakeConfig) -> RefusalResult<RunningSnowflakeServer> {
-    let state = build_state(config)?;
+    listen(config, build_state(config)?)
+}
+
+/// Opens the port. From here the twin can be seen as ready.
+fn listen(
+    config: &SnowflakeConfig,
+    state: Arc<SnowflakeSharedState>,
+) -> RefusalResult<RunningSnowflakeServer> {
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
     let (addr_tx, addr_rx) = mpsc::channel::<Result<SocketAddr, String>>();
     let host = config.host.clone();
@@ -834,17 +845,31 @@ fn write_report_if_requested_path(
 }
 
 #[cfg(unix)]
-fn wait_for_shutdown_signal() -> RefusalResult<()> {
-    let mut signals = Signals::new([SIGINT, SIGTERM])
-        .map_err(|error| Box::new(refusal::runtime_io("snowflake_signal", error.to_string())))?;
-    signals.forever().next();
-    Ok(())
+type ShutdownSignals = Signals;
+#[cfg(not(unix))]
+type ShutdownSignals = ();
+
+/// From this call on, SIGINT and SIGTERM are held for [`wait_for_shutdown_signal`] instead of
+/// ending the process.
+#[cfg(unix)]
+fn install_shutdown_signals() -> RefusalResult<ShutdownSignals> {
+    Signals::new([SIGINT, SIGTERM])
+        .map_err(|error| Box::new(refusal::runtime_io("snowflake_signal", error.to_string())))
 }
 
 #[cfg(not(unix))]
-fn wait_for_shutdown_signal() -> RefusalResult<()> {
-    std::thread::park();
+fn install_shutdown_signals() -> RefusalResult<ShutdownSignals> {
     Ok(())
+}
+
+#[cfg(unix)]
+fn wait_for_shutdown_signal(mut signals: ShutdownSignals) {
+    let _ = signals.forever().next();
+}
+
+#[cfg(not(unix))]
+fn wait_for_shutdown_signal(_: ShutdownSignals) {
+    std::thread::park();
 }
 
 fn run_child_with_base_url(

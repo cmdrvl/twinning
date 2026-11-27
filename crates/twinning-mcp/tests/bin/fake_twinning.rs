@@ -119,6 +119,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let port = value_after(&args, "--port")
         .ok_or("--port is required")?
         .parse::<u16>()?;
+    // As the real twin: the handler is in place before the port opens, because a client that
+    // sees the port may stop the twin at once.
+    let mut signals = term_signals()?;
     let _listener = TcpListener::bind(("127.0.0.1", port))?;
     if is_rest && let Some(path) = report.as_deref() {
         write_json(
@@ -126,7 +129,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &rest_argv_summary(&args),
         )?;
     }
-    let mut signals = term_signals()?;
     let ignore_term = mode == "ignore_sigterm";
     if ignore_term {
         for _signal in signals.forever() {}
