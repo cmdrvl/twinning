@@ -713,6 +713,11 @@ not just the exit code. These two give the child no time limit: `timed_out` is
 always `false`, and a child that never ends keeps `twinning` running.
 `mcp --run` does not follow this yet and still reports `PASS`.
 
+In `rest --run`, a failed `--canary` assertion also makes both say `FAIL`, even
+when the child succeeded, again with exit code `0`. The canary is evaluated only
+while the report is written: without `--report`, the canary file is not read and
+the summary reflects the child alone.
+
 ### Redaction of the embedded verify report
 
 By default the report's `verify` section carries no failing row's key or cell
