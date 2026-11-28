@@ -1135,6 +1135,8 @@ cargo test
 ./scripts/ubs_gate.sh
 ```
 
+For the full toolchain guide, see the [Agent Operator Guide](https://github.com/cmdrvl/.github/blob/main/profile/AGENT_PROMPT.md). Run `twinning --describe` for this tool's machine-readable contract.
+
 ---
 
 Built by [CMD+RVL](https://cmdrvl.com/twinning/). Support: cairn@cmdrvl.com or
